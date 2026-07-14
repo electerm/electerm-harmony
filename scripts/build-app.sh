@@ -153,6 +153,19 @@ EOF
 
 echo "    ✓ build-profile.json5 generated"
 
+# --- Configure npm registry for hvigor (uses pnpm internally) ----------------
+
+echo "==> Configuring npm registry for hvigor ..."
+
+# hvigor requires an .npmrc file in the user's home directory
+NPMRC_FILE="${HOME}/.npmrc"
+if [ ! -f "${NPMRC_FILE}" ]; then
+  echo "registry=https://registry.npmjs.org/" > "${NPMRC_FILE}"
+  echo "    ✓ Created ${NPMRC_FILE}"
+else
+  echo "    ✓ ${NPMRC_FILE} already exists"
+fi
+
 # --- Install ohpm dependencies ----------------------------------------------
 
 echo "==> Installing ohpm dependencies ..."
