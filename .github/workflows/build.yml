@@ -75,34 +75,51 @@ jobs:
           ELECTERM_WEB_REF: ${{ env.ELECTERM_WEB_REF }}
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
-      # ── Step 3: Download & setup HarmonyOS Command Line Tools ────────────
-      - name: Download HarmonyOS Command Line Tools
+      # ── Step 3: Download & extract REAL HarmonyOS Command Line Tools ──────
+      - name: Download & extract HarmonyOS Command Line Tools
         env:
           OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
         run: |
-          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ] || [ -z "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}" ]; then
-            echo "OHOS_CMDLINE_TOOLS_URL secret is not set or empty."
+          set -euo pipefail
+          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
+            echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
             exit 1
           fi
-          # Skip actual download for test
           mkdir -p .cache
-          touch .cache/commandline-tools-dummy.zip
-echo "skip download, will extract dummy in next step"
-
-      - name: Extract HarmonyOS Command Line Tools
-        run: |
-          mkdir -p .cache/commandline-tools/command-line-tools/{bin,hvigor/bin}
-          touch .cache/commandline-tools/command-line-tools/bin/ohpm
-          touch .cache/commandline-tools/command-line-tools/bin/hvigorw
-          echo "MOCK: HarmonyOS Command Line Tools at .cache/commandline-tools/command-line-tools"
-          echo "COMMANDLINE_TOOLS=.cache/commandline-tools/command-line-tools" >> $GITHUB_ENV
-          echo "OHOS_SDK_HOME=.cache/commandline-tools/command-line-tools/sdk" >> $GITHUB_ENV
-          echo "PATH=.cache/commandline-tools/command-line-tools/bin:.cache/commandline-tools/command-line-tools/hvigor/bin:$PATH" >> $GITHUB_ENV
+          ZIP=".cache/commandline-tools.zip"
+          echo "Downloading HarmonyOS Command Line Tools (~2 GB) from secret URL ..."
+          # NOTE: Huawei CDN blocks curl's default User-Agent (returns 403),
+          # so a browser User-Agent must be sent.
+          curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+          echo "Verifying archive integrity ..."
+          if ! unzip -t "$ZIP" >/dev/null 2>&1; then
+            echo "::error::Downloaded archive is corrupt; retrying once without resume."
+            curl -L --retry 10 --retry-all-errors --retry-delay 5 \
+              -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+              -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+            unzip -t "$ZIP" >/dev/null 2>&1 || { echo "::error::Still corrupt after retry"; exit 1; }
+          fi
+          rm -rf .cache/commandline-tools
+          mkdir -p .cache/commandline-tools
+          # -o: overwrite without prompting (the official zip contains duplicate path entries)
+          unzip -o -q "$ZIP" -d .cache/commandline-tools
+          COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
+          if [ ! -d "$COMMANDLINE_TOOLS" ]; then
+            COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
+          fi
+          echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
+          echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
+          echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          # GitHub prepends these to PATH for all subsequent steps.
+          echo "PATH=$COMMANDLINE_TOOLS/bin:$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_ENV"
+          echo "Extracted HarmonyOS Command Line Tools at $COMMANDLINE_TOOLS"
 
       - name: Configure ohpm registry
         run: |
-          # Use default registry; switch to mirror if in China
-          # ohpm config set registry https://ohpm.openharmony.cn/ohpm/
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
 
       # ── Step 4: Decode signing materials ────────────────────────────────
