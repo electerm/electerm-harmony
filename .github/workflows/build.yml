@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write   # needed for creating GitHub Releases
+  contents: read
 
 env:
   # ohos-node release version
@@ -168,16 +168,6 @@ jobs:
           name: electerm-harmony-${{ github.sha }}
           path: ${{ steps.find_hap.outputs.hap_path }}
           retention-days: 30
-
-      # ── Step 8: Create GitHub Release (on tag push) ──────────────────────
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.find_hap.outputs.hap_path }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
 
       # ── Summary ──────────────────────────────────────────────────────────
       - name: Build summary
