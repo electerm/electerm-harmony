@@ -77,17 +77,18 @@ jobs:
 
       # ── Step 3: Download & setup HarmonyOS Command Line Tools ────────────
       - name: Download HarmonyOS Command Line Tools
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
         run: |
-          if [ -z "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}" ]; then
-            echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
-            echo "See build/ENV_SETUP.md for instructions."
+          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ] || [ -z "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}" ]; then
+            echo "OHOS_CMDLINE_TOOLS_URL secret is not set or empty."
             exit 1
           fi
           mkdir -p .cache
           curl -L --fail \
             -o .cache/commandline-tools.zip \
-            "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}"
-          echo "Downloaded command line tools."
+            "${OHOS_CMDLINE_TOOLS_URL}" || exit 1
+          echo "Download complete (will extract in next step)"
 
       - name: Extract HarmonyOS Command Line Tools
         run: |
@@ -108,11 +109,19 @@ jobs:
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
+        env:
+          OHOS_KEYSTORE_B64: ${{ secrets.OHOS_KEYSTORE_B64 }}
+          OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
+          OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
           mkdir -p signing
-          echo "${{ secrets.OHOS_KEYSTORE_B64 }}" | base64 -d > signing/electerm.p12
-          echo "${{ secrets.OHOS_CERT_B64 }}" | base64 -d > signing/electerm_publish.cer
-          echo "${{ secrets.OHOS_PROFILE_B64 }}" | base64 -d > signing/electermRelease.p7b
+          if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
+            echo "One or more signing material secrets are not set"
+            exit 1
+          fi
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
 
           # Verify files
           for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
