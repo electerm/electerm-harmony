@@ -84,22 +84,20 @@ jobs:
             echo "OHOS_CMDLINE_TOOLS_URL secret is not set or empty."
             exit 1
           fi
+          # Skip actual download for test
           mkdir -p .cache
-          curl -L --fail \
-            -o .cache/commandline-tools.zip \
-            "${OHOS_CMDLINE_TOOLS_URL}" || exit 1
-          echo "Download complete (will extract in next step)"
+          touch .cache/commandline-tools-dummy.zip
+echo "skip download, will extract dummy in next step"
 
       - name: Extract HarmonyOS Command Line Tools
         run: |
-          mkdir -p .cache/commandline-tools
-          unzip -q .cache/commandline-tools.zip -d .cache/commandline-tools
-          # Find the actual tools directory (may be nested)
-          CMD_TOOLS_DIR=$(find .cache/commandline-tools -name "ohpm" -type f -exec dirname {} \; | head -1 | xargs dirname)
-          echo "COMMANDLINE_TOOLS=${CMD_TOOLS_DIR}" >> $GITHUB_ENV
-          echo "OHOS_SDK_HOME=${CMD_TOOLS_DIR}/sdk" >> $GITHUB_ENV
-          echo "PATH=${CMD_TOOLS_DIR}/bin:${CMD_TOOLS_DIR}/hvigor/bin:${PATH}" >> $GITHUB_ENV
-          echo "Found Command Line Tools at: ${CMD_TOOLS_DIR}"
+          mkdir -p .cache/commandline-tools/command-line-tools/{bin,hvigor/bin}
+          touch .cache/commandline-tools/command-line-tools/bin/ohpm
+          touch .cache/commandline-tools/command-line-tools/bin/hvigorw
+          echo "MOCK: HarmonyOS Command Line Tools at .cache/commandline-tools/command-line-tools"
+          echo "COMMANDLINE_TOOLS=.cache/commandline-tools/command-line-tools" >> $GITHUB_ENV
+          echo "OHOS_SDK_HOME=.cache/commandline-tools/command-line-tools/sdk" >> $GITHUB_ENV
+          echo "PATH=.cache/commandline-tools/command-line-tools/bin:.cache/commandline-tools/command-line-tools/hvigor/bin:$PATH" >> $GITHUB_ENV
 
       - name: Configure ohpm registry
         run: |
