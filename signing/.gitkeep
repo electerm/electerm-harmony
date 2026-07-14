@@ -1,0 +1,7 @@
+# This file ensures the signing/ directory is tracked by git.
+# Place your signing materials here (they are gitignored):
+#   - electerm.p12    (keystore)
+#   - electerm.cer    (certificate from Huawei)
+#   - electermProfile.p7b  (provisioning profile from Huawei)
+#
+# See build/ENV_SETUP.md for instructions.

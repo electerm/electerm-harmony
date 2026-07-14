@@ -1,0 +1,25 @@
+{
+  "name": "electerm-harmony",
+  "version": "4.15.121",
+  "description": "Free and open-sourced terminal/ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp client for HarmonyOS",
+  "main": "",
+  "license": "MIT",
+  "author": {
+    "name": "ZHAO XuDong",
+    "email": "zxdong@gmail.com",
+    "url": "https://github.com/zxdong"
+  },
+  "homepage": "https://electerm.org",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/electerm/electerm-harmony.git"
+  },
+  "bugs": {
+    "url": "https://github.com/electerm/electerm-harmony/issues"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.21",
+    "@ohos/hvigor-ohos-plugin": "5.0.2"
+  }
+}

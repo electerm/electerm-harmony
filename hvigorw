@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# hvigorw — Wrapper script for HarmonyOS hvigor build tool.
+#
+# This script delegates to the hvigor command from:
+#   1. HarmonyOS Command Line Tools (if COMMANDLINE_TOOLS is set or in PATH)
+#   2. DevEco Studio installation (macOS/Windows)
+#
+# Usage:
+#   ./hvigorw assembleHap --mode module -p product=default --no-daemon
+
+set -euo pipefail
+
+# --- Locate hvigor binary ---------------------------------------------------
+
+HVIGOR_BIN=""
+
+# Try COMMANDLINE_TOOLS env var
+if [ -n "${COMMANDLINE_TOOLS:-}" ] && [ -x "${COMMANDLINE_TOOLS}/bin/hvigor" ]; then
+  HVIGOR_BIN="${COMMANDLINE_TOOLS}/bin/hvigor"
+# Try common Linux paths
+elif [ -x "/opt/commandline-tools-linux-x64/bin/hvigor" ]; then
+  HVIGOR_BIN="/opt/commandline-tools-linux-x64/bin/hvigor"
+# Try PATH
+elif command -v hvigor &> /dev/null; then
+  HVIGOR_BIN="hvigor"
+# Try DevEco Studio on macOS
+elif [ -x "/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigor" ]; then
+  HVIGOR_BIN="/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigor"
+fi
+
+if [ -z "${HVIGOR_BIN}" ]; then
+  echo "ERROR: hvigor not found."
+  echo "Set COMMANDLINE_TOOLS env var or install HarmonyOS Command Line Tools."
+  exit 1
+fi
+
+# --- Set SDK home if not already set ----------------------------------------
+
+if [ -z "${OHOS_SDK_HOME:-}" ]; then
+  if [ -n "${COMMANDLINE_TOOLS:-}" ]; then
+    export OHOS_SDK_HOME="${COMMANDLINE_TOOLS}/sdk"
+  fi
+fi
+
+# --- Run hvigor -------------------------------------------------------------
+
+exec "${HVIGOR_BIN}" "$@"

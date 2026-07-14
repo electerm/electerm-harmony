@@ -1,0 +1,13 @@
+{
+  "hvigorVersion": "5.0.2",
+  "dependencies": {
+    "@ohos/hvigor-ohos-plugin": "5.0.2"
+  },
+  "execution": {},
+  "logging": {
+    "level": "info"
+  },
+  "debugging": {
+    "quiet": false
+  }
+}

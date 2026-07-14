@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Electerm terminal module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Electerm"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Electerm"
+    },
+    {
+      "name": "reason_internet",
+      "value": "Electerm needs network access to connect to ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp servers and to serve the web UI on localhost"
+    },
+    {
+      "name": "reason_running_lock",
+      "value": "Electerm needs to keep the terminal backend running in the background"
+    }
+  ]
+}

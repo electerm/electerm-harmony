@@ -1,0 +1,18 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {},
+  "buildModeSet": [
+    {
+      "name": "debug"
+    },
+    {
+      "name": "release"
+    }
+  ],
+  "targets": [
+    {
+      "name": "default",
+      "runtimeOS": "HarmonyOS"
+    }
+  ]
+}

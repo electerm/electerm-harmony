@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "org.electerm.electerm",
+    "vendor": "electerm",
+    "versionCode": 41500121,
+    "versionName": "4.15.121",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}
