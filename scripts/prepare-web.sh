@@ -65,7 +65,7 @@ cd "${CLONE_DIR}"
 
 # Install dependencies
 echo "    Installing dependencies ..."
-npm ci
+npm install
 
 # Create .env from .sample.env
 echo "    Creating .env ..."
