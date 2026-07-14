@@ -65,7 +65,7 @@ cd "${CLONE_DIR}"
 
 # Install dependencies
 echo "    Installing dependencies ..."
-npm install
+npm install --legacy-peer-deps
 
 # Create .env from .sample.env
 echo "    Creating .env ..."
@@ -86,7 +86,7 @@ NODE_ENV=production npm run build
 
 # Prune dev dependencies to reduce size
 echo "    Pruning devDependencies ..."
-npm prune --production
+npm prune --production --legacy-peer-deps
 
 # --- Bundle into rawfile ----------------------------------------------------
 
