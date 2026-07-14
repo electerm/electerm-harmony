@@ -158,13 +158,12 @@ echo "    ✓ build-profile.json5 generated"
 echo "==> Configuring npm registry for hvigor ..."
 
 # hvigor requires an .npmrc file in the user's home directory
+# Use HarmonyOS npm registry which hosts @ohos/* packages
 NPMRC_FILE="${HOME}/.npmrc"
-if [ ! -f "${NPMRC_FILE}" ]; then
-  echo "registry=https://registry.npmjs.org/" > "${NPMRC_FILE}"
-  echo "    ✓ Created ${NPMRC_FILE}"
-else
-  echo "    ✓ ${NPMRC_FILE} already exists"
-fi
+cat > "${NPMRC_FILE}" <<'NPMRC'
+registry=https://repo.harmonyos.com/npm/
+NPMRC
+echo "    ✓ Created ${NPMRC_FILE} with HarmonyOS registry"
 
 # --- Install ohpm dependencies ----------------------------------------------
 
