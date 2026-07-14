@@ -113,8 +113,9 @@ jobs:
           echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
           echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
           echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
-          # GitHub prepends these to PATH for all subsequent steps.
-          echo "PATH=$COMMANDLINE_TOOLS/bin:$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_ENV"
+          # Use GITHUB_PATH to PREPEND dirs to PATH (preserves system paths like /usr/bin)
+          echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
+          echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
           echo "Extracted HarmonyOS Command Line Tools at $COMMANDLINE_TOOLS"
 
       - name: Configure ohpm registry
