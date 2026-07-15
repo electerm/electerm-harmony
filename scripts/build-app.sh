@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# build-app.sh �?Build and sign the HarmonyOS HAP package.
+# build-app.sh — Build and sign the HarmonyOS HAP package.
+#
+# This script builds an UNSIGNED HAP using hvigorw, then signs it
+# directly using hap-sign-tool.jar with plaintext passwords.
+# This bypasses the hvigor plugin's password encryption requirement
+# (which needs DevEco Studio's encrypted passwords + material/ key dirs).
 #
 # Prerequisites:
 #   - HarmonyOS Command Line Tools installed (ohpm, hvigorw in PATH)
-#   - Signing materials in signing/ directory OR provided via env vars
+#   - Signing materials in signing/ directory
 #   - prepare-node.sh and prepare-web.sh already run
 #
 # Usage:
 #   ./scripts/build-app.sh [--debug|--release]
 #
 # Environment variables (all optional, see defaults below):
-#   OHOS_SDK_HOME       �?path to HarmonyOS SDK
-#   COMMANDLINE_TOOLS   �?path to Command Line Tools
-#   SIGNING_DIR         �?directory with .p12, .cer, .p7b (default: signing/)
-#   KEYSTORE_FILE       �?keystore filename (default: electerm.p12)
-#   CERT_FILE           �?certificate filename (default: electerm_publish.cer)
-#   PROFILE_FILE        �?profile filename (default: electermRelease.p7b)
-#   KEYSTORE_PASSWORD   �?keystore password
-#   KEY_PASSWORD        �?key password
-#   KEY_ALIAS           �?key alias (default: electerm_key)
+#   OHOS_SDK_HOME       — path to HarmonyOS SDK
+#   COMMANDLINE_TOOLS   — path to Command Line Tools
+#   SIGNING_DIR         — directory with .p12, .cer, .p7b (default: signing/)
+#   KEYSTORE_FILE       — keystore filename (default: electerm.p12)
+#   CERT_FILE           — certificate filename (default: electerm_publish.cer)
+#   PROFILE_FILE        — profile filename (default: electermRelease.p7b)
+#   KEYSTORE_PASSWORD   — keystore password (plaintext)
+#   KEY_PASSWORD        — key password (plaintext)
+#   KEY_ALIAS           — key alias (default: electerm_key)
 
 set -euo pipefail
 
@@ -37,8 +42,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SIGNING_DIR="${SIGNING_DIR:-${PROJECT_ROOT}/signing}"
-# HarmonyOS signing tool requires files in signing/material/ subdirectory
-SIGNING_MATERIAL_DIR="${SIGNING_DIR}/material"
 KEYSTORE_FILE="${KEYSTORE_FILE:-electerm.p12}"
 CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
@@ -48,31 +51,21 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 echo "==> Checking signing materials ..."
 
-KEYSTORE_PATH="${SIGNING_MATERIAL_DIR}/${KEYSTORE_FILE}"
-CERT_PATH="${SIGNING_MATERIAL_DIR}/${CERT_FILE}"
-PROFILE_PATH="${SIGNING_MATERIAL_DIR}/${PROFILE_FILE}"
+KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
+CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
+PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
 
 for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   if [ ! -f "${f}" ]; then
-    echo "    �?Missing: ${f}"
+    echo "    ✗ Missing: ${f}"
     echo "    See build/ENV_SETUP.md for instructions."
     exit 1
   fi
-  echo "    �?Found: $(basename "${f}")"
+  echo "    ✓ Found: $(basename "${f}")"
 done
 
 if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
-  echo "    �?KEYSTORE_PASSWORD and KEY_PASSWORD environment variables are required."
-  exit 1
-fi
-
-# HarmonyOS signing requires passwords to be at least 32 characters
-KEYSTORE_LEN=${#KEYSTORE_PASSWORD}
-KEY_LEN=${#KEY_PASSWORD}
-if [ "${KEYSTORE_LEN}" -lt 32 ] || [ "${KEY_LEN}" -lt 32 ]; then
-  echo "    �?ERROR: HarmonyOS signing requires storePassword and keyPassword"
-  echo "      to be at least 32 characters each (got ${KEYSTORE_LEN} and ${KEY_LEN})."
-  echo "      Update OHOS_KEYSTORE_PASSWORD and OHOS_KEY_PASSWORD GitHub Secrets."
+  echo "    ✗ KEYSTORE_PASSWORD and KEY_PASSWORD environment variables are required."
   exit 1
 fi
 
@@ -94,7 +87,7 @@ if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
 fi
 
 if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
-  echo "    �?HarmonyOS Command Line Tools not found."
+  echo "    ✗ HarmonyOS Command Line Tools not found."
   echo "    Set COMMANDLINE_TOOLS env var or install to /opt/commandline-tools-linux-x64"
   exit 1
 fi
@@ -111,38 +104,37 @@ fi
 export OHOS_SDK_HOME
 export PATH="${PATH}:${COMMANDLINE_TOOLS}/bin:${COMMANDLINE_TOOLS}/hvigor/bin"
 
+# Locate hap-sign-tool.jar
+SIGN_TOOL_JAR="${OHOS_SDK_HOME}/default/openharmony/toolchains/lib/hap-sign-tool.jar"
+if [ ! -f "${SIGN_TOOL_JAR}" ]; then
+  # Try alternative path
+  SIGN_TOOL_JAR=$(find "${OHOS_SDK_HOME}" -name "hap-sign-tool.jar" -type f 2>/dev/null | head -1)
+fi
+if [ -z "${SIGN_TOOL_JAR:-}" ] || [ ! -f "${SIGN_TOOL_JAR}" ]; then
+  echo "    ✗ hap-sign-tool.jar not found in SDK"
+  exit 1
+fi
+
 echo "    OHOS_SDK_HOME: ${OHOS_SDK_HOME}"
 echo "    ohpm: ${OHPM}"
 echo "    hvigorw: ${HVIGORW}"
+echo "    sign tool: ${SIGN_TOOL_JAR}"
 
-# --- Generate build-profile.json5 with signing config -----------------------
+# --- Generate build-profile.json5 (without signing config) ------------------
+# We build an UNSIGNED HAP and sign it separately with hap-sign-tool.jar.
+# This avoids the hvigor plugin's password encryption requirement.
 
-echo "==> Configuring signing in build-profile.json5 ..."
+echo "==> Configuring build-profile.json5 ..."
 
 BUILD_PROFILE="${PROJECT_ROOT}/build-profile.json5"
 
 cat > "${BUILD_PROFILE}" <<EOF
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "${CERT_FILE}",
-          "storePassword": "${KEYSTORE_PASSWORD}",
-          "keyAlias": "${KEY_ALIAS}",
-          "keyPassword": "${KEY_PASSWORD}",
-          "profile": "${PROFILE_FILE}",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "${KEYSTORE_FILE}"
-        }
-      }
-    ],
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
         "compatibleSdkVersion": "5.0.1(13)",
         "compileSdkVersion": "5.0.1(13)",
         "runtimeOS": "HarmonyOS"
@@ -164,7 +156,7 @@ cat > "${BUILD_PROFILE}" <<EOF
 }
 EOF
 
-echo "    �?build-profile.json5 generated"
+echo "    ✓ build-profile.json5 generated (unsigned build)"
 
 # --- Generate hvigor-config.json5 using bundled hvigor version ----------------
 
@@ -186,9 +178,6 @@ echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
 # Use file: protocol to reference the bundled plugin directly.
 # This avoids version mismatch between the plugin and the hvigor engine,
 # and avoids relying on the npm registry for the plugin.
-# NOTE: The schema for hvigor-config.json5 does NOT include hvigorVersion,
-# so it must be omitted. The schema allows: modelVersion, dependencies,
-# execution, logging, debugging, nodeOptions, properties.
 if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
@@ -205,23 +194,21 @@ if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   }
 }
 HVIGORCFG
-  echo "    �?hvigor-config.json5 generated (using bundled plugin via file: protocol)"
+  echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
 else
-  echo "    �?Bundled plugin directory not found, keeping existing hvigor-config.json5"
+  echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
 fi
 
 # --- Configure npm registry for hvigor (uses pnpm internally) ----------------
 
 echo "==> Configuring npm registry for hvigor ..."
 
-# hvigor requires an .npmrc file in the user's home directory.
-# @ohos/hvigor is still fetched from the HarmonyOS npm registry.
 NPMRC_FILE="${HOME}/.npmrc"
 cat > "${NPMRC_FILE}" <<'NPMRC'
 @ohos:registry=https://repo.harmonyos.com/npm/
 registry=https://registry.npmjs.org/
 NPMRC
-echo "    �?Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
+echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
 # --- Install ohpm dependencies ----------------------------------------------
 
@@ -229,27 +216,65 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
-# --- Build the HAP ----------------------------------------------------------
+# --- Build the unsigned HAP -------------------------------------------------
 
-echo "==> Building HAP (${BUILD_MODE}) ..."
+echo "==> Building unsigned HAP (${BUILD_MODE}) ..."
 
+# Build with enableSignTask=false to skip the hvigor signing step.
+# We sign separately using hap-sign-tool.jar with plaintext passwords.
 if [ "${BUILD_MODE}" = "debug" ]; then
   "${HVIGORW}" assembleHap --mode module -p product=default \
-    -p buildMode=debug --no-daemon
+    -p buildMode=debug -p enableSignTask=false --no-daemon
 else
   "${HVIGORW}" assembleHap --mode module -p product=default \
-    -p buildMode=release --no-daemon
+    -p buildMode=release -p enableSignTask=false --no-daemon
 fi
 
-# --- Locate output ----------------------------------------------------------
+# --- Locate the unsigned HAP ------------------------------------------------
 
 HAP_DIR="${PROJECT_ROOT}/entry/build/default/outputs/default"
-HAP_FILE=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
+UNSIGNED_HAP=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
 
-if [ -z "${HAP_FILE}" ]; then
-  echo "    �?No .hap file found in ${HAP_DIR}"
+if [ -z "${UNSIGNED_HAP}" ]; then
+  echo "    ✗ No .hap file found in ${HAP_DIR}"
   exit 1
 fi
+
+echo "    ✓ Unsigned HAP: ${UNSIGNED_HAP} ($(du -h "${UNSIGNED_HAP}" | cut -f1))"
+
+# --- Sign the HAP with hap-sign-tool.jar ------------------------------------
+
+echo "==> Signing HAP with hap-sign-tool.jar ..."
+
+SIGNED_HAP="${UNSIGNED_HAP%.hap}-signed.hap"
+
+java -jar "${SIGN_TOOL_JAR}" sign-app \
+  -mode localSign \
+  -keyAlias "${KEY_ALIAS}" \
+  -keyPwd "${KEY_PASSWORD}" \
+  -appCertFile "${CERT_PATH}" \
+  -profileFile "${PROFILE_PATH}" \
+  -inFile "${UNSIGNED_HAP}" \
+  -signAlg SHA256withECDSA \
+  -keystoreFile "${KEYSTORE_PATH}" \
+  -keystorePwd "${KEYSTORE_PASSWORD}" \
+  -outFile "${SIGNED_HAP}" \
+  -compatibleVersion 13 \
+  -signCode 1 \
+  -pwdInputMode 0
+
+if [ ! -f "${SIGNED_HAP}" ]; then
+  echo "    ✗ Signing failed — no signed HAP produced"
+  exit 1
+fi
+
+# Replace the unsigned HAP with the signed one
+mv -f "${SIGNED_HAP}" "${UNSIGNED_HAP}"
+HAP_FILE="${UNSIGNED_HAP}"
+
+echo "    ✓ Signed HAP: ${HAP_FILE} ($(du -h "${HAP_FILE}" | cut -f1))"
+
+# --- Done -------------------------------------------------------------------
 
 echo ""
 echo "==> Build complete!"
@@ -258,4 +283,3 @@ echo "    HAP:  ${HAP_FILE}"
 echo "    Size: $(du -h "${HAP_FILE}" | cut -f1)"
 echo ""
 echo "    Install with: hdc install \"${HAP_FILE}\""
-

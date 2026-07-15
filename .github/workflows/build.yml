@@ -130,30 +130,27 @@ jobs:
           OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
           OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
-          # HarmonyOS signing tool REQUIRES a 'material' subdirectory
-          # Create it and decode files directly there
-          rm -rf signing/material
-          mkdir -p signing/material
+          # Decode signing files to signing/ directory.
+          # We sign with hap-sign-tool.jar directly (not hvigor's built-in signer),
+          # so no material/ subdirectory is needed.
+          mkdir -p signing
           if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
             echo "One or more signing material secrets are not set"
             exit 1
           fi
-          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/material/electerm.p12
-          echo "${OHOS_CERT_B64}" | base64 -d > signing/material/electerm_publish.cer
-          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/material/electermRelease.p7b
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
 
           # Verify files exist and have correct sizes
-          ls -la signing/material/
-          for f in signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b; do
+          ls -la signing/
+          for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
               echo "::error::Failed to decode ${f} — check GitHub Secrets."
               exit 1
             fi
             echo "  ✓ $(basename ${f}): $(du -h ${f} | cut -f1)"
           done
-          # Verify file types (debug)
-          echo "File types:"
-          file signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b
 
       # ── Step 5: Set bundle name from secret ──────────────────────────────
       - name: Configure bundle name
@@ -178,9 +175,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
-        # Debug: show actual alias value (masked in logs)
-        # The alias 'electerm_key' must match the one in the .p12 keystore
-
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
         id: find_hap
