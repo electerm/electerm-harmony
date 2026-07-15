@@ -64,6 +64,16 @@ if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
   exit 1
 fi
 
+# HarmonyOS signing requires passwords to be at least 32 characters
+KEYSTORE_LEN=${#KEYSTORE_PASSWORD}
+KEY_LEN=${#KEY_PASSWORD}
+if [ "${KEYSTORE_LEN}" -lt 32 ] || [ "${KEY_LEN}" -lt 32 ]; then
+  echo "    ✗ ERROR: HarmonyOS signing requires storePassword and keyPassword"
+  echo "      to be at least 32 characters each (got ${KEYSTORE_LEN} and ${KEY_LEN})."
+  echo "      Update OHOS_KEYSTORE_PASSWORD and OHOS_KEY_PASSWORD GitHub Secrets."
+  exit 1
+fi
+
 # --- Locate build tools -----------------------------------------------------
 
 echo "==> Locating HarmonyOS build tools ..."
