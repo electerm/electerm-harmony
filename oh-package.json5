@@ -21,7 +21,6 @@
     "entry": "file:./entry"
   },
   "devDependencies": {
-    "@ohos/hypium": "1.0.21",
-    "@ohos/hvigor-ohos-plugin": "5.10.3"
+    "@ohos/hypium": "1.0.21"
   }
 }
