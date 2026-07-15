@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# build-app.sh — Build and sign the HarmonyOS HAP package.
+# build-app.sh — Build and sign the HarmonyOS APP package.
 #
-# This script builds an UNSIGNED HAP using hvigorw, then signs it
-# directly using hap-sign-tool.jar with plaintext passwords.
+# This script builds an UNSIGNED .app using hvigorw assembleApp, then signs
+# it directly using hap-sign-tool.jar with plaintext passwords.
 # This bypasses the hvigor plugin's password encryption requirement
 # (which needs DevEco Studio's encrypted passwords + material/ key dirs).
+#
+# The .app package is a ZIP containing the HAP(s) + pack.info, and is the
+# format required by AppGallery Connect for uploading.
 #
 # Prerequisites:
 #   - HarmonyOS Command Line Tools installed (ohpm, hvigorw in PATH)
@@ -121,7 +124,7 @@ echo "    hvigorw: ${HVIGORW}"
 echo "    sign tool: ${SIGN_TOOL_JAR}"
 
 # --- Generate build-profile.json5 (without signing config) ------------------
-# We build an UNSIGNED HAP and sign it separately with hap-sign-tool.jar.
+# We build an UNSIGNED APP and sign it separately with hap-sign-tool.jar.
 # This avoids the hvigor plugin's password encryption requirement.
 
 echo "==> Configuring build-profile.json5 ..."
@@ -216,43 +219,51 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
-# --- Build the unsigned HAP -------------------------------------------------
+# --- Build the unsigned APP -------------------------------------------------
 
-echo "==> Building unsigned HAP (${BUILD_MODE}) ..."
+echo "==> Building unsigned APP (${BUILD_MODE}) ..."
 
 # Build with enableSignTask=false to skip the hvigor signing step.
 # We sign separately using hap-sign-tool.jar with plaintext passwords.
+# assembleApp produces a .app package (ZIP containing HAP + pack.info).
 if [ "${BUILD_MODE}" = "debug" ]; then
-  "${HVIGORW}" assembleHap --mode module -p product=default \
+  "${HVIGORW}" assembleApp -p product=default \
     -p buildMode=debug -p enableSignTask=false --no-daemon
 else
-  "${HVIGORW}" assembleHap --mode module -p product=default \
+  "${HVIGORW}" assembleApp -p product=default \
     -p buildMode=release -p enableSignTask=false --no-daemon
 fi
 
-# --- Locate the unsigned HAP ------------------------------------------------
+# --- Locate the unsigned APP ------------------------------------------------
 
-HAP_DIR="${PROJECT_ROOT}/entry/build/default/outputs/default"
-UNSIGNED_HAP=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
+# assembleApp outputs to build/outputs/default/*.app (project root level)
+APP_DIR="${PROJECT_ROOT}/build/outputs/default"
+UNSIGNED_APP=$(find "${APP_DIR}" -name "*.app" -type f 2>/dev/null | head -1)
 
-if [ -z "${UNSIGNED_HAP}" ]; then
-  echo "    ✗ No .hap file found in ${HAP_DIR}"
-  exit 1
+if [ -z "${UNSIGNED_APP}" ]; then
+  echo "    ✗ No .app file found in ${APP_DIR}"
+  echo "    Searching entire build tree ..."
+  UNSIGNED_APP=$(find "${PROJECT_ROOT}/build" -name "*.app" -type f 2>/dev/null | head -1)
+  if [ -z "${UNSIGNED_APP}" ]; then
+    echo "    ✗ No .app file found anywhere in build/"
+    exit 1
+  fi
 fi
 
-echo "    ✓ Unsigned HAP: ${UNSIGNED_HAP} ($(du -h "${UNSIGNED_HAP}" | cut -f1))"
+echo "    ✓ Unsigned APP: ${UNSIGNED_APP} ($(du -h "${UNSIGNED_APP}" | cut -f1))"
 
-# --- Sign the HAP with hap-sign-tool.jar ------------------------------------
+# --- Sign the APP with hap-sign-tool.jar ------------------------------------
 
-echo "==> Signing HAP with hap-sign-tool.jar ..."
+echo "==> Signing APP with hap-sign-tool.jar ..."
 
 # Show Java version for debugging (PKCS12 keystore compatibility)
 JAVA_VERSION=$(java -version 2>&1 | head -1)
 echo "    Java: ${JAVA_VERSION}"
 
-SIGNED_HAP="${UNSIGNED_HAP%.hap}-signed.hap"
+SIGNED_APP="${UNSIGNED_APP%.app}-signed.app"
 
-# Sign the HAP.
+# Sign the APP package.
+# hap-sign-tool.jar can sign both .hap and .app files.
 # NOTE: -mode localSign is required (COMMAND_ERROR code 101 if missing).
 # NOTE: -compatibleVersion, -signCode, -pwdInputMode are NOT supported by
 # this SDK version (COMMAND_PARAM_ERROR code 110). They were added later.
@@ -262,29 +273,29 @@ java -jar "${SIGN_TOOL_JAR}" sign-app \
   -keyPwd "${KEY_PASSWORD}" \
   -appCertFile "${CERT_PATH}" \
   -profileFile "${PROFILE_PATH}" \
-  -inFile "${UNSIGNED_HAP}" \
+  -inFile "${UNSIGNED_APP}" \
   -signAlg SHA256withECDSA \
   -keystoreFile "${KEYSTORE_PATH}" \
   -keystorePwd "${KEYSTORE_PASSWORD}" \
-  -outFile "${SIGNED_HAP}"
+  -outFile "${SIGNED_APP}"
 
-if [ ! -f "${SIGNED_HAP}" ]; then
-  echo "    ✗ Signing failed — no signed HAP produced"
+if [ ! -f "${SIGNED_APP}" ]; then
+  echo "    ✗ Signing failed — no signed APP produced"
   exit 1
 fi
 
-# Replace the unsigned HAP with the signed one
-mv -f "${SIGNED_HAP}" "${UNSIGNED_HAP}"
-HAP_FILE="${UNSIGNED_HAP}"
+# Replace the unsigned APP with the signed one
+mv -f "${SIGNED_APP}" "${UNSIGNED_APP}"
+APP_FILE="${UNSIGNED_APP}"
 
-echo "    ✓ Signed HAP: ${HAP_FILE} ($(du -h "${HAP_FILE}" | cut -f1))"
+echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 
 # --- Done -------------------------------------------------------------------
 
 echo ""
 echo "==> Build complete!"
 echo "    Mode: ${BUILD_MODE}"
-echo "    HAP:  ${HAP_FILE}"
-echo "    Size: $(du -h "${HAP_FILE}" | cut -f1)"
+echo "    APP:  ${APP_FILE}"
+echo "    Size: $(du -h "${APP_FILE}" | cut -f1)"
 echo ""
-echo "    Install with: hdc install \"${HAP_FILE}\""
+echo "    Upload to AppGallery Connect, or install with: hdc install \"${APP_FILE}\""

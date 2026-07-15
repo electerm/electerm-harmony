@@ -84,25 +84,31 @@ export KEY_ALIAS="electerm_key"
 
 The script performs two phases:
 
-1. **Build unsigned HAP** — generates `build-profile.json5` (with empty `signingConfigs`), runs `ohpm install`, then `hvigorw assembleHap` with `-p enableSignTask=false`.
+1. **Build unsigned APP** — generates `build-profile.json5` (with empty `signingConfigs`), runs `ohpm install`, then `hvigorw assembleApp` with `-p enableSignTask=false`.
 
-2. **Sign the HAP** — invokes `hap-sign-tool.jar` directly with plaintext passwords to produce the signed `.hap` file.
+2. **Sign the APP** — invokes `hap-sign-tool.jar` directly with plaintext passwords to produce the signed `.app` file.
 
-The signed HAP is at:
+The signed APP is at:
 ```
-entry/build/default/outputs/default/entry-default-unsigned.hap
+build/outputs/default/electerm-harmony-default.app
 ```
 
-> The output filename contains "unsigned" in its name, but the file is signed — the signed version replaces the unsigned one in place.
+> The `.app` package is a ZIP containing the HAP(s) + `pack.info`. This is the format required by AppGallery Connect for uploading.
 
-### Step 6 — Install on device
+### Step 6 — Install on device or upload to AGC
+
+**Upload to AppGallery Connect:**
+
+Upload the `.app` file directly in the AGC console under your app's testing section.
+
+**Install on device:**
 
 ```bash
 # Connect your HarmonyOS device via USB
 hdc list
 
-# Install the HAP
-hdc install entry/build/default/outputs/default/entry-default-unsigned.hap
+# Install the APP
+hdc install build/outputs/default/electerm-harmony-default.app
 ```
 
 ---
@@ -131,9 +137,9 @@ The workflow runs on:
  8. Configure ohpm registry
  9. Decode signing materials from GitHub Secrets → signing/
 10. Configure bundle name from secret (injected into app.json5)
-11. Build unsigned HAP (hvigorw assembleHap with enableSignTask=false)
-12. Sign HAP with hap-sign-tool.jar (plaintext passwords from secrets)
-13. Upload .hap as GitHub Actions artifact (retained 30 days)
+11. Build unsigned APP (hvigorw assembleApp with enableSignTask=false)
+12. Sign APP with hap-sign-tool.jar (plaintext passwords from secrets)
+13. Upload .app as GitHub Actions artifact (retained 30 days)
 14. Write build summary
 ```
 
@@ -156,7 +162,7 @@ gh workflow run build.yml --ref dev
 gh workflow run build.yml --ref dev -f build_mode=debug
 ```
 
-Or use the GitHub Actions UI: **Actions** tab → **Build HarmonyOS HAP** → **Run workflow**.
+Or use the GitHub Actions UI: **Actions** tab → **Build HarmonyOS APP** → **Run workflow**.
 
 ---
 
@@ -168,7 +174,7 @@ The following scripts automate the build steps:
 |--------|---------|
 | [`scripts/prepare-node.sh`](../scripts/prepare-node.sh) | Downloads and extracts ohos-node prebuilt binary into `rawfile/node/` |
 | [`scripts/prepare-web.sh`](../scripts/prepare-web.sh) | Clones, builds, and bundles electerm-web into `rawfile/electerm-web/` |
-| [`scripts/build-app.sh`](../scripts/build-app.sh) | Builds unsigned HAP with hvigorw, then signs it with `hap-sign-tool.jar` |
+| [`scripts/build-app.sh`](../scripts/build-app.sh) | Builds unsigned APP with hvigorw assembleApp, then signs it with `hap-sign-tool.jar` |
 | [`scripts/gen-secrets.sh`](../scripts/gen-secrets.sh) | Generates GitHub Secrets values from `signing/` files and `temp/.env` |
 
 Run them in order for a local build:
@@ -185,7 +191,7 @@ Run them in order for a local build:
 
 This project uses a **two-phase signing approach** instead of the standard DevEco Studio workflow:
 
-### Phase 1: Build unsigned HAP
+### Phase 1: Build unsigned APP
 
 `build-app.sh` generates a `build-profile.json5` with an **empty** `signingConfigs` array:
 
@@ -205,7 +211,7 @@ This project uses a **two-phase signing approach** instead of the standard DevEc
 }
 ```
 
-Then builds with `-p enableSignTask=false` to skip the hvigor plugin's built-in signer.
+Then builds with `-p enableSignTask=false` to skip the hvigor plugin's built-in signer. The `hvigorw assembleApp` command produces a `.app` package (ZIP containing HAP + `pack.info`).
 
 ### Phase 2: Sign with hap-sign-tool.jar
 
@@ -218,11 +224,11 @@ java -jar hap-sign-tool.jar sign-app \
   -keyPwd <KEY_PASSWORD> \
   -appCertFile signing/electerm_publish.cer \
   -profileFile signing/electermRelease.p7b \
-  -inFile entry-default-unsigned.hap \
+  -inFile electerm-harmony-default.app \
   -signAlg SHA256withECDSA \
   -keystoreFile signing/electerm.p12 \
   -keystorePwd <KEYSTORE_PASSWORD> \
-  -outFile entry-default-signed.hap
+  -outFile electerm-harmony-default-signed.app
 ```
 
 ### Why not use hvigor's built-in signer?
@@ -310,12 +316,12 @@ fnm use 24
 
 ## 7. File Size Considerations
 
-The final `.hap` package is approximately **230 MB** because it bundles:
+The final `.app` package is approximately **230 MB** because it bundles:
 
 - ohos-node binary (~50 MB)
 - electerm-web server code + node_modules (~170 MB)
 
-If the HAP needs to be smaller:
+If the APP needs to be smaller:
 
 - Strip the node binary: `strip entry/src/main/resources/rawfile/node/bin/node`
 - Prune devDependencies from electerm-web: `npm prune --production`

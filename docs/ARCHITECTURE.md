@@ -114,20 +114,20 @@ GitHub Actions (ubuntu-latest, x64)
 │      ├── OHOS_CERT_B64     → signing/electerm_publish.cer
 │      └── OHOS_PROFILE_B64  → signing/electermRelease.p7b
 ├── 9. Configure bundle name (from OHOS_BUNDLE_NAME secret → app.json5)
-├── 10. Build unsigned HAP (two-phase signing, phase 1)
+├── 10. Build unsigned APP (two-phase signing, phase 1)
 │       ├── Generate build-profile.json5 (empty signingConfigs)
 │       ├── ohpm install
-│       └── hvigorw assembleHap -p enableSignTask=false
-├── 11. Sign HAP with hap-sign-tool.jar (two-phase signing, phase 2)
+│       └── hvigorw assembleApp -p enableSignTask=false
+├── 11. Sign APP with hap-sign-tool.jar (two-phase signing, phase 2)
 │       └── java -jar hap-sign-tool.jar sign-app -mode localSign ...
-└── 12. Upload .hap artifact (retained 30 days)
+└── 12. Upload .app artifact (retained 30 days)
 ```
 
 ### Two-Phase Signing
 
 This project does **not** use hvigor's built-in signer (which requires DevEco Studio's encrypted passwords). Instead:
 
-1. **Build unsigned** — `hvigorw assembleHap` with `-p enableSignTask=false` and empty `signingConfigs`
+1. **Build unsigned** — `hvigorw assembleApp` with `-p enableSignTask=false` and empty `signingConfigs`
 2. **Sign separately** — `hap-sign-tool.jar` with plaintext passwords from GitHub Secrets
 
 See [`BUILD.md §5`](./BUILD.md#5-how-signing-works) for details.
