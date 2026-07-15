@@ -172,41 +172,37 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – dump hvigor error source and project structure
+      - name: Debug – dump hvigor error source and stacktrace
         if: failure()
         run: |
-          echo "=== Error definition JSON ==="
-          find /home/runner/.hvigor -name "hvigor-ohos-plugin.json" -exec cat {} \; 2>/dev/null | head -100 || true
+          echo "=== Search for 00303024 in command line tools ==="
+          grep -r "00303024" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
           echo ""
-          echo "=== Source code around 00303024 ==="
-          grep -r -B 20 -A 5 "00303024" /home/runner/.hvigor/caches/ 2>/dev/null | head -80 || true
+          echo "=== Search for 'need to be upgraded' in command line tools ==="
+          grep -r "need to be upgraded" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
           echo ""
-          echo "=== Source code around 'need to be upgraded' ==="
-          grep -r -B 10 -A 5 "need to be upgraded" /home/runner/.hvigor/caches/ 2>/dev/null | head -60 || true
+          echo "=== Search for 'project structure' in command line tools ==="
+          grep -r "project structure" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
           echo ""
-          echo "=== Search for 'migrate' or 'ohMigrate' in hvigor ==="
-          grep -r "ohMigrate\|migrate\|upgrade.*project" /home/runner/.hvigor/caches/ 2>/dev/null | head -20 || true
+          echo "=== Search in .hvigor project_caches ==="
+          find /home/runner/.hvigor/project_caches -name "*.js" -exec grep -l "00303024" {} \; 2>/dev/null | head -10 || true
+          grep -r "00303024" /home/runner/.hvigor/project_caches/ 2>/dev/null | head -10 || true
           echo ""
-          echo "=== hvigorw help ==="
-          hvigorw --help 2>&1 || true
+          echo "=== Run hvigorw with --stacktrace ==="
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
           echo ""
-          echo "=== All project config files ==="
-          echo "--- oh-package.json5 ---"
-          cat oh-package.json5 || true
-          echo "--- entry/oh-package.json5 ---"
-          cat entry/oh-package.json5 || true
-          echo "--- build-profile.json5 ---"
-          cat build-profile.json5 || true
-          echo "--- entry/build-profile.json5 ---"
-          cat entry/build-profile.json5 || true
-          echo "--- hvigor/hvigor-config.json5 ---"
-          cat hvigor/hvigor-config.json5 || true
-          echo "--- hvigorfile.ts ---"
-          cat hvigorfile.ts || true
-          echo "--- entry/hvigorfile.ts ---"
-          cat entry/hvigorfile.ts || true
-          echo "--- AppScope/app.json5 ---"
-          cat AppScope/app.json5 || true
+          echo "=== Error definition JSON files ==="
+          find /home/runner/.hvigor -name "hvigor-ohos-plugin.json" 2>/dev/null | head -5 || true
+          find "$COMMANDLINE_TOOLS/hvigor" -name "*.json" -path "*error*" 2>/dev/null | head -5 || true
+          echo ""
+          echo "=== Bundled hvigor-ohos-plugin file structure ==="
+          find "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin" -name "*.json" 2>/dev/null | head -20 || true
+          echo ""
+          echo "=== Search for 'model' field check in hvigor ==="
+          grep -r "\"model\"" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -10 || true
+          echo ""
+          echo "=== Search for 'compatibleSdkVersion' check ==="
+          grep -r "compatibleSdkVersion" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -10 || true
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
