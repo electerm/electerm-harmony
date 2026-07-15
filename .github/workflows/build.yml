@@ -130,17 +130,23 @@ jobs:
           OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
           OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
-          mkdir -p signing
+          # HarmonyOS signing tool expects a 'material' subdirectory
+          mkdir -p signing/material
           if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
             echo "One or more signing material secrets are not set"
             exit 1
           fi
-          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
-          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
-          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/material/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/material/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/material/electermRelease.p7b
+
+          # Also copy to root signing dir for build-app.sh compatibility
+          cp signing/material/electerm.p12 signing/
+          cp signing/material/electerm_publish.cer signing/
+          cp signing/material/electermRelease.p7b signing/
 
           # Verify files
-          for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
+          for f in signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
               echo "::error::Failed to decode ${f} — check GitHub Secrets."
               exit 1
