@@ -27,6 +27,7 @@
 #   KEYSTORE_PASSWORD   — keystore password (plaintext)
 #   KEY_PASSWORD        — key password (plaintext)
 #   KEY_ALIAS           — key alias (default: electerm_key)
+#   APP_ARCH            — target architecture for artifact name (default: arm64)
 
 set -euo pipefail
 
@@ -49,6 +50,48 @@ KEYSTORE_FILE="${KEYSTORE_FILE:-electerm.p12}"
 CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
 KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
+
+# Target architecture (ohos-node is arm64; override with APP_ARCH env var)
+APP_ARCH="${APP_ARCH:-arm64}"
+
+# --- Read version from electerm-web -----------------------------------------
+# The version is read dynamically from electerm-web's package.json (cloned by
+# prepare-web.sh into .cache/electerm-web/). This ensures the app version
+# always tracks the latest electerm-web release.
+
+echo "==> Reading version from electerm-web ..."
+
+ELECTERM_WEB_DIR="${PROJECT_ROOT}/.cache/electerm-web"
+ELECTERM_WEB_PKG="${ELECTERM_WEB_DIR}/package.json"
+
+if [ ! -f "${ELECTERM_WEB_PKG}" ]; then
+  echo "    ✗ electerm-web package.json not found at ${ELECTERM_WEB_PKG}"
+  echo "    Run ./scripts/prepare-web.sh first."
+  exit 1
+fi
+
+APP_VERSION=$(python3 -c "import json; print(json.load(open('${ELECTERM_WEB_PKG}'))['version'])")
+echo "    ✓ electerm-web version: ${APP_VERSION}"
+
+# Compute versionCode from semver: major * 10000000 + minor * 100000 + patch
+# e.g. 4.15.121 → 41500121
+VERSION_CODE=$(python3 -c "
+import re
+v = '${APP_VERSION}'
+m = re.match(r'(\d+)\.(\d+)\.(\d+)', v)
+if m:
+    major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    print(major * 10000000 + minor * 100000 + patch)
+else:
+    print(1)
+")
+
+if [ "${VERSION_CODE}" -gt 2147483647 ] || [ "${VERSION_CODE}" -lt 1 ]; then
+  echo "    ✗ versionCode ${VERSION_CODE} is out of range (1–2147483647)"
+  exit 1
+fi
+
+echo "    ✓ versionCode: ${VERSION_CODE}"
 
 # --- Check signing materials ------------------------------------------------
 
@@ -160,6 +203,29 @@ cat > "${BUILD_PROFILE}" <<EOF
 EOF
 
 echo "    ✓ build-profile.json5 generated (unsigned build)"
+
+# --- Update app version from electerm-web -----------------------------------
+# Sync versionName/versionCode in app.json5 and version in oh-package.json5
+# files so the built package carries the electerm-web version.
+
+echo "==> Updating app version to ${APP_VERSION} ..."
+
+APP_JSON5="${PROJECT_ROOT}/AppScope/app.json5"
+sed -i.bak "s/\"versionName\": \"[^\"]*\"/\"versionName\": \"${APP_VERSION}\"/" "${APP_JSON5}"
+sed -i.bak "s/\"versionCode\": [0-9]*/\"versionCode\": ${VERSION_CODE}/" "${APP_JSON5}"
+rm -f "${APP_JSON5}.bak"
+
+ROOT_PKG="${PROJECT_ROOT}/oh-package.json5"
+sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${APP_VERSION}\"/" "${ROOT_PKG}"
+rm -f "${ROOT_PKG}.bak"
+
+ENTRY_PKG="${PROJECT_ROOT}/entry/oh-package.json5"
+sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${APP_VERSION}\"/" "${ENTRY_PKG}"
+rm -f "${ENTRY_PKG}.bak"
+
+echo "    ✓ app.json5:        versionName=${APP_VERSION}, versionCode=${VERSION_CODE}"
+echo "    ✓ oh-package.json5: version=${APP_VERSION}"
+echo "    ✓ entry/oh-package.json5: version=${APP_VERSION}"
 
 # --- Generate hvigor-config.json5 using bundled hvigor version ----------------
 
@@ -290,12 +356,31 @@ APP_FILE="${UNSIGNED_APP}"
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 
+# --- Rename artifact with proper name ---------------------------------------
+# Final artifact name: electerm-{arch}-{version}.app
+
+FINAL_APP_NAME="electerm-${APP_ARCH}-${APP_VERSION}.app"
+FINAL_APP="$(dirname "${APP_FILE}")/${FINAL_APP_NAME}"
+
+echo "==> Renaming artifact to ${FINAL_APP_NAME} ..."
+mv -f "${APP_FILE}" "${FINAL_APP}"
+APP_FILE="${FINAL_APP}"
+
+# Export for CI (if GITHUB_ENV is available, e.g. GitHub Actions)
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "APP_VERSION=${APP_VERSION}" >> "${GITHUB_ENV}"
+  echo "APP_ARCH=${APP_ARCH}" >> "${GITHUB_ENV}"
+  echo "APP_ARTIFACT_NAME=${FINAL_APP_NAME}" >> "${GITHUB_ENV}"
+fi
+
 # --- Done -------------------------------------------------------------------
 
 echo ""
 echo "==> Build complete!"
-echo "    Mode: ${BUILD_MODE}"
-echo "    APP:  ${APP_FILE}"
-echo "    Size: $(du -h "${APP_FILE}" | cut -f1)"
+echo "    Mode:    ${BUILD_MODE}"
+echo "    Version: ${APP_VERSION} (versionCode ${VERSION_CODE})"
+echo "    Arch:    ${APP_ARCH}"
+echo "    APP:     ${APP_FILE}"
+echo "    Size:    $(du -h "${APP_FILE}" | cut -f1)"
 echo ""
 echo "    Upload to AppGallery Connect, or install with: hdc install \"${APP_FILE}\""

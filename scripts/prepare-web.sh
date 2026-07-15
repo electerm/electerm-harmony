@@ -63,6 +63,12 @@ fi
 
 cd "${CLONE_DIR}"
 
+# Print version and commit for traceability
+WEB_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
+WEB_COMMIT=$(git rev-parse --short HEAD)
+echo "    Version: ${WEB_VERSION}"
+echo "    Commit:  ${WEB_COMMIT}"
+
 # Install dependencies
 echo "    Installing dependencies ..."
 npm install --legacy-peer-deps

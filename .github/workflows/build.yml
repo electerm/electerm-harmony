@@ -184,6 +184,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find APP file
         id: find_app
@@ -193,14 +194,17 @@ jobs:
             echo "::error::No .app file found!"
             exit 1
           fi
+          APP_NAME=$(basename "${APP_FILE}")          # e.g. electerm-arm64-1.0.0.app
+          ARTIFACT_NAME="${APP_NAME%.app}"                 # e.g. electerm-arm64-1.0.0
           echo "app_path=${APP_FILE}" >> $GITHUB_OUTPUT
-          echo "app_name=$(basename ${APP_FILE})" >> $GITHUB_OUTPUT
+          echo "app_name=${APP_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
           echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
 
       - name: Upload APP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: electerm-harmony-${{ github.sha }}
+          name: ${{ steps.find_app.outputs.artifact_name }}
           path: ${{ steps.find_app.outputs.app_path }}
           retention-days: 30
 
@@ -216,6 +220,7 @@ jobs:
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| ohos-node | \`${{ env.OHOS_NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| electerm-web | \`${{ env.ELECTERM_WEB_REPO }}@${{ env.ELECTERM_WEB_REF }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then
             echo "| APP file | \`${{ steps.find_app.outputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
