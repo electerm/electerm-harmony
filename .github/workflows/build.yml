@@ -130,28 +130,22 @@ jobs:
           OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
           OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
-          # Clean and create signing directories
+          # Clean signing directory completely
           rm -rf signing
-          mkdir -p signing/material
           if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
             echo "One or more signing material secrets are not set"
             exit 1
           fi
-          # Decode to material subdirectory (required by HarmonyOS signing tool)
-          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/material/electerm.p12
-          echo "${OHOS_CERT_B64}" | base64 -d > signing/material/electerm_publish.cer
-          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/material/electermRelease.p7b
-          # Also copy to root signing dir for build-app.sh compatibility
-          cp signing/material/electerm.p12 signing/
-          cp signing/material/electerm_publish.cer signing/
-          cp signing/material/electermRelease.p7b signing/
+          # Decode signing files to project root signing/ directory
+          # HarmonyOS signing tool will use these directly
+          mkdir -p signing
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
 
-          # Verify files in both locations
-          echo "Files in signing/material/:"
-          ls -la signing/material/
-          echo "Files in signing/:"
+          # Verify files
           ls -la signing/
-          for f in signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b; do
+          for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
               echo "::error::Failed to decode ${f} — check GitHub Secrets."
               exit 1

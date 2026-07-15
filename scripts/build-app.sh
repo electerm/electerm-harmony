@@ -37,8 +37,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SIGNING_DIR="${SIGNING_DIR:-${PROJECT_ROOT}/signing}"
-# HarmonyOS signing tool expects files in a 'material' subdirectory
-SIGNING_MATERIAL_DIR="${SIGNING_DIR}/material"
 KEYSTORE_FILE="${KEYSTORE_FILE:-electerm.p12}"
 CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
@@ -48,16 +46,9 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 echo "==> Checking signing materials ..."
 
-# Use material subdirectory if it exists, otherwise fall back to signing dir
-if [ -d "${SIGNING_MATERIAL_DIR}" ]; then
-  KEYSTORE_PATH="${SIGNING_MATERIAL_DIR}/${KEYSTORE_FILE}"
-  CERT_PATH="${SIGNING_MATERIAL_DIR}/${CERT_FILE}"
-  PROFILE_PATH="${SIGNING_MATERIAL_DIR}/${PROFILE_FILE}"
-else
-  KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
-  CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
-  PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
-fi
+KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
+CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
+PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
 
 for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   if [ ! -f "${f}" ]; then
@@ -136,13 +127,13 @@ cat > "${BUILD_PROFILE}" <<EOF
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "./signing/${CERT_FILE}",
+          "certpath": "${CERT_PATH}",
           "storePassword": "${KEYSTORE_PASSWORD}",
           "keyAlias": "${KEY_ALIAS}",
           "keyPassword": "${KEY_PASSWORD}",
-          "profile": "./signing/${PROFILE_FILE}",
+          "profile": "${PROFILE_PATH}",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "./signing/${KEYSTORE_FILE}"
+          "storeFile": "${KEYSTORE_PATH}"
         }
       }
     ],
@@ -235,30 +226,6 @@ echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
-
-# --- Clean signing directory before build -----------------------------------
-# HarmonyOS signing tool may fail if there are stale files in signing directory
-echo "==> Cleaning signing directory ..."
-# Temporarily preserve signing files
-TEMP_SIGNING_DIR=$(mktemp -d)
-for f in "${KEYSTORE_FILE}" "${CERT_FILE}" "${PROFILE_FILE}"; do
-  if [ -f "${SIGNING_DIR}/${f}" ]; then
-    cp "${SIGNING_DIR}/${f}" "${TEMP_SIGNING_DIR}/"
-  fi
-done
-# Clean and recreate signing directory
-rm -rf "${SIGNING_DIR:?}"
-mkdir -p "${SIGNING_DIR}"
-mkdir -p "${SIGNING_MATERIAL_DIR}"
-# Restore signing files
-for f in "${KEYSTORE_FILE}" "${CERT_FILE}" "${PROFILE_FILE}"; do
-  if [ -f "${TEMP_SIGNING_DIR}/${f}" ]; then
-    cp "${TEMP_SIGNING_DIR}/${f}" "${SIGNING_DIR}/"
-    cp "${TEMP_SIGNING_DIR}/${f}" "${SIGNING_MATERIAL_DIR}/"
-  fi
-done
-rm -rf "${TEMP_SIGNING_DIR}"
-echo "    ✓ Signing directory cleaned and files restored"
 
 # --- Build the HAP ----------------------------------------------------------
 
