@@ -161,9 +161,10 @@ echo "==> Configuring npm registry for hvigor ..."
 # Use HarmonyOS npm registry which hosts @ohos/* packages
 NPMRC_FILE="${HOME}/.npmrc"
 cat > "${NPMRC_FILE}" <<'NPMRC'
-registry=https://repo.harmonyos.com/npm/
+@ohos:registry=https://repo.harmonyos.com/npm/
+registry=https://registry.npmjs.org/
 NPMRC
-echo "    ✓ Created ${NPMRC_FILE} with HarmonyOS registry"
+echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
 # --- Install ohpm dependencies ----------------------------------------------
 
