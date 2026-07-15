@@ -172,11 +172,26 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – print version constants on failure
+      - name: Debug – inspect SDK directory structure on failure
         if: failure()
         run: |
-          echo "=== version-const.js ==="
-          cat "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/src/const/version-const.js" 2>/dev/null || true
+          echo "=== SDK root directory ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/" || true
+          echo ""
+          echo "=== SDK default directory ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/" || true
+          echo ""
+          echo "=== SDK openharmony directory ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/" || true
+          echo ""
+          echo "=== SDK ets directory ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/ets/" || true
+          echo ""
+          echo "=== SDK ets build-tools ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/ets/build-tools/" || true
+          echo ""
+          echo "=== oh-uni-package.json files ==="
+          find "$COMMANDLINE_TOOLS/sdk" -name "oh-uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
           echo ""
           echo "=== Run hvigorw with --stacktrace ==="
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
