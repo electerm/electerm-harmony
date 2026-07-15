@@ -248,16 +248,12 @@ echo "==> Signing HAP with hap-sign-tool.jar ..."
 
 SIGNED_HAP="${UNSIGNED_HAP%.hap}-signed.hap"
 
-# Try to show the supported parameters from the tool (helps debugging)
-echo "==> Checking hap-sign-tool.jar supported parameters ..."
-java -jar "${SIGN_TOOL_JAR}" sign-app --help 2>&1 || \
-  java -jar "${SIGN_TOOL_JAR}" --help 2>&1 || \
-  echo "    ⚠ Could not retrieve help text"
-
-# Sign using only universally supported parameters.
-# Note: -compatibleVersion, -signCode, and -pwdInputMode were added in
-# newer SDK versions and cause "COMMAND_PARAM_ERROR" (code: 110) on older tools.
+# Sign the HAP.
+# NOTE: -mode localSign is required (COMMAND_ERROR code 101 if missing).
+# NOTE: -compatibleVersion, -signCode, -pwdInputMode are NOT supported by
+# this SDK version (COMMAND_PARAM_ERROR code 110). They were added later.
 java -jar "${SIGN_TOOL_JAR}" sign-app \
+  -mode localSign \
   -keyAlias "${KEY_ALIAS}" \
   -keyPwd "${KEY_PASSWORD}" \
   -appCertFile "${CERT_PATH}" \
