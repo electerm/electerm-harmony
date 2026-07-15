@@ -239,15 +239,25 @@ cd "${PROJECT_ROOT}"
 # --- Clean signing directory before build -----------------------------------
 # HarmonyOS signing tool may fail if there are stale files in signing directory
 echo "==> Cleaning signing directory ..."
-rm -rf "${SIGNING_DIR:?}/"*
-mkdir -p "${SIGNING_DIR}"
-mkdir -p "${SIGNING_MATERIAL_DIR}"
-# Copy material files back after cleanup
+# Temporarily preserve signing files
+TEMP_SIGNING_DIR=$(mktemp -d)
 for f in "${KEYSTORE_FILE}" "${CERT_FILE}" "${PROFILE_FILE}"; do
-  if [ -f "${SIGNING_MATERIAL_DIR}/${f}" ]; then
-    cp "${SIGNING_MATERIAL_DIR}/${f}" "${SIGNING_DIR}/"
+  if [ -f "${SIGNING_DIR}/${f}" ]; then
+    cp "${SIGNING_DIR}/${f}" "${TEMP_SIGNING_DIR}/"
   fi
 done
+# Clean and recreate signing directory
+rm -rf "${SIGNING_DIR:?}"
+mkdir -p "${SIGNING_DIR}"
+mkdir -p "${SIGNING_MATERIAL_DIR}"
+# Restore signing files
+for f in "${KEYSTORE_FILE}" "${CERT_FILE}" "${PROFILE_FILE}"; do
+  if [ -f "${TEMP_SIGNING_DIR}/${f}" ]; then
+    cp "${TEMP_SIGNING_DIR}/${f}" "${SIGNING_DIR}/"
+    cp "${TEMP_SIGNING_DIR}/${f}" "${SIGNING_MATERIAL_DIR}/"
+  fi
+done
+rm -rf "${TEMP_SIGNING_DIR}"
 echo "    ✓ Signing directory cleaned and files restored"
 
 # --- Build the HAP ----------------------------------------------------------
