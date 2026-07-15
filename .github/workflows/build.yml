@@ -123,6 +123,23 @@ jobs:
           ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
 
+      - name: Debug – print tool versions
+        run: |
+          echo "=== COMMANDLINE_TOOLS ==="
+          echo "$COMMANDLINE_TOOLS"
+          echo "=== ls bin ==="
+          ls -la "$COMMANDLINE_TOOLS/bin/" || true
+          echo "=== ls hvigor ==="
+          ls -la "$COMMANDLINE_TOOLS/hvigor/" || true
+          echo "=== ls sdk ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/" || true
+          echo "=== hvigorw version ==="
+          hvigorw --version || true
+          echo "=== ohpm version ==="
+          ohpm --version || true
+          echo "=== PATH ==="
+          echo "$PATH"
+
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
         env:
