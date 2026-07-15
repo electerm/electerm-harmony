@@ -172,23 +172,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – inspect SDK hms directory on failure
+      - name: Debug – print hmos-sdk-loader source on failure
         if: failure()
         run: |
-          echo "=== SDK hms directory ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/default/hms/" || true
-          echo ""
-          echo "=== SDK hms subdirectories ==="
-          find "$COMMANDLINE_TOOLS/sdk/default/hms" -maxdepth 2 -type d || true
-          echo ""
-          echo "=== uni-package.json files in hms ==="
-          find "$COMMANDLINE_TOOLS/sdk/default/hms" -name "uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
-          echo ""
-          echo "=== oh-uni-package.json files in hms ==="
-          find "$COMMANDLINE_TOOLS/sdk/default/hms" -name "oh-uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
-          echo ""
-          echo "=== sdk-pkg.json ==="
-          cat "$COMMANDLINE_TOOLS/sdk/default/sdk-pkg.json" 2>/dev/null || true
+          echo "=== hmos-sdk-loader.js (first 3000 chars) ==="
+          head -c 3000 "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/src/sdk/hmos-sdk-loader.js" 2>/dev/null || true
           echo ""
           echo "=== Run hvigorw with --stacktrace ==="
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
