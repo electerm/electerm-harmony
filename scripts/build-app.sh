@@ -246,6 +246,10 @@ echo "    ✓ Unsigned HAP: ${UNSIGNED_HAP} ($(du -h "${UNSIGNED_HAP}" | cut -f1
 
 echo "==> Signing HAP with hap-sign-tool.jar ..."
 
+# Show Java version for debugging (PKCS12 keystore compatibility)
+JAVA_VERSION=$(java -version 2>&1 | head -1)
+echo "    Java: ${JAVA_VERSION}"
+
 SIGNED_HAP="${UNSIGNED_HAP%.hap}-signed.hap"
 
 # Sign the HAP.
