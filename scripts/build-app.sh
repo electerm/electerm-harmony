@@ -174,10 +174,12 @@ echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
 # Use file: protocol to reference the bundled plugin directly.
 # This avoids version mismatch between the plugin and the hvigor engine,
 # and avoids relying on the npm registry for the plugin.
+# NOTE: The schema for hvigor-config.json5 does NOT include hvigorVersion,
+# so it must be omitted. The schema allows: modelVersion, dependencies,
+# execution, logging, debugging, nodeOptions, properties.
 if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
-  "hvigorVersion": "${BUNDLED_HVIGOR_VERSION}",
   "modelVersion": "5.0.0",
   "dependencies": {
     "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
