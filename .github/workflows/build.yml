@@ -131,10 +131,16 @@ jobs:
           ls -la "$COMMANDLINE_TOOLS/bin/" || true
           echo "=== ls hvigor ==="
           ls -la "$COMMANDLINE_TOOLS/hvigor/" || true
-          echo "=== ls sdk ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/" || true
-          echo "=== hvigorw version ==="
-          hvigorw --version || true
+          echo "=== ls hvigor/hvigor ==="
+          ls -la "$COMMANDLINE_TOOLS/hvigor/hvigor/" || true
+          echo "=== ls hvigor/hvigor-ohos-plugin ==="
+          ls -la "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/" || true
+          echo "=== bundled hvigor version ==="
+          cat "$COMMANDLINE_TOOLS/hvigor/hvigor/package.json" 2>/dev/null | grep -E '"name"|"version"' || true
+          echo "=== bundled hvigor-ohos-plugin version ==="
+          cat "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/package.json" 2>/dev/null | grep -E '"name"|"version"' || true
+          echo "=== ls sdk/default ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/" || true
           echo "=== ohpm version ==="
           ohpm --version || true
           echo "=== PATH ==="
