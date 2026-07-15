@@ -142,7 +142,7 @@ jobs:
           echo "${OHOS_CERT_B64}" | base64 -d > signing/material/electerm_publish.cer
           echo "${OHOS_PROFILE_B64}" | base64 -d > signing/material/electermRelease.p7b
 
-          # Verify files
+          # Verify files exist and have correct sizes
           ls -la signing/material/
           for f in signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
@@ -151,6 +151,9 @@ jobs:
             fi
             echo "  ✓ $(basename ${f}): $(du -h ${f} | cut -f1)"
           done
+          # Verify file types (debug)
+          echo "File types:"
+          file signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b
 
       # ── Step 5: Set bundle name from secret ──────────────────────────────
       - name: Configure bundle name
