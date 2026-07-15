@@ -131,8 +131,8 @@ cat > "${BUILD_PROFILE}" <<EOF
       {
         "name": "default",
         "signingConfig": "default",
-        "compatibleSdkVersion": "5.0.0(12)",
-        "compileSdkVersion": "5.0.0(12)",
+        "compatibleSdkVersion": "5.0.0(13)",
+        "compileSdkVersion": "5.0.0(13)",
         "runtimeOS": "HarmonyOS"
       }
     ]

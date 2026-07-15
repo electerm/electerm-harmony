@@ -172,26 +172,23 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – inspect SDK directory structure on failure
+      - name: Debug – inspect SDK hms directory on failure
         if: failure()
         run: |
-          echo "=== SDK root directory ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/" || true
+          echo "=== SDK hms directory ==="
+          ls -la "$COMMANDLINE_TOOLS/sdk/default/hms/" || true
           echo ""
-          echo "=== SDK default directory ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/default/" || true
+          echo "=== SDK hms subdirectories ==="
+          find "$COMMANDLINE_TOOLS/sdk/default/hms" -maxdepth 2 -type d || true
           echo ""
-          echo "=== SDK openharmony directory ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/" || true
+          echo "=== uni-package.json files in hms ==="
+          find "$COMMANDLINE_TOOLS/sdk/default/hms" -name "uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
           echo ""
-          echo "=== SDK ets directory ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/ets/" || true
+          echo "=== oh-uni-package.json files in hms ==="
+          find "$COMMANDLINE_TOOLS/sdk/default/hms" -name "oh-uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
           echo ""
-          echo "=== SDK ets build-tools ==="
-          ls -la "$COMMANDLINE_TOOLS/sdk/default/openharmony/ets/build-tools/" || true
-          echo ""
-          echo "=== oh-uni-package.json files ==="
-          find "$COMMANDLINE_TOOLS/sdk" -name "oh-uni-package.json" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+          echo "=== sdk-pkg.json ==="
+          cat "$COMMANDLINE_TOOLS/sdk/default/sdk-pkg.json" 2>/dev/null || true
           echo ""
           echo "=== Run hvigorw with --stacktrace ==="
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
