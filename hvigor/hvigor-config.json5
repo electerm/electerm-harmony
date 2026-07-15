@@ -1,6 +1,7 @@
 {
   "hvigorVersion": "5.19.8",
   "dependencies": {
+    "@ohos/hvigor": "5.19.8",
     "@ohos/hvigor-ohos-plugin": "5.19.8"
   },
   "execution": {},
