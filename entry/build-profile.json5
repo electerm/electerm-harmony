@@ -3,10 +3,10 @@
   "buildOption": {},
   "buildModeBinder": [
     {
-      "name": "debug"
+      "buildModeName": "debug"
     },
     {
-      "name": "release"
+      "buildModeName": "release"
     }
   ],
   "targets": [
