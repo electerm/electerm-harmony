@@ -3,6 +3,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { process } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { http } from '@kit.NetworkKit';
 
 const DOMAIN = 0x0001;
 const TAG = 'electerm-web';
@@ -39,8 +40,6 @@ struct Index {
       if (!fs.accessSync(nodeBin)) {
         hilog.info(DOMAIN, TAG, 'Extracting node binary from rawfile...');
         await this.extractRawfile(context, 'node', nodeDir);
-        // Make the binary executable
-        fs.chmodSync(nodeBin, 0o755);
         hilog.info(DOMAIN, TAG, 'Node binary extracted.');
       }
 
@@ -51,30 +50,28 @@ struct Index {
         hilog.info(DOMAIN, TAG, 'electerm-web extracted.');
       }
 
-      // Start the Node.js server as a child process
+      // Start the Node.js server using runCommand
       hilog.info(DOMAIN, TAG, `Starting node: ${nodeBin} src/app/app.js`);
-      const child = process.spawn(nodeBin, ['src/app/app.js'], {
-        cwd: webDir,
-        env: {
-          NODE_ENV: 'production',
-          HOST: SERVER_HOST,
-          PORT: String(SERVER_PORT),
-          PATH: '/data/local/usr/bin:/system/bin',
-        },
-      });
-
-      // Listen for process exit
-      child.on('exit', (code: number) => {
-        hilog.error(DOMAIN, TAG, `Node process exited with code ${code}`);
-        this.statusMessage = `Backend exited (code ${code})`;
-      });
+      const childPid: number = process.runCommand(
+        nodeBin,
+        ['src/app/app.js'],
+        {
+          cwd: webDir,
+          env: {
+            NODE_ENV: 'production',
+            HOST: SERVER_HOST,
+            PORT: String(SERVER_PORT),
+            PATH: '/data/local/usr/bin:/system/bin',
+          },
+        }
+      );
 
       // Poll server until ready
       await this.waitForServer();
       this.serverReady = true;
       hilog.info(DOMAIN, TAG, 'Backend ready, loading web UI...');
 
-    } catch (err) {
+    } catch (err: BusinessError) {
       hilog.error(DOMAIN, TAG, `Failed to start backend: ${JSON.stringify(err)}`);
       this.statusMessage = `Error: ${JSON.stringify(err)}`;
     }
@@ -107,8 +104,8 @@ struct Index {
     const intervalMs = 1000;
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const response = await fetch(SERVER_URL);
-        if (response.ok) {
+        const response: boolean = await this.httpGet(SERVER_URL);
+        if (response) {
           hilog.info(DOMAIN, TAG, `Server ready after ${i + 1} attempts.`);
           return;
         }
@@ -118,6 +115,25 @@ struct Index {
       await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
     }
     throw new Error('Backend did not start within timeout.');
+  }
+
+  /**
+   * Simple HTTP GET check using NetworkKit
+   */
+  async httpGet(url: string): Promise<boolean> {
+    const httpRequest = http.createHttp();
+    try {
+      const response = await httpRequest.request(url, {
+        method: http.RequestMethod.GET,
+        connectTimeout: 2000,
+        readTimeout: 2000,
+      });
+      httpRequest.destroy();
+      return response.responseCode === 200;
+    } catch {
+      httpRequest.destroy();
+      return false;
+    }
   }
 
   build() {
