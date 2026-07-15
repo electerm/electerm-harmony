@@ -236,6 +236,20 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
+# --- Clean signing directory before build -----------------------------------
+# HarmonyOS signing tool may fail if there are stale files in signing directory
+echo "==> Cleaning signing directory ..."
+rm -rf "${SIGNING_DIR:?}/"*
+mkdir -p "${SIGNING_DIR}"
+mkdir -p "${SIGNING_MATERIAL_DIR}"
+# Copy material files back after cleanup
+for f in "${KEYSTORE_FILE}" "${CERT_FILE}" "${PROFILE_FILE}"; do
+  if [ -f "${SIGNING_MATERIAL_DIR}/${f}" ]; then
+    cp "${SIGNING_MATERIAL_DIR}/${f}" "${SIGNING_DIR}/"
+  fi
+done
+echo "    ✓ Signing directory cleaned and files restored"
+
 # --- Build the HAP ----------------------------------------------------------
 
 echo "==> Building HAP (${BUILD_MODE}) ..."
