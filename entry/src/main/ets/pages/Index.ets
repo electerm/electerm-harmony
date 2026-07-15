@@ -1,7 +1,7 @@
 import { webview } from '@kit.ArkWeb';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { process } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { http } from '@kit.NetworkKit';
 
@@ -26,7 +26,7 @@ struct Index {
 
   /**
    * Extract bundled node binary and electerm-web files from rawfile
-   * to the app sandbox, then spawn the Node.js process.
+   * to the app sandbox, then wait for the server to be ready.
    */
   async startBackend(): Promise<void> {
     try {
@@ -34,9 +34,9 @@ struct Index {
       const sandboxDir = context.filesDir;
       const nodeDir = `${sandboxDir}/node`;
       const webDir = `${sandboxDir}/electerm-web`;
-      const nodeBin = `${nodeDir}/bin/node`;
 
       // Check if already extracted
+      const nodeBin = `${nodeDir}/bin/node`;
       if (!fs.accessSync(nodeBin)) {
         hilog.info(DOMAIN, TAG, 'Extracting node binary from rawfile...');
         await this.extractRawfile(context, 'node', nodeDir);
@@ -50,28 +50,12 @@ struct Index {
         hilog.info(DOMAIN, TAG, 'electerm-web extracted.');
       }
 
-      // Start the Node.js server using runCommand
-      hilog.info(DOMAIN, TAG, `Starting node: ${nodeBin} src/app/app.js`);
-      const childPid: number = process.runCommand(
-        nodeBin,
-        ['src/app/app.js'],
-        {
-          cwd: webDir,
-          env: {
-            NODE_ENV: 'production',
-            HOST: SERVER_HOST,
-            PORT: String(SERVER_PORT),
-            PATH: '/data/local/usr/bin:/system/bin',
-          },
-        }
-      );
-
       // Poll server until ready
       await this.waitForServer();
       this.serverReady = true;
       hilog.info(DOMAIN, TAG, 'Backend ready, loading web UI...');
 
-    } catch (err: BusinessError) {
+    } catch (err) {
       hilog.error(DOMAIN, TAG, `Failed to start backend: ${JSON.stringify(err)}`);
       this.statusMessage = `Error: ${JSON.stringify(err)}`;
     }
@@ -123,7 +107,7 @@ struct Index {
   async httpGet(url: string): Promise<boolean> {
     const httpRequest = http.createHttp();
     try {
-      const response = await httpRequest.request(url, {
+      const response: http.HttpResponse = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
         connectTimeout: 2000,
         readTimeout: 2000,
