@@ -130,18 +130,27 @@ jobs:
           OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
           OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
-          # HarmonyOS signing tool requires a 'material' subdirectory
+          # Clean and create signing directories
           rm -rf signing
           mkdir -p signing/material
           if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
             echo "One or more signing material secrets are not set"
             exit 1
           fi
+          # Decode to material subdirectory (required by HarmonyOS signing tool)
           echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/material/electerm.p12
           echo "${OHOS_CERT_B64}" | base64 -d > signing/material/electerm_publish.cer
           echo "${OHOS_PROFILE_B64}" | base64 -d > signing/material/electermRelease.p7b
+          # Also copy to root signing dir for build-app.sh compatibility
+          cp signing/material/electerm.p12 signing/
+          cp signing/material/electerm_publish.cer signing/
+          cp signing/material/electermRelease.p7b signing/
 
-          # Verify files
+          # Verify files in both locations
+          echo "Files in signing/material/:"
+          ls -la signing/material/
+          echo "Files in signing/:"
+          ls -la signing/
           for f in signing/material/electerm.p12 signing/material/electerm_publish.cer signing/material/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
               echo "::error::Failed to decode ${f} — check GitHub Secrets."
@@ -149,7 +158,6 @@ jobs:
             fi
             echo "  ✓ $(basename ${f}): $(du -h ${f} | cut -f1)"
           done
-          ls -la signing/material/
 
       # ── Step 5: Set bundle name from secret ──────────────────────────────
       - name: Configure bundle name

@@ -136,13 +136,13 @@ cat > "${BUILD_PROFILE}" <<EOF
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "${CERT_FILE}",
+          "certpath": "${SIGNING_MATERIAL_DIR}/${CERT_FILE}",
           "storePassword": "${KEYSTORE_PASSWORD}",
           "keyAlias": "${KEY_ALIAS}",
           "keyPassword": "${KEY_PASSWORD}",
-          "profile": "${PROFILE_FILE}",
+          "profile": "${SIGNING_MATERIAL_DIR}/${PROFILE_FILE}",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "${KEYSTORE_FILE}"
+          "storeFile": "${SIGNING_MATERIAL_DIR}/${KEYSTORE_FILE}"
         }
       }
     ],
