@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-app.sh — Build and sign the HarmonyOS HAP package.
+# build-app.sh �?Build and sign the HarmonyOS HAP package.
 #
 # Prerequisites:
 #   - HarmonyOS Command Line Tools installed (ohpm, hvigorw in PATH)
@@ -10,15 +10,15 @@
 #   ./scripts/build-app.sh [--debug|--release]
 #
 # Environment variables (all optional, see defaults below):
-#   OHOS_SDK_HOME       — path to HarmonyOS SDK
-#   COMMANDLINE_TOOLS   — path to Command Line Tools
-#   SIGNING_DIR         — directory with .p12, .cer, .p7b (default: signing/)
-#   KEYSTORE_FILE       — keystore filename (default: electerm.p12)
-#   CERT_FILE           — certificate filename (default: electerm_publish.cer)
-#   PROFILE_FILE        — profile filename (default: electermRelease.p7b)
-#   KEYSTORE_PASSWORD   — keystore password
-#   KEY_PASSWORD        — key password
-#   KEY_ALIAS           — key alias (default: electerm_key)
+#   OHOS_SDK_HOME       �?path to HarmonyOS SDK
+#   COMMANDLINE_TOOLS   �?path to Command Line Tools
+#   SIGNING_DIR         �?directory with .p12, .cer, .p7b (default: signing/)
+#   KEYSTORE_FILE       �?keystore filename (default: electerm.p12)
+#   CERT_FILE           �?certificate filename (default: electerm_publish.cer)
+#   PROFILE_FILE        �?profile filename (default: electermRelease.p7b)
+#   KEYSTORE_PASSWORD   �?keystore password
+#   KEY_PASSWORD        �?key password
+#   KEY_ALIAS           �?key alias (default: electerm_key)
 
 set -euo pipefail
 
@@ -37,6 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SIGNING_DIR="${SIGNING_DIR:-${PROJECT_ROOT}/signing}"
+# HarmonyOS signing tool requires files in signing/material/ subdirectory
+SIGNING_MATERIAL_DIR="${SIGNING_DIR}/material"
 KEYSTORE_FILE="${KEYSTORE_FILE:-electerm.p12}"
 CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
@@ -46,21 +48,21 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 echo "==> Checking signing materials ..."
 
-KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
-CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
-PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
+KEYSTORE_PATH="${SIGNING_MATERIAL_DIR}/${KEYSTORE_FILE}"
+CERT_PATH="${SIGNING_MATERIAL_DIR}/${CERT_FILE}"
+PROFILE_PATH="${SIGNING_MATERIAL_DIR}/${PROFILE_FILE}"
 
 for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   if [ ! -f "${f}" ]; then
-    echo "    ✗ Missing: ${f}"
+    echo "    �?Missing: ${f}"
     echo "    See build/ENV_SETUP.md for instructions."
     exit 1
   fi
-  echo "    ✓ Found: $(basename "${f}")"
+  echo "    �?Found: $(basename "${f}")"
 done
 
 if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
-  echo "    ✗ KEYSTORE_PASSWORD and KEY_PASSWORD environment variables are required."
+  echo "    �?KEYSTORE_PASSWORD and KEY_PASSWORD environment variables are required."
   exit 1
 fi
 
@@ -68,7 +70,7 @@ fi
 KEYSTORE_LEN=${#KEYSTORE_PASSWORD}
 KEY_LEN=${#KEY_PASSWORD}
 if [ "${KEYSTORE_LEN}" -lt 32 ] || [ "${KEY_LEN}" -lt 32 ]; then
-  echo "    ✗ ERROR: HarmonyOS signing requires storePassword and keyPassword"
+  echo "    �?ERROR: HarmonyOS signing requires storePassword and keyPassword"
   echo "      to be at least 32 characters each (got ${KEYSTORE_LEN} and ${KEY_LEN})."
   echo "      Update OHOS_KEYSTORE_PASSWORD and OHOS_KEY_PASSWORD GitHub Secrets."
   exit 1
@@ -92,7 +94,7 @@ if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
 fi
 
 if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
-  echo "    ✗ HarmonyOS Command Line Tools not found."
+  echo "    �?HarmonyOS Command Line Tools not found."
   echo "    Set COMMANDLINE_TOOLS env var or install to /opt/commandline-tools-linux-x64"
   exit 1
 fi
@@ -162,7 +164,7 @@ cat > "${BUILD_PROFILE}" <<EOF
 }
 EOF
 
-echo "    ✓ build-profile.json5 generated"
+echo "    �?build-profile.json5 generated"
 
 # --- Generate hvigor-config.json5 using bundled hvigor version ----------------
 
@@ -203,9 +205,9 @@ if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   }
 }
 HVIGORCFG
-  echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
+  echo "    �?hvigor-config.json5 generated (using bundled plugin via file: protocol)"
 else
-  echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
+  echo "    �?Bundled plugin directory not found, keeping existing hvigor-config.json5"
 fi
 
 # --- Configure npm registry for hvigor (uses pnpm internally) ----------------
@@ -219,7 +221,7 @@ cat > "${NPMRC_FILE}" <<'NPMRC'
 @ohos:registry=https://repo.harmonyos.com/npm/
 registry=https://registry.npmjs.org/
 NPMRC
-echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
+echo "    �?Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
 # --- Install ohpm dependencies ----------------------------------------------
 
@@ -245,7 +247,7 @@ HAP_DIR="${PROJECT_ROOT}/entry/build/default/outputs/default"
 HAP_FILE=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
 
 if [ -z "${HAP_FILE}" ]; then
-  echo "    ✗ No .hap file found in ${HAP_DIR}"
+  echo "    �?No .hap file found in ${HAP_DIR}"
   exit 1
 fi
 
@@ -256,3 +258,4 @@ echo "    HAP:  ${HAP_FILE}"
 echo "    Size: $(du -h "${HAP_FILE}" | cut -f1)"
 echo ""
 echo "    Install with: hdc install \"${HAP_FILE}\""
+
