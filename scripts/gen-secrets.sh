@@ -23,6 +23,8 @@ if [ ! -f "${ENV_FILE}" ]; then
   echo '  echo "name: electerm" >> temp/.env'
   echo '  echo "应用包名：org.electerm.electerm" >> temp/.env'
   echo '  echo "password: <your-password>" >> temp/.env'
+  echo '  # Optional (defaults are used if omitted):'
+  echo '  # echo "cmdline_tools_url: <url>" >> temp/.env'
   exit 1
 fi
 
@@ -31,6 +33,21 @@ PASS=$(grep -i '^password:' "${ENV_FILE}" | sed 's/^password:[[:space:]]*//')
 BUNDLE=$(grep -i '应用包名' "${ENV_FILE}" | sed 's/.*：//')
 APPID=$(grep -i '^appid:' "${ENV_FILE}" | sed 's/^appid:[[:space:]]*//')
 ALIAS="electerm_key"
+
+# Optional: cmdline tools URL (read from .env or use default)
+CMDLINE_TOOLS_URL=$(grep -i '^cmdline_tools_url:' "${ENV_FILE}" | sed 's/^cmdline_tools_url:[[:space:]]*//' 2>/dev/null || true)
+if [ -z "${CMDLINE_TOOLS_URL}" ]; then
+  CMDLINE_TOOLS_URL="https://hf-mirror.com/csukuangfj/harmonyos-commandline-tools/resolve/main/commandline-tools-linux-x64-5.0.5.200.zip"
+fi
+
+# Optional: server secret (reuse existing from github-secrets.txt, or generate new)
+OUT="temp/github-secrets.txt"
+if [ -f "${OUT}" ]; then
+  SERVER_SECRET=$(grep -E '^OHOS_SERVER_SECRET=' "${OUT}" | sed 's/^OHOS_SERVER_SECRET=//' || true)
+fi
+if [ -z "${SERVER_SECRET}" ]; then
+  SERVER_SECRET=$(openssl rand -base64 32 | tr -d '\n')
+fi
 
 if [ -z "${PASS}" ]; then
   echo "✗ password not found in ${ENV_FILE}"
@@ -51,12 +68,7 @@ KEYSTORE_B64=$(base64 -i signing/electerm.p12 | tr -d '\n')
 CERT_B64=$(base64 -i signing/electerm_publish.cer | tr -d '\n')
 PROFILE_B64=$(base64 -i signing/electermRelease.p7b | tr -d '\n')
 
-# Generate a random server secret for electerm-web
-SERVER_SECRET=$(openssl rand -base64 32 | tr -d '\n')
-
 # --- Write output (to gitignored temp/) --------------------------------------
-
-OUT="temp/github-secrets.txt"
 
 {
   echo "# ============================================"
@@ -89,8 +101,7 @@ OUT="temp/github-secrets.txt"
   echo "OHOS_APP_ID=${APPID}"
   echo ""
   echo "# 9. OHOS_CMDLINE_TOOLS_URL"
-  echo "# → 从 https://developer.huawei.com/consumer/cn/download/ 获取 Linux 版下载链接"
-  echo "# OHOS_CMDLINE_TOOLS_URL=https://contentcenter-vali-drcn.dbankcdn.cn/..."
+  echo "OHOS_CMDLINE_TOOLS_URL=${CMDLINE_TOOLS_URL}"
   echo ""
   echo "# 10. OHOS_SERVER_SECRET (electerm-web server secret)"
   echo "OHOS_SERVER_SECRET=${SERVER_SECRET}"

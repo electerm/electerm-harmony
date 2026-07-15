@@ -17,9 +17,11 @@
   "bugs": {
     "url": "https://github.com/electerm/electerm-harmony/issues"
   },
-  "dependencies": {},
+  "modelVersion": "5.0.0",
+  "dependencies": {
+    "entry": "file:./entry"
+  },
   "devDependencies": {
-    "@ohos/hypium": "1.0.21",
-    "@ohos/hvigor-ohos-plugin": "5.0.2"
+    "@ohos/hypium": "1.0.21"
   }
 }

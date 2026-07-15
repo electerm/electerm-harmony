@@ -1,12 +1,12 @@
 {
   "apiType": "stageMode",
   "buildOption": {},
-  "buildModeSet": [
+  "buildModeBinder": [
     {
-      "name": "debug"
+      "buildModeName": "debug"
     },
     {
-      "name": "release"
+      "buildModeName": "release"
     }
   ],
   "targets": [

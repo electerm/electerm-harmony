@@ -1,7 +1,7 @@
 {
-  "hvigorVersion": "5.0.2",
+  "modelVersion": "5.0.0",
   "dependencies": {
-    "@ohos/hvigor-ohos-plugin": "5.0.2"
+    "@ohos/hvigor-ohos-plugin": "5.10.3"
   },
   "execution": {},
   "logging": {

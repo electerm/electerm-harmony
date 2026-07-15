@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # build-app.sh — Build and sign the HarmonyOS HAP package.
 #
+# This script builds an UNSIGNED HAP using hvigorw, then signs it
+# directly using hap-sign-tool.jar with plaintext passwords.
+# This bypasses the hvigor plugin's password encryption requirement
+# (which needs DevEco Studio's encrypted passwords + material/ key dirs).
+#
 # Prerequisites:
 #   - HarmonyOS Command Line Tools installed (ohpm, hvigorw in PATH)
-#   - Signing materials in signing/ directory OR provided via env vars
+#   - Signing materials in signing/ directory
 #   - prepare-node.sh and prepare-web.sh already run
 #
 # Usage:
@@ -16,8 +21,8 @@
 #   KEYSTORE_FILE       — keystore filename (default: electerm.p12)
 #   CERT_FILE           — certificate filename (default: electerm_publish.cer)
 #   PROFILE_FILE        — profile filename (default: electermRelease.p7b)
-#   KEYSTORE_PASSWORD   — keystore password
-#   KEY_PASSWORD        — key password
+#   KEYSTORE_PASSWORD   — keystore password (plaintext)
+#   KEY_PASSWORD        — key password (plaintext)
 #   KEY_ALIAS           — key alias (default: electerm_key)
 
 set -euo pipefail
@@ -99,39 +104,39 @@ fi
 export OHOS_SDK_HOME
 export PATH="${PATH}:${COMMANDLINE_TOOLS}/bin:${COMMANDLINE_TOOLS}/hvigor/bin"
 
+# Locate hap-sign-tool.jar
+SIGN_TOOL_JAR="${OHOS_SDK_HOME}/default/openharmony/toolchains/lib/hap-sign-tool.jar"
+if [ ! -f "${SIGN_TOOL_JAR}" ]; then
+  # Try alternative path
+  SIGN_TOOL_JAR=$(find "${OHOS_SDK_HOME}" -name "hap-sign-tool.jar" -type f 2>/dev/null | head -1)
+fi
+if [ -z "${SIGN_TOOL_JAR:-}" ] || [ ! -f "${SIGN_TOOL_JAR}" ]; then
+  echo "    ✗ hap-sign-tool.jar not found in SDK"
+  exit 1
+fi
+
 echo "    OHOS_SDK_HOME: ${OHOS_SDK_HOME}"
 echo "    ohpm: ${OHPM}"
 echo "    hvigorw: ${HVIGORW}"
+echo "    sign tool: ${SIGN_TOOL_JAR}"
 
-# --- Generate build-profile.json5 with signing config -----------------------
+# --- Generate build-profile.json5 (without signing config) ------------------
+# We build an UNSIGNED HAP and sign it separately with hap-sign-tool.jar.
+# This avoids the hvigor plugin's password encryption requirement.
 
-echo "==> Configuring signing in build-profile.json5 ..."
+echo "==> Configuring build-profile.json5 ..."
 
 BUILD_PROFILE="${PROJECT_ROOT}/build-profile.json5"
 
 cat > "${BUILD_PROFILE}" <<EOF
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "${CERT_PATH}",
-          "storePassword": "${KEYSTORE_PASSWORD}",
-          "keyAlias": "${KEY_ALIAS}",
-          "keyPassword": "${KEY_PASSWORD}",
-          "profile": "${PROFILE_PATH}",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "${KEYSTORE_PATH}"
-        }
-      }
-    ],
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
-        "compatibleSdkVersion": "5.0.0(12)",
+        "compatibleSdkVersion": "5.0.1(13)",
+        "compileSdkVersion": "5.0.1(13)",
         "runtimeOS": "HarmonyOS"
       }
     ]
@@ -151,7 +156,59 @@ cat > "${BUILD_PROFILE}" <<EOF
 }
 EOF
 
-echo "    ✓ build-profile.json5 generated"
+echo "    ✓ build-profile.json5 generated (unsigned build)"
+
+# --- Generate hvigor-config.json5 using bundled hvigor version ----------------
+
+echo "==> Configuring hvigor-config.json5 ..."
+
+HVIGOR_CONFIG="${PROJECT_ROOT}/hvigor/hvigor-config.json5"
+
+# Read the bundled hvigor version from the command line tools
+BUNDLED_HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor"
+BUNDLED_PLUGIN_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor-ohos-plugin"
+
+if [ -f "${BUNDLED_HVIGOR_DIR}/package.json" ]; then
+  BUNDLED_HVIGOR_VERSION=$(python3 -c "import json; print(json.load(open('${BUNDLED_HVIGOR_DIR}/package.json'))['version'])" 2>/dev/null || echo "5.10.3")
+else
+  BUNDLED_HVIGOR_VERSION="5.10.3"
+fi
+echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
+
+# Use file: protocol to reference the bundled plugin directly.
+# This avoids version mismatch between the plugin and the hvigor engine,
+# and avoids relying on the npm registry for the plugin.
+if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
+  cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
+{
+  "modelVersion": "5.0.0",
+  "dependencies": {
+    "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
+  },
+  "execution": {},
+  "logging": {
+    "level": "info"
+  },
+  "debugging": {
+    "quiet": false
+  }
+}
+HVIGORCFG
+  echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
+else
+  echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
+fi
+
+# --- Configure npm registry for hvigor (uses pnpm internally) ----------------
+
+echo "==> Configuring npm registry for hvigor ..."
+
+NPMRC_FILE="${HOME}/.npmrc"
+cat > "${NPMRC_FILE}" <<'NPMRC'
+@ohos:registry=https://repo.harmonyos.com/npm/
+registry=https://registry.npmjs.org/
+NPMRC
+echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
 # --- Install ohpm dependencies ----------------------------------------------
 
@@ -159,27 +216,70 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
-# --- Build the HAP ----------------------------------------------------------
+# --- Build the unsigned HAP -------------------------------------------------
 
-echo "==> Building HAP (${BUILD_MODE}) ..."
+echo "==> Building unsigned HAP (${BUILD_MODE}) ..."
 
+# Build with enableSignTask=false to skip the hvigor signing step.
+# We sign separately using hap-sign-tool.jar with plaintext passwords.
 if [ "${BUILD_MODE}" = "debug" ]; then
   "${HVIGORW}" assembleHap --mode module -p product=default \
-    -p buildMode=debug --no-daemon
+    -p buildMode=debug -p enableSignTask=false --no-daemon
 else
   "${HVIGORW}" assembleHap --mode module -p product=default \
-    -p buildMode=release --no-daemon
+    -p buildMode=release -p enableSignTask=false --no-daemon
 fi
 
-# --- Locate output ----------------------------------------------------------
+# --- Locate the unsigned HAP ------------------------------------------------
 
 HAP_DIR="${PROJECT_ROOT}/entry/build/default/outputs/default"
-HAP_FILE=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
+UNSIGNED_HAP=$(find "${HAP_DIR}" -name "*.hap" -type f | head -1)
 
-if [ -z "${HAP_FILE}" ]; then
+if [ -z "${UNSIGNED_HAP}" ]; then
   echo "    ✗ No .hap file found in ${HAP_DIR}"
   exit 1
 fi
+
+echo "    ✓ Unsigned HAP: ${UNSIGNED_HAP} ($(du -h "${UNSIGNED_HAP}" | cut -f1))"
+
+# --- Sign the HAP with hap-sign-tool.jar ------------------------------------
+
+echo "==> Signing HAP with hap-sign-tool.jar ..."
+
+# Show Java version for debugging (PKCS12 keystore compatibility)
+JAVA_VERSION=$(java -version 2>&1 | head -1)
+echo "    Java: ${JAVA_VERSION}"
+
+SIGNED_HAP="${UNSIGNED_HAP%.hap}-signed.hap"
+
+# Sign the HAP.
+# NOTE: -mode localSign is required (COMMAND_ERROR code 101 if missing).
+# NOTE: -compatibleVersion, -signCode, -pwdInputMode are NOT supported by
+# this SDK version (COMMAND_PARAM_ERROR code 110). They were added later.
+java -jar "${SIGN_TOOL_JAR}" sign-app \
+  -mode localSign \
+  -keyAlias "${KEY_ALIAS}" \
+  -keyPwd "${KEY_PASSWORD}" \
+  -appCertFile "${CERT_PATH}" \
+  -profileFile "${PROFILE_PATH}" \
+  -inFile "${UNSIGNED_HAP}" \
+  -signAlg SHA256withECDSA \
+  -keystoreFile "${KEYSTORE_PATH}" \
+  -keystorePwd "${KEYSTORE_PASSWORD}" \
+  -outFile "${SIGNED_HAP}"
+
+if [ ! -f "${SIGNED_HAP}" ]; then
+  echo "    ✗ Signing failed — no signed HAP produced"
+  exit 1
+fi
+
+# Replace the unsigned HAP with the signed one
+mv -f "${SIGNED_HAP}" "${UNSIGNED_HAP}"
+HAP_FILE="${UNSIGNED_HAP}"
+
+echo "    ✓ Signed HAP: ${HAP_FILE} ($(du -h "${HAP_FILE}" | cut -f1))"
+
+# --- Done -------------------------------------------------------------------
 
 echo ""
 echo "==> Build complete!"

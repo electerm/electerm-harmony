@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write   # needed for creating GitHub Releases
+  contents: read
 
 env:
   # ohos-node release version
@@ -47,8 +47,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: '.cache/electerm-web/package-lock.json'
 
       # ── Install system deps for native modules ────────────────────────────
       - name: Install system dependencies
@@ -62,6 +60,15 @@ jobs:
             make \
             g++ \
             libsecret-1-dev
+
+      # ── Setup JDK (for hap-sign-tool.jar — must match or exceed the JDK
+      #     used to create the .p12 keystore, otherwise PKCS12 loading fails
+      #     with "keystore password was incorrect") ────────────────────────
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
 
       # ── Step 1: Download ohos-node ───────────────────────────────────────
       - name: Prepare ohos-node
@@ -77,46 +84,75 @@ jobs:
           ELECTERM_WEB_REF: ${{ env.ELECTERM_WEB_REF }}
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
-      # ── Step 3: Download & setup HarmonyOS Command Line Tools ────────────
-      - name: Download HarmonyOS Command Line Tools
+      # ── Step 3: Download & extract REAL HarmonyOS Command Line Tools ──────
+      - name: Download & extract HarmonyOS Command Line Tools
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
         run: |
-          if [ -z "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}" ]; then
+          set -euo pipefail
+          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
             echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
-            echo "See build/ENV_SETUP.md for instructions."
             exit 1
           fi
           mkdir -p .cache
-          curl -L --fail \
-            -o .cache/commandline-tools.zip \
-            "${{ secrets.OHOS_CMDLINE_TOOLS_URL }}"
-          echo "Downloaded command line tools."
-
-      - name: Extract HarmonyOS Command Line Tools
-        run: |
+          ZIP=".cache/commandline-tools.zip"
+          echo "Downloading HarmonyOS Command Line Tools (~2 GB) from secret URL ..."
+          # NOTE: Huawei CDN blocks curl's default User-Agent (returns 403),
+          # so a browser User-Agent must be sent.
+          curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+          echo "Verifying archive integrity ..."
+          if ! unzip -t "$ZIP" >/dev/null 2>&1; then
+            echo "::error::Downloaded archive is corrupt; retrying once without resume."
+            curl -L --retry 10 --retry-all-errors --retry-delay 5 \
+              -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+              -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+            unzip -t "$ZIP" >/dev/null 2>&1 || { echo "::error::Still corrupt after retry"; exit 1; }
+          fi
+          rm -rf .cache/commandline-tools
           mkdir -p .cache/commandline-tools
-          unzip -q .cache/commandline-tools.zip -d .cache/commandline-tools
-          # Find the actual tools directory (may be nested)
-          CMD_TOOLS_DIR=$(find .cache/commandline-tools -name "ohpm" -type f -exec dirname {} \; | head -1 | xargs dirname)
-          echo "COMMANDLINE_TOOLS=${CMD_TOOLS_DIR}" >> $GITHUB_ENV
-          echo "OHOS_SDK_HOME=${CMD_TOOLS_DIR}/sdk" >> $GITHUB_ENV
-          echo "PATH=${CMD_TOOLS_DIR}/bin:${CMD_TOOLS_DIR}/hvigor/bin:${PATH}" >> $GITHUB_ENV
-          echo "Found Command Line Tools at: ${CMD_TOOLS_DIR}"
+          # -o: overwrite without prompting (the official zip contains duplicate path entries)
+          unzip -o -q "$ZIP" -d .cache/commandline-tools
+          COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
+          if [ ! -d "$COMMANDLINE_TOOLS" ]; then
+            COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
+          fi
+          echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
+          echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
+          echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          # Use GITHUB_PATH to PREPEND dirs to PATH (preserves system paths like /usr/bin)
+          echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
+          echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
+          echo "Extracted HarmonyOS Command Line Tools at $COMMANDLINE_TOOLS"
 
       - name: Configure ohpm registry
         run: |
-          # Use default registry; switch to mirror if in China
-          # ohpm config set registry https://ohpm.openharmony.cn/ohpm/
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
+        env:
+          OHOS_KEYSTORE_B64: ${{ secrets.OHOS_KEYSTORE_B64 }}
+          OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
+          OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
         run: |
+          # Decode signing files to signing/ directory.
+          # We sign with hap-sign-tool.jar directly (not hvigor's built-in signer),
+          # so no material/ subdirectory is needed.
           mkdir -p signing
-          echo "${{ secrets.OHOS_KEYSTORE_B64 }}" | base64 -d > signing/electerm.p12
-          echo "${{ secrets.OHOS_CERT_B64 }}" | base64 -d > signing/electerm_publish.cer
-          echo "${{ secrets.OHOS_PROFILE_B64 }}" | base64 -d > signing/electermRelease.p7b
+          if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
+            echo "One or more signing material secrets are not set"
+            exit 1
+          fi
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
 
-          # Verify files
+          # Verify files exist and have correct sizes
+          ls -la signing/
           for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
             if [ ! -s "${f}" ]; then
               echo "::error::Failed to decode ${f} — check GitHub Secrets."
@@ -148,7 +184,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
-
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
         id: find_hap
@@ -168,16 +203,6 @@ jobs:
           name: electerm-harmony-${{ github.sha }}
           path: ${{ steps.find_hap.outputs.hap_path }}
           retention-days: 30
-
-      # ── Step 8: Create GitHub Release (on tag push) ──────────────────────
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.find_hap.outputs.hap_path }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
 
       # ── Summary ──────────────────────────────────────────────────────────
       - name: Build summary
