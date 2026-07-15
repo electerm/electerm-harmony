@@ -17,6 +17,7 @@
   "bugs": {
     "url": "https://github.com/electerm/electerm-harmony/issues"
   },
+  "modelVersion": "5.0.0",
   "dependencies": {
     "entry": "file:./entry"
   },

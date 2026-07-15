@@ -172,37 +172,14 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – dump hvigor error source and stacktrace
+      - name: Debug – print version constants on failure
         if: failure()
         run: |
-          echo "=== Search for 00303024 in command line tools ==="
-          grep -r "00303024" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
-          echo ""
-          echo "=== Search for 'need to be upgraded' in command line tools ==="
-          grep -r "need to be upgraded" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
-          echo ""
-          echo "=== Search for 'project structure' in command line tools ==="
-          grep -r "project structure" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -20 || true
-          echo ""
-          echo "=== Search in .hvigor project_caches ==="
-          find /home/runner/.hvigor/project_caches -name "*.js" -exec grep -l "00303024" {} \; 2>/dev/null | head -10 || true
-          grep -r "00303024" /home/runner/.hvigor/project_caches/ 2>/dev/null | head -10 || true
+          echo "=== version-const.js ==="
+          cat "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/src/const/version-const.js" 2>/dev/null || true
           echo ""
           echo "=== Run hvigorw with --stacktrace ==="
           hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
-          echo ""
-          echo "=== Error definition JSON files ==="
-          find /home/runner/.hvigor -name "hvigor-ohos-plugin.json" 2>/dev/null | head -5 || true
-          find "$COMMANDLINE_TOOLS/hvigor" -name "*.json" -path "*error*" 2>/dev/null | head -5 || true
-          echo ""
-          echo "=== Bundled hvigor-ohos-plugin file structure ==="
-          find "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin" -name "*.json" 2>/dev/null | head -20 || true
-          echo ""
-          echo "=== Search for 'model' field check in hvigor ==="
-          grep -r "\"model\"" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -10 || true
-          echo ""
-          echo "=== Search for 'compatibleSdkVersion' check ==="
-          grep -r "compatibleSdkVersion" "$COMMANDLINE_TOOLS/hvigor/" 2>/dev/null | head -10 || true
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file

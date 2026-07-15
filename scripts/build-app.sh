@@ -178,6 +178,7 @@ if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
   "hvigorVersion": "${BUNDLED_HVIGOR_VERSION}",
+  "modelVersion": "5.0.0",
   "dependencies": {
     "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
   },
