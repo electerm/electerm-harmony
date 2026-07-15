@@ -154,23 +154,32 @@ EOF
 
 echo "    ✓ build-profile.json5 generated"
 
-# --- Generate hvigor-config.json5 with compatible version -------------------
+# --- Generate hvigor-config.json5 using bundled hvigor version ----------------
 
 echo "==> Configuring hvigor-config.json5 ..."
 
 HVIGOR_CONFIG="${PROJECT_ROOT}/hvigor/hvigor-config.json5"
 
-# The command line tools bundle hvigor 5.10.3, but the project structure
-# requires a newer version. Install both @ohos/hvigor and the plugin from
-# the HarmonyOS npm registry to ensure version compatibility.
-HVIGOR_TARGET_VERSION="5.19.8"
+# Read the bundled hvigor version from the command line tools
+BUNDLED_HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor"
+BUNDLED_PLUGIN_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor-ohos-plugin"
 
-cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
+if [ -f "${BUNDLED_HVIGOR_DIR}/package.json" ]; then
+  BUNDLED_HVIGOR_VERSION=$(python3 -c "import json; print(json.load(open('${BUNDLED_HVIGOR_DIR}/package.json'))['version'])" 2>/dev/null || echo "5.10.3")
+else
+  BUNDLED_HVIGOR_VERSION="5.10.3"
+fi
+echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
+
+# Use file: protocol to reference the bundled plugin directly.
+# This avoids version mismatch between the plugin and the hvigor engine,
+# and avoids relying on the npm registry for the plugin.
+if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
+  cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
-  "hvigorVersion": "${HVIGOR_TARGET_VERSION}",
+  "hvigorVersion": "${BUNDLED_HVIGOR_VERSION}",
   "dependencies": {
-    "@ohos/hvigor": "${HVIGOR_TARGET_VERSION}",
-    "@ohos/hvigor-ohos-plugin": "${HVIGOR_TARGET_VERSION}"
+    "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
   },
   "execution": {},
   "logging": {
@@ -181,14 +190,17 @@ cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
   }
 }
 HVIGORCFG
-echo "    ✓ hvigor-config.json5 generated (version ${HVIGOR_TARGET_VERSION} from registry)"
+  echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
+else
+  echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
+fi
 
 # --- Configure npm registry for hvigor (uses pnpm internally) ----------------
 
 echo "==> Configuring npm registry for hvigor ..."
 
-# hvigor requires an .npmrc file in the user's home directory
-# Use HarmonyOS npm registry which hosts @ohos/* packages
+# hvigor requires an .npmrc file in the user's home directory.
+# @ohos/hvigor is still fetched from the HarmonyOS npm registry.
 NPMRC_FILE="${HOME}/.npmrc"
 cat > "${NPMRC_FILE}" <<'NPMRC'
 @ohos:registry=https://repo.harmonyos.com/npm/
