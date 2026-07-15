@@ -178,6 +178,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+        # Debug: show actual alias value (masked in logs)
+        # The alias 'electerm_key' must match the one in the .p12 keystore
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
