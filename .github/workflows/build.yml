@@ -135,8 +135,15 @@ jobs:
           cat "$COMMANDLINE_TOOLS/hvigor/hvigor/package.json" 2>/dev/null | grep -E '"name"|"version"' || true
           echo "=== bundled hvigor-ohos-plugin version ==="
           cat "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/package.json" 2>/dev/null | grep -E '"name"|"version"' || true
+          echo "=== SDK version ==="
+          cat "$COMMANDLINE_TOOLS/sdk/default/openharmony/sdk-pkg.json" 2>/dev/null || true
+          ls "$COMMANDLINE_TOOLS/sdk/default/openharmony/" || true
           echo "=== ohpm version ==="
           ohpm --version || true
+          echo "=== search for error code 00303024 ==="
+          find /home/runner/.hvigor -name "*.js" -exec grep -l "00303024" {} \; 2>/dev/null | head -5 || true
+          grep -r "00303024" /home/runner/.hvigor/project_caches/ 2>/dev/null | head -5 || true
+          grep -r "project structure and configuration" /home/runner/.hvigor/project_caches/ 2>/dev/null | head -5 || true
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
@@ -186,6 +193,22 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+
+      - name: Debug – search for error code on failure
+        if: failure()
+        run: |
+          echo "=== Generated build-profile.json5 ==="
+          cat build-profile.json5 || true
+          echo "=== Generated hvigor-config.json5 ==="
+          cat hvigor/hvigor-config.json5 || true
+          echo "=== Search for 00303024 ==="
+          grep -r "00303024" /home/runner/.hvigor/ 2>/dev/null | head -10 || true
+          echo "=== Search for 'project structure' ==="
+          grep -r "project structure" /home/runner/.hvigor/ 2>/dev/null | head -10 || true
+          echo "=== Search for 'need to be upgraded' ==="
+          grep -r "need to be upgraded" /home/runner/.hvigor/ 2>/dev/null | head -10 || true
+          echo "=== ls hvigor project cache ==="
+          ls -la /home/runner/.hvigor/project_caches/ 2>/dev/null || true
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
