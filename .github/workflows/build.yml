@@ -1,4 +1,4 @@
-name: Build HarmonyOS HAP
+name: Build HarmonyOS APP
 
 on:
   push:
@@ -175,7 +175,7 @@ jobs:
           fi
           cat AppScope/app.json5
 
-      # ── Step 6: Build & sign the HAP ─────────────────────────────────────
+      # ── Step 6: Build & sign the APP ─────────────────────────────────────
       - name: Build HarmonyOS app
         run: ./scripts/build-app.sh --${{ github.event.inputs.build_mode || 'release' }}
         env:
@@ -185,23 +185,23 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
       # ── Step 7: Upload artifact ──────────────────────────────────────────
-      - name: Find HAP file
-        id: find_hap
+      - name: Find APP file
+        id: find_app
         run: |
-          HAP_FILE=$(find entry/build -name "*.hap" -type f | head -1)
-          if [ -z "${HAP_FILE}" ]; then
-            echo "::error::No .hap file found!"
+          APP_FILE=$(find build/outputs -name "*.app" -type f | head -1)
+          if [ -z "${APP_FILE}" ]; then
+            echo "::error::No .app file found!"
             exit 1
           fi
-          echo "hap_path=${HAP_FILE}" >> $GITHUB_OUTPUT
-          echo "hap_name=$(basename ${HAP_FILE})" >> $GITHUB_OUTPUT
-          echo "Found HAP: ${HAP_FILE} ($(du -h ${HAP_FILE} | cut -f1))"
+          echo "app_path=${APP_FILE}" >> $GITHUB_OUTPUT
+          echo "app_name=$(basename ${APP_FILE})" >> $GITHUB_OUTPUT
+          echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
 
-      - name: Upload HAP artifact
+      - name: Upload APP artifact
         uses: actions/upload-artifact@v4
         with:
           name: electerm-harmony-${{ github.sha }}
-          path: ${{ steps.find_hap.outputs.hap_path }}
+          path: ${{ steps.find_app.outputs.app_path }}
           retention-days: 30
 
       # ── Summary ──────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ jobs:
           echo "| ohos-node | \`${{ env.OHOS_NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| electerm-web | \`${{ env.ELECTERM_WEB_REPO }}@${{ env.ELECTERM_WEB_REF }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
-          if [ -f "${{ steps.find_hap.outputs.hap_path }}" ]; then
-            echo "| HAP file | \`${{ steps.find_hap.outputs.hap_name }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| HAP size | \`$(du -h ${{ steps.find_hap.outputs.hap_path }} | cut -f1)\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then
+            echo "| APP file | \`${{ steps.find_app.outputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| APP size | \`$(du -h ${{ steps.find_app.outputs.app_path }} | cut -f1)\` |" >> $GITHUB_STEP_SUMMARY
           fi
