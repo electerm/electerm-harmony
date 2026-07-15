@@ -1,7 +1,7 @@
 {
   "apiType": "stageMode",
   "buildOption": {},
-  "buildModeSet": [
+  "buildModeBinder": [
     {
       "name": "debug"
     },

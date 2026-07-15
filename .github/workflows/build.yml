@@ -172,15 +172,6 @@ jobs:
           KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
-      - name: Debug – print hmos-sdk-loader source on failure
-        if: failure()
-        run: |
-          echo "=== hmos-sdk-loader.js (first 3000 chars) ==="
-          head -c 3000 "$COMMANDLINE_TOOLS/hvigor/hvigor-ohos-plugin/src/sdk/hmos-sdk-loader.js" 2>/dev/null || true
-          echo ""
-          echo "=== Run hvigorw with --stacktrace ==="
-          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace 2>&1 || true
-
       # ── Step 7: Upload artifact ──────────────────────────────────────────
       - name: Find HAP file
         id: find_hap
