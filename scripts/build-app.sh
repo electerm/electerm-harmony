@@ -37,6 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SIGNING_DIR="${SIGNING_DIR:-${PROJECT_ROOT}/signing}"
+# HarmonyOS signing tool expects files in a 'material' subdirectory
+SIGNING_MATERIAL_DIR="${SIGNING_DIR}/material"
 KEYSTORE_FILE="${KEYSTORE_FILE:-electerm.p12}"
 CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
@@ -46,9 +48,16 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 echo "==> Checking signing materials ..."
 
-KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
-CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
-PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
+# Use material subdirectory if it exists, otherwise fall back to signing dir
+if [ -d "${SIGNING_MATERIAL_DIR}" ]; then
+  KEYSTORE_PATH="${SIGNING_MATERIAL_DIR}/${KEYSTORE_FILE}"
+  CERT_PATH="${SIGNING_MATERIAL_DIR}/${CERT_FILE}"
+  PROFILE_PATH="${SIGNING_MATERIAL_DIR}/${PROFILE_FILE}"
+else
+  KEYSTORE_PATH="${SIGNING_DIR}/${KEYSTORE_FILE}"
+  CERT_PATH="${SIGNING_DIR}/${CERT_FILE}"
+  PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
+fi
 
 for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   if [ ! -f "${f}" ]; then
