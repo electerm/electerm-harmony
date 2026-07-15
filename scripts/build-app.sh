@@ -153,6 +153,47 @@ EOF
 
 echo "    ✓ build-profile.json5 generated"
 
+# --- Generate hvigor-config.json5 with bundled version ----------------------
+
+echo "==> Configuring hvigor-config.json5 ..."
+
+HVIGOR_CONFIG="${PROJECT_ROOT}/hvigor/hvigor-config.json5"
+
+# Read bundled versions from the command line tools
+BUNDLED_HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor"
+BUNDLED_PLUGIN_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor-ohos-plugin"
+
+if [ -f "${BUNDLED_HVIGOR_DIR}/package.json" ]; then
+  BUNDLED_HVIGOR_VERSION=$(python3 -c "import json; print(json.load(open('${BUNDLED_HVIGOR_DIR}/package.json'))['version'])" 2>/dev/null || echo "5.10.3")
+  echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
+else
+  BUNDLED_HVIGOR_VERSION="5.10.3"
+  echo "    ⚠ Could not read bundled hvigor version, using default: ${BUNDLED_HVIGOR_VERSION}"
+fi
+
+# Use file: protocol to reference the bundled plugin directly
+# This avoids version mismatch between the plugin and the hvigor engine
+if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
+  cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
+{
+  "hvigorVersion": "${BUNDLED_HVIGOR_VERSION}",
+  "dependencies": {
+    "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
+  },
+  "execution": {},
+  "logging": {
+    "level": "info"
+  },
+  "debugging": {
+    "quiet": false
+  }
+}
+HVIGORCFG
+  echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
+else
+  echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
+fi
+
 # --- Configure npm registry for hvigor (uses pnpm internally) ----------------
 
 echo "==> Configuring npm registry for hvigor ..."
