@@ -127,12 +127,11 @@ cat > "${BUILD_PROFILE}" <<EOF
         }
       }
     ],
-    "compileSdkVersion": "5.0.0(12)",
-    "compatibleSdkVersion": "5.0.0(12)",
     "products": [
       {
         "name": "default",
         "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
         "runtimeOS": "HarmonyOS"
       }
     ]
