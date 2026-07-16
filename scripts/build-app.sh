@@ -279,6 +279,13 @@ registry=https://registry.npmjs.org/
 NPMRC
 echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
+# --- Generate rawfile manifest ----------------------------------------------
+# Creates a JSON file listing all files in rawfile/ so the app can extract them
+# to the sandbox at runtime (HarmonyOS resourceManager has no recursive listing API).
+
+echo "==> Generating rawfile manifest ..."
+bash "${SCRIPT_DIR}/gen-manifest.sh"
+
 # --- Install ohpm dependencies ----------------------------------------------
 
 echo "==> Installing ohpm dependencies ..."

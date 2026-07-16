@@ -28,8 +28,8 @@ RAWFILE_WEB_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm-web"
 CLONE_DIR="${PROJECT_ROOT}/.cache/electerm-web"
 
 # Files/folders in electerm-web that are NOT needed at runtime — never copy to rawfile
-# (after npm run build, the compiled output is in node_modules/ and the build artifacts
-#  are self-contained; these source/docs/config files are useless in the HAP)
+# NOTE: src/app/ IS needed — it contains the Express server code (app.js, routes, etc.)
+#       Only src/client/ is not needed (already compiled into dist/ by vite build)
 SKIP_FROM_BUNDLE="
 LICENSE
 README_cn.md
@@ -39,7 +39,7 @@ package-lock.json
 run-electerm-web.sh
 build
 examples
-src
+src/client
 "
 
 # --- Main -------------------------------------------------------------------
@@ -103,17 +103,20 @@ rm -rf "${RAWFILE_WEB_DIR}"
 mkdir -p "${RAWFILE_WEB_DIR}"
 
 # Only copy what's needed at runtime:
-#   dist/         — compiled static assets (frontend build output)
+#   dist/         — compiled static assets (frontend build output + pug views)
 #   node_modules/ — runtime dependencies (after npm prune --production)
+#   src/app/      — Express server code (app.js entry point, routes, lib, etc.)
 #   package.json  — module resolution
 #   .env          — server configuration (with SERVER_SECRET set)
 #   config.js     — user customizations (if exists)
 # The following are NOT copied (useless after build):
 #   LICENSE, README.md, README_cn.md, config.sample.js, package-lock.json,
-#   run-electerm-web.sh, build/, examples/, src/
+#   run-electerm-web.sh, build/, examples/, src/client/
 
 cp -r dist "${RAWFILE_WEB_DIR}/"
 cp -r node_modules "${RAWFILE_WEB_DIR}/"
+mkdir -p "${RAWFILE_WEB_DIR}/src"
+cp -r src/app "${RAWFILE_WEB_DIR}/src/"
 cp package.json "${RAWFILE_WEB_DIR}/"
 cp .env "${RAWFILE_WEB_DIR}/"
 
