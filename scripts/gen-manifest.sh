@@ -38,9 +38,9 @@ for root, dirs, filenames in os.walk(rawfile_dir):
         if rel_path != 'manifest.json':
             files.append(rel_path.replace(os.sep, '/'))
 files.sort()
-json.dump(files, sys.stdout, indent=2)
+json.dump({'files': files}, sys.stdout, indent=2)
 " > "${MANIFEST_FILE}"
 
-FILE_COUNT=$(python3 -c "import json; print(len(json.load(open('${MANIFEST_FILE}'))))")
+FILE_COUNT=$(python3 -c "import json; print(len(json.load(open('${MANIFEST_FILE}'))['files']))")
 echo "    ✓ Manifest: ${FILE_COUNT} files -> ${MANIFEST_FILE}"
 echo "==> Manifest generation complete."
