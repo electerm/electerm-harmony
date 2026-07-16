@@ -4,7 +4,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { http } from '@kit.NetworkKit';
-import { processKit } from '@kit.ArkTS';
+import { process as childProcess } from '@kit.ArkTS';
 import { util } from '@kit.ArkTS';
 
 const DOMAIN = 0x0001;
@@ -21,7 +21,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm backend...';
-  private childProc: processKit.ChildProcess | null = null;
+  private childProc: childProcess.ChildProcess | null = null;
 
   aboutToAppear(): void {
     this.startBackend();
@@ -128,8 +128,8 @@ struct Index {
     // Read manifest.json from rawfile
     const manifestBytes = await resourceMgr.getRawFileContent('manifest.json');
     const decoder = util.TextDecoder.create('utf-8');
-    const manifestText = decoder.decodeInto(manifestBytes, { stream: false });
-    const manifest = JSON.parse(manifestText) as Record<string, string[]>;
+    const manifestText = decoder.decodeWithStream(new Uint8Array(manifestBytes.buffer));
+    const manifest: Record<string, string[]> = JSON.parse(manifestText) as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
     hilog.info(DOMAIN, TAG, `Manifest contains ${files.length} files to extract`);
@@ -181,7 +181,7 @@ struct Index {
     hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${appJs}`);
     hilog.info(DOMAIN, TAG, `Working directory: ${webDir}`);
 
-    this.childProc = processKit.spawn(nodeBin, [appJs], {
+    this.childProc = childProcess.spawn(nodeBin, [appJs], {
       cwd: webDir,
     });
 
