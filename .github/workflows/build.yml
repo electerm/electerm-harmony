@@ -26,9 +26,6 @@ permissions:
 env:
   # ohos-node release version
   OHOS_NODE_VERSION: v24.2.0
-  # electerm-web source
-  ELECTERM_WEB_REPO: electerm/electerm-web
-  ELECTERM_WEB_REF: main
 
 jobs:
   build:
@@ -76,12 +73,10 @@ jobs:
         env:
           OHOS_NODE_VERSION: ${{ env.OHOS_NODE_VERSION }}
 
-      # ── Step 2: Clone & build electerm-web ───────────────────────────────
+      # ── Step 2: Build electerm-web (from local source) ──────────────────
       - name: Prepare electerm-web
         run: ./scripts/prepare-web.sh
         env:
-          ELECTERM_WEB_REPO: ${{ env.ELECTERM_WEB_REPO }}
-          ELECTERM_WEB_REF: ${{ env.ELECTERM_WEB_REF }}
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
       # ── Step 3: Download & extract REAL HarmonyOS Command Line Tools ──────
@@ -219,7 +214,7 @@ jobs:
           echo "| Branch/Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| ohos-node | \`${{ env.OHOS_NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| electerm-web | \`${{ env.ELECTERM_WEB_REPO }}@${{ env.ELECTERM_WEB_REF }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| electerm-web | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
           echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then

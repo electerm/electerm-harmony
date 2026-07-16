@@ -1,73 +1,38 @@
 #!/usr/bin/env bash
-# prepare-web.sh — Clone, install, build, and bundle electerm-web
-# into the HarmonyOS app's rawfile resources.
+# prepare-web.sh — Install, build, and bundle electerm-web
+# from the local electerm-web/ directory into the HarmonyOS app's rawfile resources.
 #
 # Usage:
-#   ./scripts/prepare-web.sh [repo] [ref]
-#
-# Defaults:
-#   repo = electerm/electerm-web
-#   ref  = main
+#   ./scripts/prepare-web.sh
 #
 # Environment variables:
 #   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (required for production)
-#   ELECTERM_WEB_REPO   — GitHub repo (default: electerm/electerm-web)
-#   ELECTERM_WEB_REF    — branch/tag (default: main)
 
 set -euo pipefail
 
 # --- Config -----------------------------------------------------------------
 
-ELECTERM_WEB_REPO="${1:-${ELECTERM_WEB_REPO:-electerm/electerm-web}}"
-ELECTERM_WEB_REF="${2:-${ELECTERM_WEB_REF:-main}}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# electerm-web source is now bundled in the repo
+WEB_SRC_DIR="${PROJECT_ROOT}/electerm-web"
 RAWFILE_WEB_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm-web"
-CLONE_DIR="${PROJECT_ROOT}/.cache/electerm-web"
-
-# Files/folders in electerm-web that are NOT needed at runtime — never copy to rawfile
-# NOTE: src/app/ IS needed — it contains the Express server code (app.js, routes, etc.)
-#       Only src/client/ is not needed (already compiled into dist/ by vite build)
-SKIP_FROM_BUNDLE="
-LICENSE
-README_cn.md
-README.md
-config.sample.js
-package-lock.json
-run-electerm-web.sh
-build
-examples
-src/client
-"
 
 # --- Main -------------------------------------------------------------------
 
-echo "==> Preparing electerm-web (${ELECTERM_WEB_REPO}@${ELECTERM_WEB_REF})"
+echo "==> Preparing electerm-web (from local source: ${WEB_SRC_DIR})"
 
-# Clone or update
-if [ -d "${CLONE_DIR}/.git" ]; then
-  echo "    Updating existing clone ..."
-  git -C "${CLONE_DIR}" fetch --all --prune
-  git -C "${CLONE_DIR}" checkout "${ELECTERM_WEB_REF}"
-  git -C "${CLONE_DIR}" pull --ff-only
-else
-  echo "    Cloning ${ELECTERM_WEB_REPO} ..."
-  rm -rf "${CLONE_DIR}"
-  mkdir -p "$(dirname "${CLONE_DIR}")"
-  git clone --depth 1 --branch "${ELECTERM_WEB_REF}" \
-    "https://github.com/${ELECTERM_WEB_REPO}.git" \
-    "${CLONE_DIR}"
+if [ ! -f "${WEB_SRC_DIR}/package.json" ]; then
+  echo "    ✗ electerm-web source not found at ${WEB_SRC_DIR}/package.json"
+  exit 1
 fi
 
-cd "${CLONE_DIR}"
+cd "${WEB_SRC_DIR}"
 
 # Print version and commit for traceability
 WEB_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
-WEB_COMMIT=$(git rev-parse --short HEAD)
 echo "    Version: ${WEB_VERSION}"
-echo "    Commit:  ${WEB_COMMIT}"
 
 # Install dependencies
 echo "    Installing dependencies ..."
@@ -109,9 +74,6 @@ mkdir -p "${RAWFILE_WEB_DIR}"
 #   package.json  — module resolution
 #   .env          — server configuration (with SERVER_SECRET set)
 #   config.js     — user customizations (if exists)
-# The following are NOT copied (useless after build):
-#   LICENSE, README.md, README_cn.md, config.sample.js, package-lock.json,
-#   run-electerm-web.sh, build/, examples/, src/client/
 
 cp -r dist "${RAWFILE_WEB_DIR}/"
 cp -r node_modules "${RAWFILE_WEB_DIR}/"

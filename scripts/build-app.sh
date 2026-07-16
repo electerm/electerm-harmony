@@ -55,13 +55,12 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 APP_ARCH="${APP_ARCH:-arm64}"
 
 # --- Read version from electerm-web -----------------------------------------
-# The version is read dynamically from electerm-web's package.json (cloned by
-# prepare-web.sh into .cache/electerm-web/). This ensures the app version
-# always tracks the latest electerm-web release.
+# The version is read from the local electerm-web source directory.
+# This ensures the app version always tracks the bundled electerm-web.
 
 echo "==> Reading version from electerm-web ..."
 
-ELECTERM_WEB_DIR="${PROJECT_ROOT}/.cache/electerm-web"
+ELECTERM_WEB_DIR="${PROJECT_ROOT}/electerm-web"
 ELECTERM_WEB_PKG="${ELECTERM_WEB_DIR}/package.json"
 
 if [ ! -f "${ELECTERM_WEB_PKG}" ]; then
