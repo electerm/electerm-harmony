@@ -108,8 +108,10 @@ struct Index {
 
     // Read manifest.json from rawfile
     const manifestBytes = await resourceMgr.getRawFileContent('manifest.json');
-    const text = util.TextDecoder.decodeWithStream(manifestBytes);
-    const manifest: Record<string, string[]> = JSON.parse(text) as Record<string, string[]>;
+    const decoder = util.TextDecoder.create('utf-8');
+    const text = decoder.decodeToString(manifestBytes);
+    const parsedObj = JSON.parse(text);
+    const manifest: Record<string, string[]> = parsedObj as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
     hilog.info(DOMAIN, TAG, `Manifest contains ${files.length} files to extract`);
