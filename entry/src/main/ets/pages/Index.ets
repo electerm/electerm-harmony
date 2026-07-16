@@ -14,6 +14,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
+  private webDir: string = '';
 
   aboutToAppear(): void {
     this.startBackend();
@@ -61,16 +62,17 @@ struct Index {
    *
    * Note: HarmonyOS does not support spawning child processes (no
    * child_process.spawn), so we cannot run a Node.js server.
-   * Instead, we load pre-built static HTML directly.
+   * Instead, we pre-render the pug template to static HTML at build time
+   * and load it from the sandbox via WebView with file:// URL.
    */
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
       const sandboxDir = context.filesDir;
-      const webDir = `${sandboxDir}/electerm-web`;
+      this.webDir = `${sandboxDir}/electerm-web`;
 
       // Extract resources if not already done
-      if (!this.fileExists(`${webDir}/index.html`)) {
+      if (!this.fileExists(`${this.webDir}/dist/index.html`)) {
         hilog.info(DOMAIN, TAG, 'Extracting bundled resources from rawfile...');
         this.statusMessage = 'Extracting bundled resources...';
         await this.extractAllRawfiles(context, sandboxDir);
@@ -78,15 +80,15 @@ struct Index {
       }
 
       // Verify index.html exists after extraction
-      if (!this.fileExists(`${webDir}/index.html`)) {
+      if (!this.fileExists(`${this.webDir}/dist/index.html`)) {
         throw new Error(
-          `index.html not found at ${webDir} after extraction. ` +
+          `index.html not found after extraction. ` +
           'The rawfile may not contain the web content.');
       }
 
-      // Load the static web content
+      // WebView will load the file in build() via serverReady state
       this.statusMessage = 'Loading web UI...';
-      hilog.info(DOMAIN, TAG, `Web content ready at ${webDir}`);
+      hilog.info(DOMAIN, TAG, `Web content ready at ${this.webDir}/dist/index.html`);
       this.serverReady = true;
 
     } catch (err) {
@@ -150,9 +152,16 @@ struct Index {
   build() {
     Column() {
       if (this.serverReady) {
-        Text('Electerm Ready')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
+        Web({ src: `file://${this.webDir}/dist/index.html`, controller: this.controller })
+          .width('100%')
+          .height('100%')
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .fileAccess(true)
+          .imageAccess(true)
+          .onlineImageAccess(true)
+          .geolocationAccess(false)
+          .mixedMode(MixedMode.All)
       } else {
         Column() {
           Text('Electerm')

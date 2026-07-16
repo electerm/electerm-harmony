@@ -59,6 +59,45 @@ NODE_ENV=production npm run build
 echo "    Pruning devDependencies ..."
 npm prune --production --legacy-peer-deps
 
+# --- Pre-render pug template to static index.html for HarmonyOS -----------
+# HarmonyOS cannot spawn Node.js, so we pre-render the pug template to a
+# static HTML file at build time. The HTML references local assets/ files.
+
+echo "    Pre-rendering pug template for static loading..."
+PRE_RENDER_SCRIPT=$(cat <<'NODESCRIPT'
+const pug = require('pug');
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const version = pkg.version;
+
+const template = fs.readFileSync('src/app/views/index.pug', 'utf8');
+
+const html = pug.render(template, {
+  siteName: 'Electerm',
+  version: version,
+  isDev: false,
+  _global: JSON.stringify({
+    version: version,
+    isElectermHMApp: true,
+    appName: 'electerm-harmony'
+  }),
+  tokenElecterm: process.env.OHOS_SERVER_SECRET || '',
+  cdn: 'assets'
+});
+
+// Fix CSS path: pug generates "css/style-X.Y.Z.css" but file is at "assets/css/"
+const fixedHtml = html.replace(
+  /css\/style-/g,
+  'assets/css/style-'
+);
+
+fs.writeFileSync('dist/index.html', fixedHtml);
+console.log('    ✓ dist/index.html created (' + fixedHtml.length + ' bytes)');
+NODESCRIPT
+)
+
+node -e "${PRE_RENDER_SCRIPT}"
+
 # --- Bundle into rawfile ----------------------------------------------------
 
 echo "    Bundling into ${RAWFILE_WEB_DIR}/ ..."
