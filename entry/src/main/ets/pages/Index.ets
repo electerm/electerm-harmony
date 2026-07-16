@@ -4,7 +4,8 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { http } from '@kit.NetworkKit';
-import { child_process, util } from '@kit.ArkTS';
+import { processKit } from '@kit.ArkTS';
+import { util } from '@kit.ArkTS';
 
 const DOMAIN = 0x0001;
 const TAG = 'electerm-web';
@@ -20,7 +21,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm backend...';
-  private childProc: child_process.ChildProcess | null = null;
+  private childProc: processKit.ChildProcess | null = null;
 
   aboutToAppear(): void {
     this.startBackend();
@@ -93,13 +94,9 @@ struct Index {
       }
       hilog.info(DOMAIN, TAG, `Node binary found: ${nodeBin}`);
 
-      // Set executable permission on node binary (0o755 = rwxr-xr-x)
-      try {
-        fs.chmodSync(nodeBin, 0o755);
-        hilog.info(DOMAIN, TAG, 'Set executable permission on node binary.');
-      } catch (e) {
-        hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
-      }
+      // Note: fs.chmodSync is not available in HarmonyOS fileIo
+      // The node binary should already be executable in the bundle
+      hilog.info(DOMAIN, TAG, 'Node binary is ready (chmod not available).');
 
       // Start the Node.js backend
       this.statusMessage = 'Starting Node.js backend...';
@@ -131,7 +128,7 @@ struct Index {
     // Read manifest.json from rawfile
     const manifestBytes = await resourceMgr.getRawFileContent('manifest.json');
     const decoder = util.TextDecoder.create('utf-8');
-    const manifestText = decoder.decodeWithStream(manifestBytes);
+    const manifestText = decoder.decodeInto(manifestBytes, { stream: false });
     const manifest = JSON.parse(manifestText) as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
@@ -184,7 +181,7 @@ struct Index {
     hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${appJs}`);
     hilog.info(DOMAIN, TAG, `Working directory: ${webDir}`);
 
-    this.childProc = child_process.spawn(nodeBin, [appJs], {
+    this.childProc = processKit.spawn(nodeBin, [appJs], {
       cwd: webDir,
     });
 
