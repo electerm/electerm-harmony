@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess, chmod, diagnose, resolveFd, Diagnostics } from 'libspawn.so';
+import { spawnProcess, waitProcess, chmod, diagnose, resolveFd, spawnFromFd, diagnoseFd, checkPaths, Diagnostics, FdDiagnostics, PathInfo } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -117,92 +117,90 @@ struct Index {
       hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}`);
       hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}`);
 
-      // --- Step 2: Resolve real physical paths ---
+      // --- Step 2: Open node binary via ArkTS and spawn via /proc/self/fd ---
       // HarmonyOS sandbox paths are virtual — only ArkTS fs APIs can see them.
-      // We open each file via ArkTS and read /proc/self/fd/<fd> to get the
-      // real path that posix_spawn (native C++) can use.
-      this.statusMessage = 'Resolving paths...';
-      hilog.info(DOMAIN, TAG, 'Resolving real physical paths...');
+      // NAPI POSIX calls (access, open, posix_spawn) cannot find these paths.
+      // But an fd opened by ArkTS is a real kernel fd. We pass it to NAPI
+      // and use /proc/self/fd/<fd> as the binary path for posix_spawn.
+      this.statusMessage = 'Opening engine binary...';
+      hilog.info(DOMAIN, TAG, 'Opening node binary via ArkTS for fd-based spawn...');
 
-      const realNodeBin = this.resolveRealPath(nodeBin);
-      const realEntryScript = this.resolveRealPath(entryScript);
+      const nodeFile = fs.openSync(nodeBin, fs.OpenMode.READ_ONLY);
+      hilog.info(DOMAIN, TAG, `nodeBin fd: ${nodeFile.fd}`);
 
-      // Derive real lib dir from real node bin path.
-      // If realNodeBin = /data/app/.../electerm/bin/node
-      // then realElectermDir = /data/app/.../electerm
-      // and realLibDir = /data/app/.../electerm/lib
-      let realLibDir = `${this.electermDir}/lib`;  // fallback to sandbox path
-      const binNodeIdx = realNodeBin.lastIndexOf('/bin/node');
-      if (binNodeIdx > 0) {
-        const realElectermDir = realNodeBin.substring(0, binNodeIdx);
-        realLibDir = `${realElectermDir}/lib`;
-      }
-
-      hilog.info(DOMAIN, TAG, `realNodeBin: ${realNodeBin}`);
-      hilog.info(DOMAIN, TAG, `realLibDir: ${realLibDir}`);
-      hilog.info(DOMAIN, TAG, `realEntryScript: ${realEntryScript}`);
-
-      // --- Step 3: Make node binary executable (use real path) ---
-      this.statusMessage = 'Preparing engine...';
+      // Diagnose the fd to see if we can read the ELF header
       try {
-        chmod(realNodeBin, 0o755);
-        hilog.info(DOMAIN, TAG, `chmod 0755 ${realNodeBin}`);
+        const fdDiag: FdDiagnostics = diagnoseFd(nodeFile.fd);
+        hilog.info(DOMAIN, TAG, `FdDiagnostics: fdValid=${fdDiag.fdValid} magic=${fdDiag.magic} interpreter=${fdDiag.interpreter} fdPath=${fdDiag.fdPath} fdPathAccessible=${fdDiag.fdPathAccessible}`);
       } catch (e) {
-        hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
+        hilog.warn(DOMAIN, TAG, `diagnoseFd failed: ${this.getErrorMessage(e as object)}`);
       }
 
-      // --- Step 4: Spawn the Node.js backend via NAPI ---
-      this.statusMessage = 'Starting Node.js engine...';
-      hilog.info(DOMAIN, TAG, `Spawning: ${realNodeBin} ${realEntryScript}`);
+      // Derive libDir for LD_LIBRARY_PATH (still virtual, but dynamic linker
+      // in child process may have same restriction... we'll try anyway)
+      const libDir = `${this.electermDir}/lib`;
 
-      // Build environment variables for the Node.js process.
-      // LD_LIBRARY_PATH must point to the REAL lib dir (not the virtual
-      // sandbox path) so the dynamic linker can find Node's shared libs.
+      // Build environment variables
       const envVars: Record<string, string> = {
-        'LD_LIBRARY_PATH': realLibDir,
+        'LD_LIBRARY_PATH': libDir,
         'HOME': sandboxDir,
-        'NODE_PATH': `${realLibDir}/node_modules`,
+        'NODE_PATH': `${libDir}/node_modules`,
       };
 
       let pid: number;
       try {
-        pid = spawnProcess(realNodeBin, [realEntryScript], envVars);
-        hilog.info(DOMAIN, TAG, `Node.js backend spawned, PID: ${pid}`);
+        // Try fd-based spawn first (most likely to work)
+        hilog.info(DOMAIN, TAG, `Spawning via /proc/self/fd/${nodeFile.fd}...`);
+        pid = spawnFromFd(nodeFile.fd, [entryScript], envVars);
+        hilog.info(DOMAIN, TAG, `Node.js backend spawned (via fd), PID: ${pid}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
-        hilog.error(DOMAIN, TAG, `spawnProcess failed: ${msg}`);
+        hilog.error(DOMAIN, TAG, `spawnFromFd failed: ${msg}`);
 
         const errorParts: string[] = [];
         errorParts.push(`Failed to spawn Node.js: ${msg}`);
         errorParts.push('');
         errorParts.push(`nodeBin (virtual): ${nodeBin}`);
         errorParts.push(`nodeBin exists (ArkTS): ${this.fileExists(nodeBin)}`);
-        errorParts.push(`realNodeBin: ${realNodeBin}`);
-        errorParts.push(`realLibDir: ${realLibDir}`);
-        errorParts.push(`realEntryScript: ${realEntryScript}`);
+        errorParts.push(`libDir: ${libDir}`);
+        errorParts.push(`entryScript: ${entryScript}`);
 
-        // NAPI-side diagnostics: check ELF header, interpreter, etc.
+        // FdDiagnostics
         try {
-          const diag: Diagnostics = diagnose(realNodeBin);
+          const fdDiag: FdDiagnostics = diagnoseFd(nodeFile.fd);
           errorParts.push('');
-          errorParts.push('=== NAPI Diagnostics (real path) ===');
-          errorParts.push(`exists: ${diag.exists}`);
-          errorParts.push(`executable: ${diag.executable}`);
-          errorParts.push(`stat: ${diag.stat}`);
-          errorParts.push(`magic: ${diag.magic}`);
-          errorParts.push(`interpreter: ${diag.interpreter}`);
-          errorParts.push(`interpreterExists: ${diag.interpreterExists}`);
-          errorParts.push(`cwd: ${diag.cwd}`);
-          errorParts.push(`realpath: ${diag.realpath}`);
-          errorParts.push(`dirListing: ${diag.dirListing}`);
+          errorParts.push('=== FdDiagnostics ===');
+          errorParts.push(`fdValid: ${fdDiag.fdValid}`);
+          errorParts.push(`stat: ${fdDiag.stat}`);
+          errorParts.push(`magic: ${fdDiag.magic}`);
+          errorParts.push(`interpreter: ${fdDiag.interpreter}`);
+          errorParts.push(`interpreterExists: ${fdDiag.interpreterExists}`);
+          errorParts.push(`fdPath: ${fdDiag.fdPath}`);
+          errorParts.push(`fdPathAccessible: ${fdDiag.fdPathAccessible}`);
         } catch (diagErr) {
-          errorParts.push(`diagnose failed: ${this.getErrorMessage(diagErr as object)}`);
+          errorParts.push(`diagnoseFd failed: ${this.getErrorMessage(diagErr as object)}`);
+        }
+
+        // Accessible paths
+        try {
+          const paths: PathInfo[] = checkPaths();
+          errorParts.push('');
+          errorParts.push('=== Accessible Paths (NAPI) ===');
+          for (const p of paths) {
+            errorParts.push(`${p.path}: exists=${p.exists} exec=${p.executable} (${p.stat})`);
+          }
+        } catch (pathsErr) {
+          errorParts.push(`checkPaths failed: ${this.getErrorMessage(pathsErr as object)}`);
         }
 
         this.errorMessage = errorParts.join('\n');
         this.statusMessage = 'Engine error';
+        fs.closeSync(nodeFile);
         return;
       }
+
+      // Close the fd in parent process — child has its own copy
+      fs.closeSync(nodeFile);
 
       if (pid <= 0) {
         this.errorMessage = `spawnProcess returned invalid PID: ${pid}`;

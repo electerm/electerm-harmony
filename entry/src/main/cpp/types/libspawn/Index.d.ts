@@ -73,3 +73,48 @@ export const diagnose: (path: string) => Diagnostics;
  * @throws Error if readlink fails.
  */
 export const resolveFd: (fd: number) => string;
+
+/**
+ * Spawns a child process using /proc/self/fd/<fd> as the binary path.
+ *
+ * This bypasses the sandbox virtual path issue — the fd opened by ArkTS
+ * is a real kernel fd, and /proc/self/fd/<fd> is accessible to execve.
+ *
+ * @param fd   - File descriptor of the binary (from ArkTS fs.openSync()).
+ * @param args - Array of string arguments.
+ * @param env  - Optional environment variables.
+ * @returns The child process PID (>0).
+ * @throws Error if posix_spawn fails.
+ */
+export const spawnFromFd: (
+  fd: number,
+  args: string[],
+  env?: Record<string, string>
+) => number;
+
+/**
+ * Diagnoses a binary via its file descriptor (bypasses path resolution).
+ * @param fd - File descriptor of the binary.
+ */
+export interface FdDiagnostics {
+  fdValid: boolean;
+  stat: string;
+  magic: string;
+  interpreter: string;
+  interpreterExists: boolean;
+  fdPath: string;
+  fdPathAccessible: boolean;
+}
+export const diagnoseFd: (fd: number) => FdDiagnostics;
+
+/**
+ * Checks which common paths are accessible from NAPI native code.
+ * @returns Array of path accessibility info.
+ */
+export interface PathInfo {
+  path: string;
+  exists: boolean;
+  executable: boolean;
+  stat: string;
+}
+export const checkPaths: () => PathInfo[];

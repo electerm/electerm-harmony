@@ -483,6 +483,301 @@ static napi_value WaitProcess(napi_env env, napi_callback_info info) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  spawnFromFd(fd, args, env?) — spawn via /proc/self/fd/<fd>         */
+/*                                                                    */
+/*  HarmonyOS sandbox paths are virtual — posix_spawn(path) fails.    */
+/*  But an fd opened by ArkTS is a real kernel fd. On Linux,          */
+/*  execve("/proc/self/fd/<fd>") works because the kernel uses        */
+/*  the fd's inode directly, bypassing path resolution.               */
+/* ------------------------------------------------------------------ */
+
+static napi_value SpawnFromFd(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_status napiStatus = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (napiStatus != napi_ok || argc < 2) {
+        napi_throw_type_error(env, nullptr,
+            "Expected 2-3 arguments: fd (number), args (string[]), [env (object)]");
+        return nullptr;
+    }
+
+    /* --- Read fd --- */
+    int32_t fd = -1;
+    napi_get_value_int32(env, args[0], &fd);
+    if (fd < 0) {
+        napi_throw_type_error(env, nullptr, "fd must be a non-negative integer");
+        return nullptr;
+    }
+
+    /* Verify fd is valid via fstat */
+    struct stat fdStat;
+    if (fstat(fd, &fdStat) != 0) {
+        char errBuf[256];
+        snprintf(errBuf, sizeof(errBuf),
+                 "fstat(fd=%d) failed: %s", fd, strerror(errno));
+        napi_throw_error(env, "FD_ERROR", errBuf);
+        return nullptr;
+    }
+
+    /* Construct /proc/self/fd/<fd> path */
+    char procFdPath[64];
+    snprintf(procFdPath, sizeof(procFdPath), "/proc/self/fd/%d", fd);
+
+    /* --- Read arguments array --- */
+    bool isArray = false;
+    napi_is_array(env, args[1], &isArray);
+    if (!isArray) {
+        napi_throw_type_error(env, nullptr, "args must be an array of strings");
+        return nullptr;
+    }
+
+    uint32_t argCount = 0;
+    napi_get_array_length(env, args[1], &argCount);
+
+    /* Build argv: [procFdPath, arg0, arg1, ..., nullptr] */
+    std::vector<std::string> argStrings;
+    std::vector<char *> argv;
+
+    argStrings.push_back(procFdPath);  /* argv[0] = program name */
+    argv.push_back(&argStrings.back()[0]);
+
+    for (uint32_t i = 0; i < argCount; i++) {
+        napi_value elem;
+        napi_get_element(env, args[1], i, &elem);
+
+        size_t elemLen = 0;
+        napi_get_value_string_utf8(env, elem, nullptr, 0, &elemLen);
+        std::string argStr(elemLen + 1, '\0');
+        napi_get_value_string_utf8(env, elem, &argStr[0], elemLen + 1, &elemLen);
+        argStr.resize(elemLen);
+
+        argStrings.push_back(std::move(argStr));
+        argv.push_back(&argStrings.back()[0]);
+    }
+    argv.push_back(nullptr);
+
+    /* --- Read optional env object --- */
+    std::vector<std::string> extraEnv;
+    std::vector<std::string> envStorage;
+
+    if (argc >= 3) {
+        napi_valuetype envType;
+        napi_typeof(env, args[2], &envType);
+        if (envType == napi_object) {
+            napi_value keys;
+            napi_get_property_names(env, args[2], &keys);
+
+            uint32_t keyCount = 0;
+            napi_get_array_length(env, keys, &keyCount);
+
+            for (uint32_t i = 0; i < keyCount; i++) {
+                napi_value key;
+                napi_get_element(env, keys, i, &key);
+
+                size_t keyLen = 0;
+                napi_get_value_string_utf8(env, key, nullptr, 0, &keyLen);
+                std::string keyStr(keyLen + 1, '\0');
+                napi_get_value_string_utf8(env, key, &keyStr[0], keyLen + 1, &keyLen);
+                keyStr.resize(keyLen);
+
+                napi_value val;
+                napi_get_property(env, args[2], key, &val);
+
+                size_t valLen = 0;
+                napi_get_value_string_utf8(env, val, nullptr, 0, &valLen);
+                std::string valStr(valLen + 1, '\0');
+                napi_get_value_string_utf8(env, val, &valStr[0], valLen + 1, &valLen);
+                valStr.resize(valLen);
+
+                extraEnv.push_back(keyStr + "=" + valStr);
+            }
+        }
+    }
+
+    /* --- Build envp --- */
+    std::vector<char *> envp = buildEnvp(extraEnv, envStorage);
+
+    /* --- Spawn using /proc/self/fd/<fd> as the path --- */
+    pid_t pid = 0;
+    int ret = posix_spawn(&pid, procFdPath,
+                           nullptr, nullptr, argv.data(), envp.data());
+
+    if (ret != 0) {
+        char errBuf[512];
+        snprintf(errBuf, sizeof(errBuf),
+                 "posix_spawn(/proc/self/fd/%d) failed: %s (errno=%d, "
+                 "fdStat: mode=%o size=%lld)",
+                 fd, strerror(ret), ret,
+                 fdStat.st_mode, (long long)fdStat.st_size);
+        napi_throw_error(env, "SPAWN_ERROR", errBuf);
+        return nullptr;
+    }
+
+    napi_value pidValue;
+    napi_create_int32(env, pid, &pidValue);
+    return pidValue;
+}
+
+/* ------------------------------------------------------------------ */
+/*  diagnoseFd(fd) — read ELF header from an open fd                   */
+/* ------------------------------------------------------------------ */
+
+static napi_value DiagnoseFd(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    int32_t fd = -1;
+    napi_get_value_int32(env, args[0], &fd);
+
+    napi_value result;
+    napi_create_object(env, &result);
+    napi_value val;
+
+    /* fstat via fd */
+    struct stat st;
+    char statBuf[256];
+    if (fstat(fd, &st) == 0) {
+        snprintf(statBuf, sizeof(statBuf), "mode=%o size=%lld uid=%d gid=%d",
+                 st.st_mode, (long long)st.st_size, st.st_uid, st.st_gid);
+        napi_get_boolean(env, true, &val);
+    } else {
+        snprintf(statBuf, sizeof(statBuf), "fstat failed: %s", strerror(errno));
+        napi_get_boolean(env, false, &val);
+    }
+    napi_set_named_property(env, result, "fdValid", val);
+    napi_create_string_utf8(env, statBuf, NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, result, "stat", val);
+
+    /* Read ELF header via pread (doesn't need path) */
+    char interpBuf[512] = {0};
+    char magicBuf[256] = {0};
+
+    unsigned char magic[4];
+    ssize_t nread = pread(fd, magic, 4, 0);
+    if (nread == 4) {
+        snprintf(magicBuf, sizeof(magicBuf),
+                 "0x%02x 0x%02x 0x%02x 0x%02x%s",
+                 magic[0], magic[1], magic[2], magic[3],
+                 (magic[0] == 0x7f && magic[1] == 'E' &&
+                  magic[2] == 'L' && magic[3] == 'F')
+                     ? " (ELF!)" : " (NOT ELF)");
+    } else {
+        snprintf(magicBuf, sizeof(magicBuf),
+                 "pread failed: %s (nread=%zd)", strerror(errno), nread);
+    }
+    napi_create_string_utf8(env, magicBuf, NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, result, "magic", val);
+
+    /* Read full ELF header to find PT_INTERP */
+    Elf64_Ehdr ehdr;
+    nread = pread(fd, &ehdr, sizeof(ehdr), 0);
+    if (nread == sizeof(ehdr)) {
+        Elf64_Phdr phdr;
+        for (int i = 0; i < ehdr.e_phnum; i++) {
+            nread = pread(fd, &phdr, sizeof(phdr),
+                          ehdr.e_phoff + i * sizeof(Elf64_Phdr));
+            if (nread != sizeof(phdr)) break;
+            if (phdr.p_type == PT_INTERP) {
+                pread(fd, interpBuf,
+                      phdr.p_filesz < sizeof(interpBuf)
+                          ? phdr.p_filesz : sizeof(interpBuf) - 1,
+                      phdr.p_offset);
+                break;
+            }
+        }
+    }
+
+    napi_create_string_utf8(env, interpBuf[0] ? interpBuf : "(none)",
+                            NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, result, "interpreter", val);
+
+    if (interpBuf[0]) {
+        napi_get_boolean(env, access(interpBuf, F_OK) == 0, &val);
+    } else {
+        napi_get_boolean(env, false, &val);
+    }
+    napi_set_named_property(env, result, "interpreterExists", val);
+
+    /* readlink /proc/self/fd/<fd> */
+    char procPath[64];
+    snprintf(procPath, sizeof(procPath), "/proc/self/fd/%d", fd);
+    char realBuf[4096] = {0};
+    ssize_t len = readlink(procPath, realBuf, sizeof(realBuf) - 1);
+    if (len < 0) {
+        snprintf(realBuf, sizeof(realBuf), "readlink failed: %s", strerror(errno));
+    }
+    napi_create_string_utf8(env, realBuf, NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, result, "fdPath", val);
+
+    /* Try access() on the fdPath */
+    napi_get_boolean(env, access(realBuf, F_OK) == 0, &val);
+    napi_set_named_property(env, result, "fdPathAccessible", val);
+
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  checkAccessiblePaths() — find what directories NAPI can access     */
+/* ------------------------------------------------------------------ */
+
+static napi_value CheckAccessiblePaths(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_array(env, &result);
+
+    const char *paths[] = {
+        "/",
+        "/data",
+        "/data/local",
+        "/data/local/tmp",
+        "/tmp",
+        "/proc",
+        "/proc/self",
+        "/proc/self/fd",
+        "/proc/self/cwd",
+        "/system",
+        "/system/bin",
+        "/dev",
+        "/dev/null",
+        nullptr
+    };
+
+    uint32_t idx = 0;
+    for (int i = 0; paths[i] != nullptr; i++) {
+        napi_value entry;
+        napi_create_object(env, &entry);
+
+        napi_value pathVal;
+        napi_create_string_utf8(env, paths[i], NAPI_AUTO_LENGTH, &pathVal);
+        napi_set_named_property(env, entry, "path", pathVal);
+
+        /* Check access */
+        napi_value existsVal, execVal;
+        napi_get_boolean(env, access(paths[i], F_OK) == 0, &existsVal);
+        napi_get_boolean(env, access(paths[i], X_OK) == 0, &execVal);
+        napi_set_named_property(env, entry, "exists", existsVal);
+        napi_set_named_property(env, entry, "executable", execVal);
+
+        /* Check stat */
+        struct stat st;
+        char statBuf[128];
+        if (stat(paths[i], &st) == 0) {
+            snprintf(statBuf, sizeof(statBuf), "mode=%o uid=%d gid=%d",
+                     st.st_mode, st.st_uid, st.st_gid);
+        } else {
+            snprintf(statBuf, sizeof(statBuf), "%s", strerror(errno));
+        }
+        napi_value statVal;
+        napi_create_string_utf8(env, statBuf, NAPI_AUTO_LENGTH, &statVal);
+        napi_set_named_property(env, entry, "stat", statVal);
+
+        napi_set_element(env, result, idx++, entry);
+    }
+
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Module registration                                                */
 /* ------------------------------------------------------------------ */
 
@@ -500,6 +795,12 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"diagnose",     nullptr, Diagnose,     nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"resolveFd",    nullptr, ResolveFd,    nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"spawnFromFd",  nullptr, SpawnFromFd,  nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"diagnoseFd",   nullptr, DiagnoseFd,   nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"checkPaths",   nullptr, CheckAccessiblePaths, nullptr, nullptr, nullptr,
             napi_default, nullptr},
     };
     napi_define_properties(env, exports,
