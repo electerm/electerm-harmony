@@ -9,10 +9,15 @@
  * Spawns a new child process.
  * @param binPath - Full path to the executable binary.
  * @param args    - Array of string arguments to pass to the process.
+ * @param env     - Optional object of environment variables to set/override.
  * @returns The child process PID (>0).
- * @throws Error if posix_spawnp fails.
+ * @throws Error if posix_spawn fails.
  */
-export const spawnProcess: (binPath: string, args: string[]) => number;
+export const spawnProcess: (
+  binPath: string,
+  args: string[],
+  env?: Record<string, string>
+) => number;
 
 /**
  * Sends a signal to a process.

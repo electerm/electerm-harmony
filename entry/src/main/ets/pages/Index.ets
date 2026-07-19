@@ -106,9 +106,20 @@ struct Index {
       this.statusMessage = 'Starting Node.js engine...';
       hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
 
+      // Build environment variables for the Node.js process.
+      // LD_LIBRARY_PATH is critical — without it, the dynamic linker
+      // cannot find Node's shared libraries and posix_spawn returns ENOENT.
+      const nodeDir = `${this.electermDir}/bin`;
+      const libDir = `${nodeDir}/lib`;
+      const envVars: Record<string, string> = {
+        'LD_LIBRARY_PATH': libDir,
+        'HOME': sandboxDir,
+        'NODE_PATH': `${nodeDir}/lib/node_modules`,
+      };
+
       let pid: number;
       try {
-        pid = spawnProcess(nodeBin, [entryScript]);
+        pid = spawnProcess(nodeBin, [entryScript], envVars);
         hilog.info(DOMAIN, TAG, `Node.js backend spawned, PID: ${pid}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
@@ -119,6 +130,8 @@ struct Index {
         errorParts.push('');
         errorParts.push(`nodeBin path: ${nodeBin}`);
         errorParts.push(`nodeBin exists: ${this.fileExists(nodeBin)}`);
+        errorParts.push(`libDir path: ${libDir}`);
+        errorParts.push(`libDir exists: ${this.fileExists(libDir)}`);
         errorParts.push(`entryScript: ${entryScript}`);
         errorParts.push(`entryScript exists: ${this.fileExists(entryScript)}`);
 

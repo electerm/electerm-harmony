@@ -7,9 +7,10 @@
  * function and is not restricted by the SDK's systemapi gate.
  *
  * Exposed functions (TypeScript declarations in types/libspawn/Index.d.ts):
- *   - spawnProcess(binPath, args): number  — returns PID (>0) or throws
+ *   - spawnProcess(binPath, args, env?): number  — returns PID (>0) or throws
  *   - killProcess(pid, signal): boolean    — sends signal to process
  *   - waitProcess(pid): Promise<number>    — resolves with exit code
+ *   - chmod(path, mode): boolean           — changes file permissions
  */
 
 #include "napi/native_api.h"
@@ -20,22 +21,62 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <stdlib.h>
 #include <string>
 #include <vector>
 
 extern char **environ;
 
 /* ------------------------------------------------------------------ */
-/*  spawnProcess                                                       */
+/*  Helper: build envp array from current environ + extra vars         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Builds a new envp[] array that is a copy of the current environment
+ * (environ) with any extra key=value strings appended.  If a key already
+ * exists in the environment, the extra value takes precedence because it
+ * appears later (most libc implementations use the last occurrence).
+ *
+ * The returned vector and the strings it points to must remain alive until
+ * after posix_spawn returns.  The caller is responsible for keeping
+ * `storage` alive.
+ */
+static std::vector<char *> buildEnvp(
+    const std::vector<std::string> &extra,
+    std::vector<std::string> &storage)
+{
+    std::vector<char *> envp;
+
+    /* Copy current environ strings into storage */
+    for (char **e = environ; e && *e; e++) {
+        storage.push_back(*e);
+        envp.push_back(&storage.back()[0]);
+    }
+
+    /* Append extra key=value strings */
+    for (const auto &s : extra) {
+        storage.push_back(s);
+        envp.push_back(&storage.back()[0]);
+    }
+
+    envp.push_back(nullptr);
+    return envp;
+}
+
+/* ------------------------------------------------------------------ */
+/*  spawnProcess(binPath, args, env?)                                  */
+/*                                                                    */
+/*  env is an optional object of { key: value } string pairs that     */
+/*  are added to (or override) the inherited environment.             */
 /* ------------------------------------------------------------------ */
 
 static napi_value SpawnProcess(napi_env env, napi_callback_info info) {
-    size_t argc = 2;
-    napi_value args[2];
+    size_t argc = 3;
+    napi_value args[3];
     napi_status st = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (st != napi_ok || argc < 2) {
         napi_throw_type_error(env, nullptr,
-            "Expected 2 arguments: binPath (string), args (string[])");
+            "Expected 2-3 arguments: binPath (string), args (string[]), [env (object)]");
         return nullptr;
     }
 
@@ -83,15 +124,57 @@ static napi_value SpawnProcess(napi_env env, napi_callback_info info) {
     }
     argv.push_back(nullptr);
 
+    /* --- Read optional env object --- */
+    std::vector<std::string> extraEnv;
+    std::vector<std::string> envStorage;
+
+    if (argc >= 3) {
+        napi_valuetype envType;
+        napi_typeof(env, args[2], &envType);
+        if (envType == napi_object) {
+            napi_value keys;
+            napi_get_property_names(env, args[2], &keys);
+
+            uint32_t keyCount = 0;
+            napi_get_array_length(env, keys, &keyCount);
+
+            for (uint32_t i = 0; i < keyCount; i++) {
+                napi_value key;
+                napi_get_element(env, keys, i, &key);
+
+                size_t keyLen = 0;
+                napi_get_value_string_utf8(env, key, nullptr, 0, &keyLen);
+                std::string keyStr(keyLen + 1, '\0');
+                napi_get_value_string_utf8(env, key, &keyStr[0], keyLen + 1, &keyLen);
+                keyStr.resize(keyLen);
+
+                napi_value val;
+                napi_get_property(env, args[2], key, &val);
+
+                size_t valLen = 0;
+                napi_get_value_string_utf8(env, val, nullptr, 0, &valLen);
+                std::string valStr(valLen + 1, '\0');
+                napi_get_value_string_utf8(env, val, &valStr[0], valLen + 1, &valLen);
+                valStr.resize(valLen);
+
+                extraEnv.push_back(keyStr + "=" + valStr);
+            }
+        }
+    }
+
+    /* --- Build envp --- */
+    std::vector<char *> envp = buildEnvp(extraEnv, envStorage);
+
     /* --- Spawn the process --- */
+    /* Use posix_spawn (not posix_spawnp) since we have a full path */
     pid_t pid = 0;
-    int ret = posix_spawnp(&pid, binPath.c_str(),
-                           nullptr, nullptr, argv.data(), environ);
+    int ret = posix_spawn(&pid, binPath.c_str(),
+                           nullptr, nullptr, argv.data(), envp.data());
 
     if (ret != 0) {
         char errBuf[512];
         snprintf(errBuf, sizeof(errBuf),
-                 "posix_spawnp failed: %s (errno=%d, path=%s)",
+                 "posix_spawn failed: %s (errno=%d, path=%s)",
                  strerror(ret), ret, binPath.c_str());
         napi_throw_error(env, "SPAWN_ERROR", errBuf);
         return nullptr;
