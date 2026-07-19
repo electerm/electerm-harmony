@@ -301,54 +301,79 @@ echo "==> Patching SDK type declarations ..."
 PROCESS_DTS=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | head -1)
 if [ -n "${PROCESS_DTS}" ] && [ -f "${PROCESS_DTS}" ]; then
   echo "    File: ${PROCESS_DTS}"
-  echo "    --- First 80 lines ---"
-  head -80 "${PROCESS_DTS}" | sed 's/^/    /'
-  echo "    --- End ---"
 
   if grep -q "runCmd" "${PROCESS_DTS}"; then
     echo "    ✓ runCmd already declared in $(basename "${PROCESS_DTS}")"
   else
-    # Use Python to insert named exports before the last "export default" line.
-    # This adds runCmd, ChildProcess, and CommandOptions as named exports
-    # that can be imported via: import { runCmd } from '@ohos.process'
-    python3 -c "
-import re, sys
+    # Use Python to insert declarations INSIDE the existing
+    # `declare namespace process { ... }` block.
+    # ArkTS does NOT support namespace merging (appending a second
+    # `declare namespace process {}` block), so we must modify the
+    # existing block by inserting before its closing brace.
+    export PROCESS_DTS
+    python3 << 'PYEOF'
+import sys
 
-with open('${PROCESS_DTS}', 'r') as f:
+dts = sys.argv[1] if len(sys.argv) > 1 else ""
+# Read the file path from the environment set by the shell
+import os
+dts = os.environ.get("PROCESS_DTS", dts)
+
+with open(dts, "r") as f:
     content = f.read()
 
-patch = '''
-// --- Patched by build-app.sh: named exports for runCmd (missing in SDK 5.0.1) ---
-export interface ChildProcess {
-  pid: number;
-  exitCode: number;
-  killed: boolean;
-  kill(signal: number): boolean;
-  wait(): Promise<number>;
-  getOutput(): Promise<string>;
-  getErrorOutput(): Promise<string>;
-}
-export interface CommandOptions {
-  timeout?: number;
-  killSignal?: number;
-  maxBuffer?: number;
-}
-export function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
-'''
+# Find "declare namespace process {"
+marker = "declare namespace process {"
+start = content.find(marker)
+if start == -1:
+    print("    ✗ Could not find 'declare namespace process {' in the file")
+    sys.exit(1)
 
-# Insert before the last 'export default' line
-parts = content.rsplit('export default', 1)
-if len(parts) == 2:
-    content = parts[0] + patch + '\nexport default' + parts[1]
-else:
-    # No 'export default' found — just append
-    content = content + '\n' + patch
+# Find the matching closing brace by counting
+brace_start = content.index("{", start)
+depth = 0
+i = brace_start
+while i < len(content):
+    if content[i] == "{":
+        depth += 1
+    elif content[i] == "}":
+        depth -= 1
+        if depth == 0:
+            break
+    i += 1
 
-with open('${PROCESS_DTS}', 'w') as f:
+if depth != 0:
+    print("    ✗ Could not find matching closing brace for namespace process")
+    sys.exit(1)
+
+# Insert new declarations before the closing brace
+new_decls = """
+  // --- Patched by build-app.sh: runCmd (missing in SDK 5.0.1 type decls) ---
+  interface ChildProcess {
+    pid: number;
+    exitCode: number;
+    killed: boolean;
+    kill(signal: number): boolean;
+    wait(): Promise<number>;
+    getOutput(): Promise<string>;
+    getErrorOutput(): Promise<string>;
+  }
+  interface CommandOptions {
+    timeout?: number;
+    killSignal?: number;
+    maxBuffer?: number;
+  }
+  function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
+"""
+
+content = content[:i] + new_decls + content[i:]
+
+with open(dts, "w") as f:
     f.write(content)
 
-print('    ✓ Patched with named exports (runCmd, ChildProcess, CommandOptions)')
-"
+print("    ✓ Inserted runCmd + ChildProcess inside declare namespace process { }")
+PYEOF
+    export PROCESS_DTS
   fi
 else
   echo "    ⚠ @ohos.process.d.ts not found under OHOS_SDK_HOME — runCmd types may be missing"
