@@ -1,0 +1,189 @@
+
+.tree-control-btn
+  display inline-flex
+  align-items center
+  justify-content center
+  margin-left 3px
+  width 16px
+  line-height 30px
+  height 26px
+.tree-item
+  display flex
+  position relative
+  line-height 26px
+  padding-left 5px
+  border-radius 3px
+  overflow hidden
+  white-space nowrap
+  text-overflow ellipsis
+  &.is-category
+    .tree-item-title
+      font-weight bold
+      font-size 14px
+
+  &.search-selected
+    outline 1px dashed var(--primary)
+  &.selected
+  &.item-dragover
+  &:hover
+    background #000
+    color #eee
+    cursor pointer
+  &.item-dragover-top
+    border 2px solid var(--primary)
+.tree-item-title
+  flex-grow 1
+  line-height 26px
+  overflow hidden
+  white-space nowrap
+  text-overflow ellipsis
+
+.sidebar-panel .tree-item-title
+   max-width 100%
+.with-plus
+  &:after
+    content '+'
+    position absolute
+    font-size 16px
+    top 2px
+    right 2px
+.add-menu-wrap
+  .tree-item-title
+    padding-right 20px
+  .is-category
+    .tree-item-title
+      padding-right 40px
+  .edit-icon.tree-control-btn
+  .open-all-icon.tree-control-btn
+    position absolute
+    right 0
+    top 0
+  .open-all-icon.tree-control-btn
+    right 20px
+.group-container
+  padding-left 12px
+  position relative
+  line-height 30px
+.tree-expander
+  position absolute
+  left 0
+  top 0
+  width 12px
+  font-size 11px
+  line-height 30px
+
+.category-color-tag
+  display inline-block
+  width 12px
+  height 12px
+  margin-right 6px
+  border-radius 2px
+  border 1px solid #1a1a1a
+  vertical-align middle
+
+.move-item-tree-wrap
+  max-height 300px
+  overflow-y auto
+  padding 8px
+
+.tree-list
+  display flex
+  flex-direction column
+  height 100%
+  overflow hidden
+
+.tree-list-header
+  flex-shrink 0
+
+.item-list-wrap
+  flex 1
+  overflow-y auto
+  min-height 0
+  position relative
+
+.tree-sort-wrap
+  position relative
+.tree-sort-dropdown
+  display none
+  position absolute
+  right 0
+  top 100%
+  margin-top 4px
+  background var(--main-dark)
+  border 1px solid var(--main)
+  border-radius 4px
+  padding 4px
+  z-index 100
+  box-shadow 0 2px 8px rgba(0,0,0,.1)
+&.open
+  .tree-sort-dropdown
+    display block
+
+.tree-sort-trigger
+  cursor pointer
+  &:hover
+    color var(--primary)
+  &.active
+    color var(--primary)
+
+.tree-sort-popover-item
+  padding 4px 8px
+  border-radius 3px
+  cursor pointer
+  white-space nowrap
+  font-size 12px
+  &:hover
+    background var(--hover-bg, rgba(0,0,0,.04))
+  &.active
+    color var(--primary)
+
+.tree-list-virtual-spacer
+  position relative
+  width 100%
+
+.tree-list-virtual-row
+  position absolute
+  left 0
+  right 0
+
+.tree-list-row
+  box-sizing border-box
+  width 100%
+  position relative
+  &.is-hidden
+    visibility hidden
+  &:hover
+    .tree-item-title
+      padding-right 60px
+    .tree-item-op-wrap
+      opacity 1
+      pointer-events auto
+.add-menu-wrap
+.sidebar-panel
+  .tree-list-row
+    &:hover
+      .tree-item-title
+        padding-right 20px
+
+.tree-list-row-group
+  position relative
+  padding-left 12px
+
+.tree-list-editor-overlay
+  position absolute
+  right 4px
+  z-index 4
+
+.tree-item-op-wrap
+  position absolute
+  top 0
+  bottom 0
+  right 4px
+  display flex
+  align-items center
+  z-index 3
+  opacity 0
+  pointer-events none
+  &.is-active
+    opacity 1
+    pointer-events auto

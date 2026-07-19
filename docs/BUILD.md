@@ -51,17 +51,25 @@ signing/
 ./scripts/prepare-node.sh
 ```
 
-This downloads the Node.js binary for OpenHarmony ARM64 and extracts it to `entry/src/main/resources/rawfile/node/`.
+This downloads the Node.js binary for OpenHarmony ARM64 and extracts it to `entry/src/main/resources/rawfile/electerm/bin/`.
 
-### Step 4 — Clone and build electerm-web
+### Step 4 — Build electerm-web
 
 ```bash
 ./scripts/prepare-web.sh
 ```
 
-This clones `electerm/electerm-web`, installs dependencies, builds the production bundle, and copies it into `entry/src/main/resources/rawfile/electerm-web/`.
+This installs dependencies in the bundled `electerm-web/` source directory, builds the frontend (Vite) and backend (esbuild) bundles, and copies the output into `entry/src/main/resources/rawfile/electerm/`.
 
-> Requires `OHOS_SERVER_SECRET` environment variable (generate with `openssl rand -base64 32`).
+The build produces:
+- `loading.html` — polls the backend and redirects when ready
+- `index.js` — Node.js entry script (sets env vars, imports the backend bundle)
+- `app.bundle.mjs` — esbuild-bundled backend with `child_process` aliased to a no-op shim
+- `dist/assets/` — Vite-built frontend (JS, CSS, images)
+- `views/index.pug` — Express view template
+- `.env` — server configuration
+
+> The `OHOS_SERVER_SECRET` environment variable is optional — the entry script sets a default if not provided.
 
 ### Step 5 — Build and sign the HarmonyOS app
 
@@ -131,8 +139,8 @@ The workflow runs on:
  2. Setup Node.js 24 (for building electerm-web)
  3. Setup JDK 21 (for hap-sign-tool.jar signing)
  4. Install system dependencies (build-essential, unzip, jq, python3, etc.)
- 5. Download ohos-node v24.2.0 prebuilt binary → rawfile/node/
- 6. Clone & build electerm-web → rawfile/electerm-web/
+5. Download ohos-node v24.2.0 prebuilt binary → rawfile/electerm/bin/
+6. Build electerm-web (from bundled source) → rawfile/electerm/
  7. Download & extract HarmonyOS Command Line Tools (Linux, ~2 GB)
  8. Configure ohpm registry
  9. Decode signing materials from GitHub Secrets → signing/
@@ -172,8 +180,8 @@ The following scripts automate the build steps:
 
 | Script | Purpose |
 |--------|---------|
-| [`scripts/prepare-node.sh`](../scripts/prepare-node.sh) | Downloads and extracts ohos-node prebuilt binary into `rawfile/node/` |
-| [`scripts/prepare-web.sh`](../scripts/prepare-web.sh) | Clones, builds, and bundles electerm-web into `rawfile/electerm-web/` |
+| [`scripts/prepare-node.sh`](../scripts/prepare-node.sh) | Downloads and extracts ohos-node prebuilt binary into `rawfile/electerm/bin/` |
+| [`scripts/prepare-web.sh`](../scripts/prepare-web.sh) | Builds the bundled electerm-web source (Vite + esbuild) into `rawfile/electerm/` |
 | [`scripts/build-app.sh`](../scripts/build-app.sh) | Builds unsigned APP with hvigorw assembleApp, then signs it with `hap-sign-tool.jar` |
 | [`scripts/gen-secrets.sh`](../scripts/gen-secrets.sh) | Generates GitHub Secrets values from `signing/` files and `temp/.env` |
 
@@ -319,10 +327,10 @@ fnm use 24
 The final `.app` package is approximately **230 MB** because it bundles:
 
 - ohos-node binary (~50 MB)
-- electerm-web server code + node_modules (~170 MB)
+- electerm-web backend bundle + frontend assets (~10 MB bundled, no node_modules needed at runtime)
 
 If the APP needs to be smaller:
 
-- Strip the node binary: `strip entry/src/main/resources/rawfile/node/bin/node`
-- Prune devDependencies from electerm-web: `npm prune --production`
+- Strip the node binary: `strip entry/src/main/resources/rawfile/electerm/bin/bin/node`
+- The backend is pre-bundled with esbuild (no node_modules on device)
 - Use `--splitAbi` to produce per-ABI packages

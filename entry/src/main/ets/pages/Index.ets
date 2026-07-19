@@ -4,9 +4,15 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
+import process from '@ohos.process';
+import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
-const TAG = 'electerm-web';
+const TAG = 'electerm';
+
+// The port the Node.js backend listens on (must match .env PORT).
+const BACKEND_PORT = 5577;
+const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 @Entry
 @Component
@@ -14,7 +20,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
-  private webDir: string = '';
+  private electermDir: string = '';
 
   aboutToAppear(): void {
     this.startBackend();
@@ -22,8 +28,6 @@ struct Index {
 
   /**
    * Check if a file exists without throwing.
-   * HarmonyOS fs.accessSync() throws BusinessError when path doesn't exist,
-   * so we wrap it in try-catch.
    */
   fileExists(path: string): boolean {
     try {
@@ -36,15 +40,12 @@ struct Index {
 
   /**
    * Safely extract a human-readable message from an error object.
-   * JSON.stringify(BusinessError) returns "{}" because its properties
-   * (code, message, stack) are non-enumerable.
    */
   getErrorMessage(err: object): string {
     const businessErr = err as BusinessError;
     if (businessErr && businessErr.message) {
       return `[${businessErr.code}] ${businessErr.message}`;
     }
-    // Fallback for plain Error objects
     const error = err as Error;
     if (error && error.message) {
       return error.message;
@@ -57,39 +58,110 @@ struct Index {
   }
 
   /**
-   * Extract bundled electerm-web files from rawfile to the app sandbox,
-   * then load the static web content directly in WebView.
-   *
-   * Note: HarmonyOS does not support spawning child processes (no
-   * child_process.spawn), so we cannot run a Node.js server.
-   * Instead, we pre-render the pug template to static HTML at build time
-   * and load it from the sandbox via WebView with file:// URL.
+   * Main startup sequence:
+   *   1. Extract rawfile/electerm/ → filesDir/electerm/
+   *   2. Make the node binary executable
+   *   3. Spawn the Node.js backend (node index.js)
+   *   4. Load loading.html (polls the backend, then redirects)
    */
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
       const sandboxDir = context.filesDir;
-      this.webDir = `${sandboxDir}/electerm-web`;
+      this.electermDir = `${sandboxDir}/electerm`;
 
-      // Extract resources if not already done
-      if (!this.fileExists(`${this.webDir}/dist/index.html`)) {
+      // The node binary path inside the extracted sandbox.
+      const nodeBin = `${this.electermDir}/bin/bin/node`;
+      // The entry script that sets env vars and imports app.bundle.mjs.
+      const entryScript = `${this.electermDir}/index.js`;
+
+      // --- Step 1: Extract rawfile resources if needed -------------------
+      // We check for the entry script — if it exists, the extraction was
+      // already done (or partially done) in a previous launch.
+      if (!this.fileExists(entryScript)) {
         hilog.info(DOMAIN, TAG, 'Extracting bundled resources from rawfile...');
-        this.statusMessage = 'Extracting bundled resources...';
+        this.statusMessage = 'Extracting resources...';
         await this.extractAllRawfiles(context, sandboxDir);
         hilog.info(DOMAIN, TAG, 'All resources extracted.');
+      } else {
+        hilog.info(DOMAIN, TAG, 'Resources already extracted, skipping.');
       }
 
-      // Verify index.html exists after extraction
-      if (!this.fileExists(`${this.webDir}/dist/index.html`)) {
+      // Verify the node binary exists
+      if (!this.fileExists(nodeBin)) {
         throw new Error(
-          `index.html not found after extraction. ` +
-          'The rawfile may not contain the web content.');
+          `Node.js binary not found at ${nodeBin}. ` +
+          'Run ./scripts/prepare-node.sh to download it.');
+      }
+      if (!this.fileExists(entryScript)) {
+        throw new Error(
+          `Entry script not found at ${entryScript}. ` +
+          'Run ./scripts/prepare-web.sh to build it.');
       }
 
-      // WebView will load the file in build() via serverReady state
-      this.statusMessage = 'Loading web UI...';
-      hilog.info(DOMAIN, TAG, `Web content ready at ${this.webDir}/dist/index.html`);
+      // --- Step 2: Make the node binary executable -----------------------
+      // Rawfile resources may lose the executable bit. Use chmod via runCmd.
+      this.statusMessage = 'Preparing Node.js engine...';
+      try {
+        const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
+        await chmodChild.wait();
+        hilog.info(DOMAIN, TAG, `chmod +x ${nodeBin} done`);
+      } catch (e) {
+        // chmod might fail if the binary is already executable or if
+        // the filesystem doesn't support permissions. Not fatal.
+        hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
+      }
+
+      // --- Step 3: Spawn the Node.js backend -----------------------------
+      this.statusMessage = 'Starting Node.js engine...';
+      hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
+
+      // runCmd executes the command in a child process. We do NOT await
+      // child.wait() — the process should keep running for the lifetime
+      // of the app. The Promise from runCmd resolves once the process
+      // has started, giving us the ChildProcess handle.
+      //
+      // We set NODE_ENV and a few env vars via the command's environment
+      // by prefixing them (shell-style), though the entry script (index.js)
+      // already sets most of these via process.env assignments.
+      const command = `"${nodeBin}" "${entryScript}"`;
+      const child = await process.runCmd(command, { timeout: 0 });
+
+      // Store the child process reference so EntryAbility can kill it
+      // when the app is destroyed.
+      NodeProcessState.set(child, child.pid);
+      hilog.info(DOMAIN, TAG, `Node.js backend started, PID: ${child.pid}`);
+
+      // Monitor the process in the background — if it exits unexpectedly,
+      // update the status message so the user knows something went wrong.
+      // We don't await this; it runs as a fire-and-forget promise.
+      child.wait().then((exitCode: number) => {
+        hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${exitCode}`);
+        NodeProcessState.clear();
+        // Only update state if we haven't already loaded the WebView
+        if (!this.serverReady) {
+          this.statusMessage = `Backend exited (code ${exitCode}). Check logs.`;
+        }
+      }).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, TAG, `Node.js backend wait error: ${err.message}`);
+        NodeProcessState.clear();
+      });
+
+      // Read stderr for debugging (non-blocking)
+      child.getErrorOutput().then((stderr: string) => {
+        if (stderr && stderr.length > 0) {
+          hilog.warn(DOMAIN, TAG, `Node.js stderr: ${stderr.substring(0, 2000)}`);
+        }
+      }).catch(() => {});
+
+      // --- Step 4: Load the loading page ---------------------------------
+      // loading.html polls http://127.0.0.1:5577 and redirects to the
+      // backend once it's responding. This gives the Node.js process
+      // a few seconds to boot before the WebView tries to connect.
+      this.statusMessage = 'Loading...';
       this.serverReady = true;
+
+      hilog.info(DOMAIN, TAG, `Loading page: file://${this.electermDir}/loading.html`);
 
     } catch (err) {
       const msg = this.getErrorMessage(err as object);
@@ -101,9 +173,6 @@ struct Index {
   /**
    * Extract all rawfile resources to the sandbox using the manifest.json
    * that is generated at build time by scripts/gen-manifest.sh.
-   *
-   * HarmonyOS resourceManager has no recursive directory listing API,
-   * so the manifest lists every file path relative to rawfile/.
    */
   async extractAllRawfiles(context: common.Context, sandboxDir: string): Promise<void> {
     const resourceMgr = context.resourceManager;
@@ -111,7 +180,8 @@ struct Index {
     // Read manifest.json from rawfile
     const manifestBytes = await resourceMgr.getRawFileContent('manifest.json');
     const decoder = util.TextDecoder.create('utf-8');
-    const manifest: Record<string, string[]> = JSON.parse(decoder.decodeToString(manifestBytes)) as Record<string, string[]>;
+    const manifest: Record<string, string[]> =
+      JSON.parse(decoder.decodeToString(manifestBytes)) as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
     hilog.info(DOMAIN, TAG, `Manifest contains ${files.length} files to extract`);
@@ -141,7 +211,7 @@ struct Index {
 
       count++;
       if (count % 200 === 0) {
-        this.statusMessage = `Extracting resources... (${count}/${files.length})`;
+        this.statusMessage = `Extracting... (${count}/${files.length})`;
         hilog.info(DOMAIN, TAG, `Extracted ${count}/${files.length} files`);
       }
     }
@@ -152,7 +222,9 @@ struct Index {
   build() {
     Column() {
       if (this.serverReady) {
-        Web({ src: `file://${this.webDir}/dist/index.html`, controller: this.controller })
+        // Load loading.html — it polls the backend and redirects to
+        // http://127.0.0.1:5577/ once the server is ready.
+        Web({ src: `file://${this.electermDir}/loading.html`, controller: this.controller })
           .width('100%')
           .height('100%')
           .javaScriptAccess(true)
@@ -161,7 +233,13 @@ struct Index {
           .imageAccess(true)
           .onlineImageAccess(true)
           .geolocationAccess(false)
+          // MixedMode.All allows loading HTTP content (the backend at
+          // 127.0.0.1:5577) from a file:// origin (loading.html).
           .mixedMode(MixedMode.All)
+          // Allow the WebView to make fetch() requests to the backend.
+          .onControllerAttached(() => {
+            hilog.info(DOMAIN, TAG, 'WebView attached');
+          })
       } else {
         Column() {
           Text('Electerm')

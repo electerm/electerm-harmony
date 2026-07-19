@@ -19,7 +19,7 @@ OHOS_NODE_REPO="hqzing/ohos-node"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-RAWFILE_NODE_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/node"
+RAWFILE_NODE_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm/bin"
 DOWNLOAD_DIR="${PROJECT_ROOT}/.cache"
 TARBALL_NAME="node-${OHOS_NODE_VERSION}-openharmony-arm64.tar.gz"
 DOWNLOAD_URL="https://github.com/${OHOS_NODE_REPO}/releases/download/${OHOS_NODE_VERSION}/${TARBALL_NAME}"
@@ -28,7 +28,8 @@ DOWNLOAD_URL="https://github.com/${OHOS_NODE_REPO}/releases/download/${OHOS_NODE
 
 echo "==> Preparing ohos-node ${OHOS_NODE_VERSION}"
 
-mkdir -p "${DOWNLOAD_DIR}" "${RAWFILE_NODE_DIR}"
+mkdir -p "${DOWNLOAD_DIR}"
+mkdir -p "${RAWFILE_NODE_DIR}"
 
 # Download if not cached
 if [ ! -f "${DOWNLOAD_DIR}/${TARBALL_NAME}" ]; then

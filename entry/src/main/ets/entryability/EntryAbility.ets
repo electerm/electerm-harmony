@@ -1,6 +1,7 @@
 import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
 const TAG = 'EntryAbility';
@@ -12,8 +13,12 @@ export default class EntryAbility extends UIAbility {
 
   onDestroy(): void {
     hilog.info(DOMAIN, TAG, 'onDestroy');
-    // The node child process is managed by Index.ets component lifecycle.
-    // It will be killed when the app is destroyed.
+    // Kill the Node.js child process if it's still running.
+    if (NodeProcessState.kill()) {
+      hilog.info(DOMAIN, TAG, 'Node.js backend process killed.');
+    } else {
+      hilog.info(DOMAIN, TAG, 'No Node.js backend process to kill.');
+    }
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {

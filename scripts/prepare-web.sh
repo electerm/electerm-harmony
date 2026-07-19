@@ -2,11 +2,20 @@
 # prepare-web.sh — Install, build, and bundle electerm-web
 # from the local electerm-web/ directory into the HarmonyOS app's rawfile resources.
 #
+# This script:
+#   1. Installs npm dependencies in electerm-web/
+#   2. Runs build/harmony/build.mjs which:
+#      - Vite-builds the React frontend → dist/assets/
+#      - esbuild-bundles the Node.js backend → app.bundle.mjs
+#      - Generates loading.html, index.js, package.json
+#      - Aliases child_process to a no-op shim
+#   3. Copies the output into the HarmonyOS rawfile directory
+#
 # Usage:
 #   ./scripts/prepare-web.sh
 #
 # Environment variables:
-#   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (required for production)
+#   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (optional, defaults to a local constant)
 
 set -euo pipefail
 
@@ -15,9 +24,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# electerm-web source is now bundled in the repo
+# electerm-web source (copied from electerm-android, now in the repo)
 WEB_SRC_DIR="${PROJECT_ROOT}/electerm-web"
-RAWFILE_WEB_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm-web"
+# Output: rawfile/electerm/ (node binary + web project + backend bundle)
+RAWFILE_ELECTERM_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm"
 
 # --- Main -------------------------------------------------------------------
 
@@ -30,11 +40,15 @@ fi
 
 cd "${WEB_SRC_DIR}"
 
-# Print version and commit for traceability
+# Print version for traceability
 WEB_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
 echo "    Version: ${WEB_VERSION}"
 
-# Install dependencies
+# Install dependencies (needed for esbuild, vite, and static asset packages)
+# On Windows, native modules (node-pty, serialport) may fail to compile.
+# Use --ignore-scripts if that happens — these modules are marked as
+# external in the esbuild bundle and use guarded dynamic imports, so
+# their compiled binaries are not needed for the build.
 echo "    Installing dependencies ..."
 npm install --legacy-peer-deps
 
@@ -42,7 +56,8 @@ npm install --legacy-peer-deps
 echo "    Creating .env ..."
 cp .sample.env .env
 
-# Set SERVER_SECRET from CI env var
+# Set SERVER_SECRET from CI env var (optional — the entry script sets a
+# default if this is not provided)
 if [ -n "${OHOS_SERVER_SECRET:-}" ]; then
   echo "    Setting SERVER_SECRET from OHOS_SERVER_SECRET ..."
   sed -i.bak "s/^SERVER_SECRET=.*/SERVER_SECRET=${OHOS_SERVER_SECRET}/" .env
@@ -51,79 +66,29 @@ else
   echo "    ⚠ OHOS_SERVER_SECRET not set, using default from .sample.env"
 fi
 
-# Build production bundle
-echo "    Building electerm-web ..."
-NODE_ENV=production npm run build
+# Run the HarmonyOS build script (vite + esbuild + loading page + node entry)
+echo "    Building HarmonyOS bundle ..."
+npm run build:harmony
 
-# Prune dev dependencies to reduce size
-echo "    Pruning devDependencies ..."
-npm prune --production --legacy-peer-deps
+# --- Copy output into rawfile ----------------------------------------------
 
-# --- Pre-render pug template to static index.html for HarmonyOS -----------
-# HarmonyOS cannot spawn Node.js, so we pre-render the pug template to a
-# static HTML file at build time. The HTML references local assets/ files.
+HARMONY_OUTPUT="${WEB_SRC_DIR}/build/harmony/rawfile/electerm"
 
-echo "    Pre-rendering pug template for static loading..."
-PRE_RENDER_SCRIPT=$(cat <<'NODESCRIPT'
-const pug = require('pug');
-const fs = require('fs');
-const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const version = pkg.version;
-
-const template = fs.readFileSync('src/app/views/index.pug', 'utf8');
-
-const html = pug.render(template, {
-  siteName: 'Electerm',
-  version: version,
-  isDev: false,
-  _global: JSON.stringify({
-    version: version,
-    isElectermHMApp: true,
-    appName: 'electerm-harmony'
-  }),
-  tokenElecterm: process.env.OHOS_SERVER_SECRET || '',
-  cdn: 'assets'
-});
-
-// Fix CSS path: pug generates "css/style-X.Y.Z.css" but file is at "assets/css/"
-const fixedHtml = html.replace(
-  /css\/style-/g,
-  'assets/css/style-'
-);
-
-fs.writeFileSync('dist/index.html', fixedHtml);
-console.log('    ✓ dist/index.html created (' + fixedHtml.length + ' bytes)');
-NODESCRIPT
-)
-
-node -e "${PRE_RENDER_SCRIPT}"
-
-# --- Bundle into rawfile ----------------------------------------------------
-
-echo "    Bundling into ${RAWFILE_WEB_DIR}/ ..."
-
-# Clean previous
-rm -rf "${RAWFILE_WEB_DIR}"
-mkdir -p "${RAWFILE_WEB_DIR}"
-
-# Only copy what's needed at runtime:
-#   dist/         — compiled static assets (frontend build output + pug views)
-#   node_modules/ — runtime dependencies (after npm prune --production)
-#   src/app/      — Express server code (app.js entry point, routes, lib, etc.)
-#   package.json  — module resolution
-#   .env          — server configuration (with SERVER_SECRET set)
-#   config.js     — user customizations (if exists)
-
-cp -r dist "${RAWFILE_WEB_DIR}/"
-cp -r node_modules "${RAWFILE_WEB_DIR}/"
-mkdir -p "${RAWFILE_WEB_DIR}/src"
-cp -r src/app "${RAWFILE_WEB_DIR}/src/"
-cp package.json "${RAWFILE_WEB_DIR}/"
-cp .env "${RAWFILE_WEB_DIR}/"
-
-if [ -f config.js ]; then
-  cp config.js "${RAWFILE_WEB_DIR}/"
+if [ ! -d "${HARMONY_OUTPUT}" ]; then
+  echo "    ✗ Build output not found at ${HARMONY_OUTPUT}"
+  echo "    Run node build/harmony/build.mjs manually to check for errors."
+  exit 1
 fi
 
-echo "    ✓ Bundled size: $(du -sh "${RAWFILE_WEB_DIR}" | cut -f1)"
+echo "    Copying into ${RAWFILE_ELECTERM_DIR}/ ..."
+
+# Clean previous
+rm -rf "${RAWFILE_ELECTERM_DIR}"
+mkdir -p "${RAWFILE_ELECTERM_DIR}"
+
+# Copy the entire electerm/ output (loading.html, index.js, app.bundle.mjs,
+# package.json, .env, views/, dist/) into rawfile/electerm/
+cp -r "${HARMONY_OUTPUT}/." "${RAWFILE_ELECTERM_DIR}/"
+
+echo "    ✓ Bundled size: $(du -sh "${RAWFILE_ELECTERM_DIR}" | cut -f1)"
 echo "==> electerm-web preparation complete."

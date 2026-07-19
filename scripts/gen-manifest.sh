@@ -8,7 +8,7 @@
 # Output: entry/src/main/resources/rawfile/manifest.json
 #
 # Prerequisites:
-#   - prepare-node.sh and prepare-web.sh already run (rawfile/ populated)
+#   - prepare-node.sh and prepare-web.sh already run (rawfile/electerm/ populated)
 
 set -euo pipefail
 
@@ -19,8 +19,8 @@ MANIFEST_FILE="${RAWFILE_DIR}/manifest.json"
 
 echo "==> Generating rawfile manifest..."
 
-if [ ! -d "${RAWFILE_DIR}/node" ] || [ ! -d "${RAWFILE_DIR}/electerm-web" ]; then
-  echo "    ✗ rawfile/node or rawfile/electerm-web not found."
+if [ ! -d "${RAWFILE_DIR}/electerm" ]; then
+  echo "    ✗ rawfile/electerm not found."
   echo "    Run ./scripts/prepare-node.sh and ./scripts/prepare-web.sh first."
   exit 1
 fi

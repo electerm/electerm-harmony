@@ -1,0 +1,62 @@
+.rdp-session-wrap
+  display: flex
+  flex-direction: column
+  justify-content: center
+  align-items: center
+  .session-v-info
+    position: absolute
+    top: 0
+    left: 0
+    width: 100%
+  &.scale-viewport
+    .rdp-scroll-wrapper canvas
+      width: 100% !important
+      height: 100% !important
+      object-fit: contain
+
+.s-scroll-wrapper
+  &::-webkit-scrollbar
+    width 16px
+    height 16px
+    background var(--main-darker)
+  &::-webkit-scrollbar-track
+    background var(--main-darker)
+    box-shadow inset 0 0 5px var(--main-darker)
+  &::-webkit-scrollbar-thumb
+    background var(--primary)
+    border-radius 0
+  &::-webkit-scrollbar-corner
+    background var(--main-darker)
+.rdp-scroll-wrapper
+  position relative
+  background var(--main)
+  z-index 299
+
+.rdp-file-transfer-btn
+  font-size: 16px
+  color: var(--text)
+  transition: color 0.2s
+  &:hover
+    color: var(--primary)
+
+.rdp-download-disabled
+  opacity: 0.4
+  cursor: not-allowed
+  &:hover
+    color: var(--text)
+
+canvas
+  outline: none
+
+@keyframes rdp-download-flash
+  0%, 100%
+    color: var(--primary)
+    transform: scale(1)
+  50%
+    color: var(--success)
+    transform: scale(1.2)
+
+.rdp-download-flash
+  animation: rdp-download-flash 1s ease-in-out infinite
+
+

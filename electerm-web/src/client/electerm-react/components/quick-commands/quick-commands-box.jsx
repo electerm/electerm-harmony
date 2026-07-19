@@ -1,0 +1,251 @@
+/**
+ * quick commands footer selection wrap
+ */
+
+import { useState, useRef } from 'react'
+import { quickCommandLabelsLsKey, pinnedQuickCommandBarKey } from '../../common/constants'
+import { sortBy } from 'lodash-es'
+import { Button, Input, Select, Space, Flex } from 'antd'
+import * as ls from '../../common/safe-local-storage'
+import CmdItem from './quick-command-item'
+import {
+  EditOutlined,
+  CloseCircleOutlined,
+  PushpinOutlined
+} from '@ant-design/icons'
+import classNames from 'classnames'
+import onDropFunc from './on-drop'
+import './qm.styl'
+
+const e = window.translate
+const addQuickCommands = 'addQuickCommands'
+const { Option } = Select
+
+export default function QuickCommandsFooterBox (props) {
+  const [keyword, setKeyword] = useState('')
+  const [label, setLabel] = useState(ls.getItem(quickCommandLabelsLsKey, ''))
+  const timer = useRef(null)
+
+  function handleMouseLeave () {
+    timer.current = setTimeout(() => {
+      toggle(false)
+    }, 500)
+  }
+
+  function handleMouseEnter () {
+    clearTimeout(timer.current)
+  }
+
+  function toggle (openQuickCommandBar) {
+    window.store.openQuickCommandBar = openQuickCommandBar
+  }
+
+  function handleTogglePinned () {
+    const current = !window.store.pinnedQuickCommandBar
+    ls.setItem(pinnedQuickCommandBarKey, current ? 'y' : 'n')
+    window.store.pinnedQuickCommandBar = current
+  }
+
+  async function handleSelect (id) {
+    const {
+      store
+    } = window
+    if (id === addQuickCommands) {
+      store.handleOpenQuickCommandsSetting()
+    } else {
+      store.runQuickCommandItem(id)
+    }
+  }
+
+  function handleClose () {
+    ls.setItem(pinnedQuickCommandBarKey, 'n')
+    window.store.pinnedQuickCommandBar = false
+    window.store.openQuickCommandBar = false
+  }
+
+  function handleChange (e) {
+    setKeyword(e.target.value)
+  }
+
+  function handleChangeLabels (v) {
+    ls.setItem(quickCommandLabelsLsKey, v || '')
+    setLabel(v)
+  }
+
+  // function filterFunc (v, opt) {
+  //   const c = opt.props.children.toLowerCase()
+  //   const m = opt.props.cmd.toLowerCase()
+  //   const vv = v.toLowerCase()
+  //   return c.includes(vv) || m.includes(vv)
+  // }
+
+  function onDragOver (e) {
+    e.preventDefault()
+  }
+
+  function onDragStart (e) {
+    e.dataTransfer.setData('idDragged', e.target.getAttribute('data-id'))
+  }
+
+  function onDragEnter (e) {
+    e.target.closest('.qm-item')?.classList.add('qm-item-dragover')
+  }
+
+  function onDragLeave (e) {
+    e.target.closest('.qm-item')?.classList.remove('qm-item-dragover')
+  }
+
+  function onDrop (e) {
+    onDropFunc(e, '.qm-item')
+  }
+
+  function renderNoCmd () {
+    return (
+      <div className='pd1'>
+        <Button
+          type='primary'
+          onClick={window.store.handleOpenQuickCommandsSetting}
+        >
+          {e(addQuickCommands)}
+        </Button>
+      </div>
+    )
+  }
+
+  function renderItem (item) {
+    const {
+      qmSortByFrequency
+    } = props
+    return (
+      <CmdItem
+        item={item}
+        key={item.id}
+        onSelect={handleSelect}
+        draggable={!qmSortByFrequency}
+        handleDragOver={onDragOver}
+        handleDragStart={onDragStart}
+        handleDragEnter={onDragEnter}
+        handleDragLeave={onDragLeave}
+        handleDrop={onDrop}
+      />
+    )
+  }
+
+  function renderTag (tag) {
+    return (
+      <Option
+        value={tag}
+        key={'tag-' + tag}
+      >
+        {tag}
+      </Option>
+    )
+  }
+
+  function filterArray (array, keyword, label) {
+    return array.filter(obj => {
+      const nameMatches = !keyword ||
+        obj.name.toLowerCase().includes(keyword) ||
+        (obj.commands || []).some(cmd =>
+          (cmd.command || '').toLowerCase().includes(keyword) ||
+          (cmd.name || '').toLowerCase().includes(keyword)
+        )
+      const labelMatches = !label || (obj.labels || []).includes(label)
+      return nameMatches && labelMatches
+    })
+  }
+
+  const {
+    openQuickCommandBar,
+    pinnedQuickCommandBar,
+    qmSortByFrequency,
+    inActiveTerminal,
+    leftSidebarWidth,
+    openedSideBar
+  } = props
+  if ((!openQuickCommandBar && !pinnedQuickCommandBar) || !inActiveTerminal) {
+    return null
+  }
+  const all = props.currentQuickCommands
+  // if (!all.length) {
+  //   return renderNoCmd()
+  // }
+  const keyword0 = keyword.toLowerCase()
+  const filtered = filterArray(all, keyword0, label)
+  const sorted = qmSortByFrequency
+    ? sortBy(filtered, (obj) => -(obj.clickCount || 0))
+    : filtered
+  const sprops = {
+    value: label,
+    onChange: handleChangeLabels,
+    placeholder: e('labels'),
+    className: 'qm-label-select',
+    allowClear: true
+  }
+  const tp = pinnedQuickCommandBar
+    ? 'primary'
+    : 'text'
+  const cls = classNames('qm-list-wrap')
+  const type = qmSortByFrequency ? 'primary' : 'default'
+  const w = openedSideBar ? 43 + leftSidebarWidth : 43
+  const qmProps = {
+    className: 'qm-wrap-tooltip',
+    style: {
+      left: w
+    },
+    onMouseLeave: handleMouseLeave,
+    onMouseEnter: handleMouseEnter
+  }
+  return (
+    <div
+      {...qmProps}
+    >
+      <div className='pd2'>
+        <Flex justify='space-between' className='qm-flex'>
+          <Input.Search
+            value={keyword}
+            onChange={handleChange}
+            placeholder=''
+            className='qm-search-input'
+          />
+          <Flex gap='small'>
+            <Select
+              {...sprops}
+            >
+              {props.quickCommandTags.map(
+                renderTag
+              )}
+            </Select>
+            <Button
+              type={type}
+              onClick={window.store.handleSortByFrequency}
+            >
+              {e('sortByFrequency')}
+            </Button>
+          </Flex>
+          <Space.Compact className='mg2l'>
+            <Button
+              onClick={handleTogglePinned}
+              icon={<PushpinOutlined />}
+              type={tp}
+            />
+            <Button
+              onClick={window.store.handleOpenQuickCommandsSetting}
+              icon={<EditOutlined />}
+            />
+            <Button
+              onClick={handleClose}
+              icon={<CloseCircleOutlined />}
+            />
+          </Space.Compact>
+        </Flex>
+        <div className={cls}>
+          {sorted.map(renderItem)}
+          {
+            !sorted.length && renderNoCmd()
+          }
+        </div>
+      </div>
+    </div>
+  )
+}
