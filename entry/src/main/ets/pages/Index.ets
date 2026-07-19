@@ -41,7 +41,7 @@ struct Index {
 
   fileExists(path: string): boolean {
     try {
-      fs.accessSync(path);
+      fs.statSync(path);
       return true;
     } catch {
       return false;
@@ -136,7 +136,7 @@ struct Index {
         errorParts.push(`Cannot open node binary (READ_ONLY): ${msg}`);
         errorParts.push('');
         errorParts.push(`nodeBin: ${nodeBin}`);
-        errorParts.push(`nodeBin exists (accessSync): ${this.fileExists(nodeBin)}`);
+        errorParts.push(`nodeBin exists (statSync): ${this.fileExists(nodeBin)}`);
 
         // Try statSync to get file info
         try {
