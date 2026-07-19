@@ -62,7 +62,7 @@ struct Index {
   resolveRealPath(virtualPath: string): string {
     try {
       const file = fs.openSync(virtualPath, fs.OpenMode.READ_ONLY);
-      const realPath = resolveFd(file.fd);
+      const realPath: string = resolveFd(file.fd);
       fs.closeSync(file);
       hilog.info(DOMAIN, TAG, `Resolved: ${virtualPath} -> ${realPath}`);
       return realPath;
