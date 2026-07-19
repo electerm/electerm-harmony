@@ -59,3 +59,17 @@ export interface Diagnostics {
   dirListing: string;
 }
 export const diagnose: (path: string) => Diagnostics;
+
+/**
+ * Resolves the real physical path of an open file descriptor.
+ *
+ * HarmonyOS sandbox paths (e.g. /data/storage/el2/base/...) are virtual —
+ * only accessible via ArkTS fs APIs, not via native POSIX calls.
+ * This function takes an fd opened by ArkTS fs.openSync() and reads
+ * /proc/self/fd/<fd> to discover the real path on disk.
+ *
+ * @param fd - File descriptor from ArkTS fs.openSync().
+ * @returns The real physical path string.
+ * @throws Error if readlink fails.
+ */
+export const resolveFd: (fd: number) => string;

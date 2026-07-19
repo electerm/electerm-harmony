@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess, chmod, diagnose, Diagnostics } from 'libspawn.so';
+import { spawnProcess, waitProcess, chmod, diagnose, resolveFd, Diagnostics } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -45,6 +45,30 @@ struct Index {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Resolves a sandbox (virtual) path to the real physical path on disk.
+   *
+   * HarmonyOS sandbox paths like /data/storage/el2/base/... are only
+   * accessible via ArkTS fs APIs. Native POSIX calls (access, open,
+   * posix_spawn) cannot find them. This function opens the file via
+   * ArkTS (which CAN access the virtual path), then reads
+   * /proc/self/fd/<fd> via NAPI to discover the real path.
+   *
+   * Returns the original path if resolution fails (as a fallback).
+   */
+  resolveRealPath(virtualPath: string): string {
+    try {
+      const file = fs.openSync(virtualPath, fs.OpenMode.READ_ONLY);
+      const realPath = resolveFd(file.fd);
+      fs.closeSync(file);
+      hilog.info(DOMAIN, TAG, `Resolved: ${virtualPath} -> ${realPath}`);
+      return realPath;
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, `resolveRealPath failed for ${virtualPath}: ${this.getErrorMessage(e as object)}`);
+      return virtualPath;  // fallback to original
     }
   }
 
@@ -93,33 +117,56 @@ struct Index {
       hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}`);
       hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}`);
 
-      // --- Step 2: Make node binary executable ---
+      // --- Step 2: Resolve real physical paths ---
+      // HarmonyOS sandbox paths are virtual — only ArkTS fs APIs can see them.
+      // We open each file via ArkTS and read /proc/self/fd/<fd> to get the
+      // real path that posix_spawn (native C++) can use.
+      this.statusMessage = 'Resolving paths...';
+      hilog.info(DOMAIN, TAG, 'Resolving real physical paths...');
+
+      const realNodeBin = this.resolveRealPath(nodeBin);
+      const realEntryScript = this.resolveRealPath(entryScript);
+
+      // Derive real lib dir from real node bin path.
+      // If realNodeBin = /data/app/.../electerm/bin/node
+      // then realElectermDir = /data/app/.../electerm
+      // and realLibDir = /data/app/.../electerm/lib
+      let realLibDir = `${this.electermDir}/lib`;  // fallback to sandbox path
+      const binNodeIdx = realNodeBin.lastIndexOf('/bin/node');
+      if (binNodeIdx > 0) {
+        const realElectermDir = realNodeBin.substring(0, binNodeIdx);
+        realLibDir = `${realElectermDir}/lib`;
+      }
+
+      hilog.info(DOMAIN, TAG, `realNodeBin: ${realNodeBin}`);
+      hilog.info(DOMAIN, TAG, `realLibDir: ${realLibDir}`);
+      hilog.info(DOMAIN, TAG, `realEntryScript: ${realEntryScript}`);
+
+      // --- Step 3: Make node binary executable (use real path) ---
       this.statusMessage = 'Preparing engine...';
       try {
-        chmod(nodeBin, 0o755);
-        hilog.info(DOMAIN, TAG, `chmod 0755 ${nodeBin}`);
+        chmod(realNodeBin, 0o755);
+        hilog.info(DOMAIN, TAG, `chmod 0755 ${realNodeBin}`);
       } catch (e) {
         hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
       }
 
-      // --- Step 3: Spawn the Node.js backend via NAPI ---
+      // --- Step 4: Spawn the Node.js backend via NAPI ---
       this.statusMessage = 'Starting Node.js engine...';
-      hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
+      hilog.info(DOMAIN, TAG, `Spawning: ${realNodeBin} ${realEntryScript}`);
 
       // Build environment variables for the Node.js process.
-      // LD_LIBRARY_PATH is critical — without it, the dynamic linker
-      // cannot find Node's shared libraries and posix_spawn returns ENOENT.
-      const nodeDir = `${this.electermDir}`;
-      const libDir = `${nodeDir}/lib`;
+      // LD_LIBRARY_PATH must point to the REAL lib dir (not the virtual
+      // sandbox path) so the dynamic linker can find Node's shared libs.
       const envVars: Record<string, string> = {
-        'LD_LIBRARY_PATH': libDir,
+        'LD_LIBRARY_PATH': realLibDir,
         'HOME': sandboxDir,
-        'NODE_PATH': `${nodeDir}/lib/node_modules`,
+        'NODE_PATH': `${realLibDir}/node_modules`,
       };
 
       let pid: number;
       try {
-        pid = spawnProcess(nodeBin, [entryScript], envVars);
+        pid = spawnProcess(realNodeBin, [realEntryScript], envVars);
         hilog.info(DOMAIN, TAG, `Node.js backend spawned, PID: ${pid}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
@@ -128,18 +175,17 @@ struct Index {
         const errorParts: string[] = [];
         errorParts.push(`Failed to spawn Node.js: ${msg}`);
         errorParts.push('');
-        errorParts.push(`nodeBin path: ${nodeBin}`);
-        errorParts.push(`nodeBin exists: ${this.fileExists(nodeBin)}`);
-        errorParts.push(`libDir path: ${libDir}`);
-        errorParts.push(`libDir exists: ${this.fileExists(libDir)}`);
-        errorParts.push(`entryScript: ${entryScript}`);
-        errorParts.push(`entryScript exists: ${this.fileExists(entryScript)}`);
+        errorParts.push(`nodeBin (virtual): ${nodeBin}`);
+        errorParts.push(`nodeBin exists (ArkTS): ${this.fileExists(nodeBin)}`);
+        errorParts.push(`realNodeBin: ${realNodeBin}`);
+        errorParts.push(`realLibDir: ${realLibDir}`);
+        errorParts.push(`realEntryScript: ${realEntryScript}`);
 
         // NAPI-side diagnostics: check ELF header, interpreter, etc.
         try {
-          const diag: Diagnostics = diagnose(nodeBin);
+          const diag: Diagnostics = diagnose(realNodeBin);
           errorParts.push('');
-          errorParts.push('=== NAPI Diagnostics ===');
+          errorParts.push('=== NAPI Diagnostics (real path) ===');
           errorParts.push(`exists: ${diag.exists}`);
           errorParts.push(`executable: ${diag.executable}`);
           errorParts.push(`stat: ${diag.stat}`);

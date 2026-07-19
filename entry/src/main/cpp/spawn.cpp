@@ -67,6 +67,56 @@ static std::vector<char *> buildEnvp(
 }
 
 /* ------------------------------------------------------------------ */
+/*  resolveFd(fd) — resolve the real path of an open file descriptor   */
+/*                                                                    */
+/*  HarmonyOS sandbox paths like /data/storage/el2/base/... are        */
+/*  virtual — only visible to ArkTS fs APIs, not to native POSIX       */
+/*  calls.  But when ArkTS opens a file via fs.openSync(), the         */
+/*  returned fd is a real kernel fd pointing to the real file.         */
+/*  /proc/self/fd/<fd> is a symlink to the real path.                  */
+/*                                                                    */
+/*  This function reads that symlink to discover the real physical     */
+/*  path that native code (posix_spawn, chmod, etc.) can use.          */
+/* ------------------------------------------------------------------ */
+
+static napi_value ResolveFd(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_type_error(env, nullptr, "Expected 1 argument: fd (number)");
+        return nullptr;
+    }
+
+    int32_t fd = -1;
+    napi_get_value_int32(env, args[0], &fd);
+
+    if (fd < 0) {
+        napi_throw_type_error(env, nullptr, "fd must be a non-negative integer");
+        return nullptr;
+    }
+
+    char procPath[64];
+    snprintf(procPath, sizeof(procPath), "/proc/self/fd/%d", fd);
+
+    char realPath[4096];
+    ssize_t len = readlink(procPath, realPath, sizeof(realPath) - 1);
+    if (len < 0) {
+        char errBuf[256];
+        snprintf(errBuf, sizeof(errBuf),
+                 "readlink(/proc/self/fd/%d) failed: %s", fd, strerror(errno));
+        napi_throw_error(env, "RESOLVE_ERROR", errBuf);
+        return nullptr;
+    }
+    realPath[len] = '\0';
+
+    napi_value result;
+    napi_create_string_utf8(env, realPath, NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
 /*  diagnose(path) — return detailed info about a binary file          */
 /* ------------------------------------------------------------------ */
 
@@ -448,6 +498,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"chmod",        nullptr, Chmod,        nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"diagnose",     nullptr, Diagnose,     nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"resolveFd",    nullptr, ResolveFd,    nullptr, nullptr, nullptr,
             napi_default, nullptr},
     };
     napi_define_properties(env, exports,
