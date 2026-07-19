@@ -70,7 +70,7 @@ struct Index {
       const sandboxDir = context.filesDir;
       this.electermDir = `${sandboxDir}/electerm`;
 
-      const nodeBin = `${this.electermDir}/bin/bin/node`;
+      const nodeBin = `${this.electermDir}/bin/node`;
       const entryScript = `${this.electermDir}/index.js`;
 
       // --- Step 1: Extract rawfile resources if needed ---
@@ -109,7 +109,7 @@ struct Index {
       // Build environment variables for the Node.js process.
       // LD_LIBRARY_PATH is critical — without it, the dynamic linker
       // cannot find Node's shared libraries and posix_spawn returns ENOENT.
-      const nodeDir = `${this.electermDir}/bin`;
+      const nodeDir = `${this.electermDir}`;
       const libDir = `${nodeDir}/lib`;
       const envVars: Record<string, string> = {
         'LD_LIBRARY_PATH': libDir,
@@ -146,6 +146,9 @@ struct Index {
           errorParts.push(`magic: ${diag.magic}`);
           errorParts.push(`interpreter: ${diag.interpreter}`);
           errorParts.push(`interpreterExists: ${diag.interpreterExists}`);
+          errorParts.push(`cwd: ${diag.cwd}`);
+          errorParts.push(`realpath: ${diag.realpath}`);
+          errorParts.push(`dirListing: ${diag.dirListing}`);
         } catch (diagErr) {
           errorParts.push(`diagnose failed: ${this.getErrorMessage(diagErr as object)}`);
         }

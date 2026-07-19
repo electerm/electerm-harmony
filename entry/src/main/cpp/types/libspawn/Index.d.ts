@@ -54,5 +54,8 @@ export interface Diagnostics {
   magic: string;
   interpreter: string;
   interpreterExists: boolean;
+  cwd: string;
+  realpath: string;
+  dirListing: string;
 }
 export const diagnose: (path: string) => Diagnostics;

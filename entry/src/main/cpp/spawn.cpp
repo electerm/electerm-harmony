@@ -26,6 +26,7 @@
 #include <vector>
 #include <fcntl.h>
 #include <elf.h>
+#include <dirent.h>
 
 extern char **environ;
 
@@ -105,7 +106,7 @@ static napi_value Diagnose(napi_env env, napi_callback_info info) {
     /* Read ELF header to get interpreter path */
     int fd = open(path.c_str(), O_RDONLY);
     char interpBuf[512] = {0};
-    char magicBuf[32] = {0};
+    char magicBuf[256] = {0};
 
     if (fd >= 0) {
         /* Read first 4 bytes for magic */
@@ -159,6 +160,43 @@ static napi_value Diagnose(napi_env env, napi_callback_info info) {
         napi_get_boolean(env, false, &interpExists);
         napi_set_named_property(env, result, "interpreterExists", interpExists);
     }
+
+    /* Add getcwd and realpath for filesystem context diagnostics */
+    char cwdBuf[4096] = {0};
+    if (getcwd(cwdBuf, sizeof(cwdBuf) - 1)) {
+        napi_create_string_utf8(env, cwdBuf, NAPI_AUTO_LENGTH, &errMsg);
+    } else {
+        napi_create_string_utf8(env, "getcwd failed", NAPI_AUTO_LENGTH, &errMsg);
+    }
+    napi_set_named_property(env, result, "cwd", errMsg);
+
+    /* Try realpath on the binary path */
+    char realBuf[4096] = {0};
+    if (realpath(path.c_str(), realBuf)) {
+        napi_create_string_utf8(env, realBuf, NAPI_AUTO_LENGTH, &errMsg);
+    } else {
+        snprintf(realBuf, sizeof(realBuf), "realpath failed: %s", strerror(errno));
+        napi_create_string_utf8(env, realBuf, NAPI_AUTO_LENGTH, &errMsg);
+    }
+    napi_set_named_property(env, result, "realpath", errMsg);
+
+    /* Try listing the parent directory */
+    std::string parentDir = path.substr(0, path.find_last_of('/'));
+    DIR *dir = opendir(parentDir.c_str());
+    char listBuf[1024] = {0};
+    if (dir) {
+        struct dirent *entry;
+        int offset = 0;
+        while ((entry = readdir(dir)) != nullptr && offset < 900) {
+            offset += snprintf(listBuf + offset, sizeof(listBuf) - offset,
+                               "%s ", entry->d_name);
+        }
+        closedir(dir);
+    } else {
+        snprintf(listBuf, sizeof(listBuf), "opendir failed: %s", strerror(errno));
+    }
+    napi_create_string_utf8(env, listBuf, NAPI_AUTO_LENGTH, &errMsg);
+    napi_set_named_property(env, result, "dirListing", errMsg);
 
     return result;
 }

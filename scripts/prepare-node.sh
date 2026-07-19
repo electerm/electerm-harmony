@@ -19,7 +19,7 @@ OHOS_NODE_REPO="hqzing/ohos-node"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-RAWFILE_NODE_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm/bin"
+RAWFILE_NODE_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm"
 DOWNLOAD_DIR="${PROJECT_ROOT}/.cache"
 TARBALL_NAME="node-${OHOS_NODE_VERSION}-openharmony-arm64.tar.gz"
 DOWNLOAD_URL="https://github.com/${OHOS_NODE_REPO}/releases/download/${OHOS_NODE_VERSION}/${TARBALL_NAME}"
