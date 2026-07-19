@@ -130,20 +130,66 @@ struct Index {
         nodeFile = fs.openSync(nodeBin, fs.OpenMode.READ_ONLY);
       } catch (openErr) {
         const msg = this.getErrorMessage(openErr as object);
-        hilog.error(DOMAIN, TAG, `fs.openSync(${nodeBin}) failed: ${msg}`);
+        hilog.error(DOMAIN, TAG, `fs.openSync(${nodeBin}, READ_ONLY) failed: ${msg}`);
+
         const errorParts: string[] = [];
-        errorParts.push(`Cannot open node binary: ${msg}`);
+        errorParts.push(`Cannot open node binary (READ_ONLY): ${msg}`);
         errorParts.push('');
         errorParts.push(`nodeBin: ${nodeBin}`);
-        errorParts.push(`nodeBin exists (ArkTS): ${this.fileExists(nodeBin)}`);
-        errorParts.push(`entryScript: ${entryScript}`);
-        errorParts.push(`entryScript exists (ArkTS): ${this.fileExists(entryScript)}`);
-        errorParts.push(`libDir exists: ${this.fileExists(`${this.electermDir}/lib`)}`);
-        // List what's actually in electermDir
+        errorParts.push(`nodeBin exists (accessSync): ${this.fileExists(nodeBin)}`);
+
+        // Try statSync to get file info
         try {
-          const electermExists = this.fileExists(this.electermDir);
-          errorParts.push(`electermDir exists: ${electermExists}`);
-        } catch { }
+          const stat = fs.statSync(nodeBin);
+          errorParts.push(`nodeBin stat: size=${stat.size} mode=${stat.mode} isDirectory=${stat.isDirectory()} isFile=${stat.isFile()}`);
+        } catch (statErr) {
+          errorParts.push(`nodeBin statSync failed: ${this.getErrorMessage(statErr as object)}`);
+        }
+
+        // Try opening with READ_WRITE mode (READ_ONLY=0 might be treated as falsy)
+        try {
+          const file2 = fs.openSync(nodeBin, fs.OpenMode.READ_WRITE);
+          errorParts.push(`openSync(READ_WRITE) succeeded! fd=${file2.fd}`);
+          fs.closeSync(file2);
+        } catch (rwErr) {
+          errorParts.push(`openSync(READ_WRITE) failed: ${this.getErrorMessage(rwErr as object)}`);
+        }
+
+        // Try opening without any mode
+        try {
+          const file3 = fs.openSync(nodeBin);
+          errorParts.push(`openSync() (no mode) succeeded! fd=${file3.fd}`);
+          fs.closeSync(file3);
+        } catch (nomodeErr) {
+          errorParts.push(`openSync() (no mode) failed: ${this.getErrorMessage(nomodeErr as object)}`);
+        }
+
+        // Try opening entryScript to see if ANY file can be opened
+        try {
+          const file4 = fs.openSync(entryScript, fs.OpenMode.READ_ONLY);
+          errorParts.push(`openSync(entryScript, READ_ONLY) succeeded! fd=${file4.fd}`);
+          fs.closeSync(file4);
+        } catch (esErr) {
+          errorParts.push(`openSync(entryScript) failed: ${this.getErrorMessage(esErr as object)}`);
+        }
+
+        // List bin/ directory contents
+        const binDir = `${this.electermDir}/bin`;
+        try {
+          const files = fs.listFileSync(binDir);
+          errorParts.push(`bin/ dir listing (${files.length} entries): ${files.join(', ')}`);
+        } catch (listErr) {
+          errorParts.push(`bin/ listFileSync failed: ${this.getErrorMessage(listErr as object)}`);
+        }
+
+        // List electerm/ directory contents
+        try {
+          const files2 = fs.listFileSync(this.electermDir);
+          errorParts.push(`electerm/ dir listing (${files2.length} entries): ${files2.slice(0, 30).join(', ')}`);
+        } catch (listErr2) {
+          errorParts.push(`electerm/ listFileSync failed: ${this.getErrorMessage(listErr2 as object)}`);
+        }
+
         this.errorMessage = errorParts.join('\n');
         this.statusMessage = 'Engine error';
         return;
