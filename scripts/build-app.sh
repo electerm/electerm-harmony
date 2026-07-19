@@ -300,34 +300,55 @@ echo "==> Patching SDK type declarations ..."
 
 PROCESS_DTS=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | head -1)
 if [ -n "${PROCESS_DTS}" ] && [ -f "${PROCESS_DTS}" ]; then
+  echo "    File: ${PROCESS_DTS}"
+  echo "    --- First 80 lines ---"
+  head -80 "${PROCESS_DTS}" | sed 's/^/    /'
+  echo "    --- End ---"
+
   if grep -q "runCmd" "${PROCESS_DTS}"; then
     echo "    ✓ runCmd already declared in $(basename "${PROCESS_DTS}")"
   else
-    # Append namespace augmentation — TypeScript merges this with the existing
-    # declare namespace process { ... } block in the file.
-    cat >> "${PROCESS_DTS}" <<'PATCH'
+    # Use Python to insert named exports before the last "export default" line.
+    # This adds runCmd, ChildProcess, and CommandOptions as named exports
+    # that can be imported via: import { runCmd } from '@ohos.process'
+    python3 -c "
+import re, sys
 
-// --- Patched by build-app.sh ---
-// SDK 5.0.1(13) omits runCmd from type declarations, but it exists at runtime.
-declare namespace process {
-  interface ChildProcess {
-    pid: number;
-    exitCode: number;
-    killed: boolean;
-    kill(signal: number): boolean;
-    wait(): Promise<number>;
-    getOutput(): Promise<string>;
-    getErrorOutput(): Promise<string>;
-  }
-  interface CommandOptions {
-    timeout?: number;
-    killSignal?: number;
-    maxBuffer?: number;
-  }
-  function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
+with open('${PROCESS_DTS}', 'r') as f:
+    content = f.read()
+
+patch = '''
+// --- Patched by build-app.sh: named exports for runCmd (missing in SDK 5.0.1) ---
+export interface ChildProcess {
+  pid: number;
+  exitCode: number;
+  killed: boolean;
+  kill(signal: number): boolean;
+  wait(): Promise<number>;
+  getOutput(): Promise<string>;
+  getErrorOutput(): Promise<string>;
 }
-PATCH
-    echo "    ✓ Patched $(basename "${PROCESS_DTS}") with runCmd + ChildProcess"
+export interface CommandOptions {
+  timeout?: number;
+  killSignal?: number;
+  maxBuffer?: number;
+}
+export function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
+'''
+
+# Insert before the last 'export default' line
+parts = content.rsplit('export default', 1)
+if len(parts) == 2:
+    content = parts[0] + patch + '\nexport default' + parts[1]
+else:
+    # No 'export default' found — just append
+    content = content + '\n' + patch
+
+with open('${PROCESS_DTS}', 'w') as f:
+    f.write(content)
+
+print('    ✓ Patched with named exports (runCmd, ChildProcess, CommandOptions)')
+"
   fi
 else
   echo "    ⚠ @ohos.process.d.ts not found under OHOS_SDK_HOME — runCmd types may be missing"

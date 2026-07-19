@@ -13,13 +13,13 @@
  * does not support).
  */
 
-import process from '@ohos.process';
+import { ChildProcess } from '@ohos.process';
 
 export class NodeProcessState {
-  static childProcess: process.ChildProcess | null = null;
+  static childProcess: ChildProcess | null = null;
   static nodePid: number = -1;
 
-  static set(cp: process.ChildProcess, pid: number): void {
+  static set(cp: ChildProcess, pid: number): void {
     NodeProcessState.childProcess = cp;
     NodeProcessState.nodePid = pid;
   }

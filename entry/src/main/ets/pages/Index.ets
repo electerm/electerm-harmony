@@ -4,7 +4,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
-import process from '@ohos.process';
+import { runCmd } from '@ohos.process';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -103,7 +103,7 @@ struct Index {
       // Rawfile resources may lose the executable bit. Use chmod via runCmd.
       this.statusMessage = 'Preparing Node.js engine...';
       try {
-        const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
+        const chmodChild = await runCmd(`chmod 755 "${nodeBin}"`);
         await chmodChild.wait();
         hilog.info(DOMAIN, TAG, `chmod +x ${nodeBin} done`);
       } catch (e) {
@@ -125,7 +125,7 @@ struct Index {
       // by prefixing them (shell-style), though the entry script (index.js)
       // already sets most of these via process.env assignments.
       const command = `"${nodeBin}" "${entryScript}"`;
-      const child = await process.runCmd(command, { timeout: 0 });
+      const child = await runCmd(command, { timeout: 0 });
 
       // Store the child process reference so EntryAbility can kill it
       // when the app is destroyed.
