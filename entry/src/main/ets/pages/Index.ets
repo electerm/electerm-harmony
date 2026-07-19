@@ -4,8 +4,8 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
-import process from '@ohos.process';
 import http from '@ohos.net.http';
+import { spawnProcess, waitProcess } from 'libspawn';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -23,7 +23,6 @@ struct Index {
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
   @State errorMessage: string = '';
-  @State diagInfo: string = '';
   private electermDir: string = '';
   private pollStartTime: number = 0;
   private pollTimerId: number = -1;
@@ -65,85 +64,6 @@ struct Index {
     }
   }
 
-  /**
-   * Diagnostic: probe the process object to find what APIs are available.
-   * Logs results to hilog and returns a summary string.
-   */
-  probeProcessApi(): string {
-    const lines: string[] = [];
-
-    // Test basic properties that should always exist
-    try {
-      const pid = process.pid;
-      lines.push(`process.pid = ${pid}`);
-      hilog.info(DOMAIN, TAG, `DIAG process.pid = ${pid}`);
-    } catch (e) {
-      lines.push(`process.pid: ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    try {
-      const ppid = process.ppid;
-      lines.push(`process.ppid = ${ppid}`);
-      hilog.info(DOMAIN, TAG, `DIAG process.ppid = ${ppid}`);
-    } catch (e) {
-      lines.push(`process.ppid: ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    // Try process.version (API 9+)
-    try {
-      const ver = process.version;
-      lines.push(`process.version = ${ver}`);
-      hilog.info(DOMAIN, TAG, `DIAG process.version = ${ver}`);
-    } catch (e) {
-      lines.push(`process.version: ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    // Try process.cwd() (API 9+)
-    try {
-      const cwd = process.cwd();
-      lines.push(`process.cwd() = ${cwd}`);
-      hilog.info(DOMAIN, TAG, `DIAG process.cwd() = ${cwd}`);
-    } catch (e) {
-      lines.push(`process.cwd(): ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    // Try process.uptime() 
-    try {
-      const up = process.uptime();
-      lines.push(`process.uptime() = ${up}`);
-      hilog.info(DOMAIN, TAG, `DIAG process.uptime() = ${up}`);
-    } catch (e) {
-      lines.push(`process.uptime(): ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    // Try process.runCmd (the one we need)
-    // We try to call it with a simple command. If the function doesn't
-    // exist, we'll get "undefined is not callable" or similar.
-    try {
-      hilog.info(DOMAIN, TAG, 'DIAG: attempting process.runCmd("echo test")...');
-      const child = process.runCmd('echo test');
-      lines.push('process.runCmd: EXISTS (returned a promise)');
-      hilog.info(DOMAIN, TAG, 'DIAG process.runCmd EXISTS! It returned a value.');
-    } catch (e) {
-      const msg = this.getErrorMessage(e as object);
-      lines.push(`process.runCmd: NOT AVAILABLE (${msg})`);
-      hilog.error(DOMAIN, TAG, `DIAG process.runCmd NOT AVAILABLE: ${msg}`);
-    }
-
-    // Try process.kill (exists in API 9+)
-    try {
-      // process.kill(signal, pid) — just check it's callable, don't actually kill
-      // We check by calling with pid 0 (self) and signal 0 (just check existence)
-      hilog.info(DOMAIN, TAG, 'DIAG: checking process.kill...');
-      // Don't actually call kill, just note it should exist
-      lines.push('process.kill: declared (not tested)');
-    } catch (e) {
-      lines.push(`process.kill: ERROR ${this.getErrorMessage(e as object)}`);
-    }
-
-    return lines.join('\n');
-  }
-
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
@@ -173,47 +93,29 @@ struct Index {
       hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}`);
       hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}`);
 
-      // --- Step 2: Probe process API availability ---
-      this.statusMessage = 'Diagnosing runtime API...';
-      hilog.info(DOMAIN, TAG, '=== PROCESS API DIAGNOSTICS ===');
-      const diag = this.probeProcessApi();
-      this.diagInfo = diag;
-      hilog.info(DOMAIN, TAG, '=== END DIAGNOSTICS ===');
-
-      // --- Step 3: Try to run node --version via process.runCmd ---
-      this.statusMessage = 'Verifying Node.js engine...';
-      hilog.info(DOMAIN, TAG, 'Attempting to run node --version...');
-
+      // --- Step 2: Make node binary executable ---
+      this.statusMessage = 'Preparing engine...';
       try {
-        const child = await process.runCmd(`"${nodeBin}" --version`, { timeout: 10000 });
-        const exitCode = await child.wait();
-        let stdout = '';
-        let stderr = '';
-        try { stdout = await child.getOutput(); } catch (e) {
-          hilog.warn(DOMAIN, TAG, `getOutput failed: ${this.getErrorMessage(e as object)}`);
-        }
-        try { stderr = await child.getErrorOutput(); } catch (e) {
-          hilog.warn(DOMAIN, TAG, `getErrorOutput failed: ${this.getErrorMessage(e as object)}`);
-        }
+        fs.chmodSync(nodeBin, 0o755);
+        hilog.info(DOMAIN, TAG, `chmod 0755 ${nodeBin}`);
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
+      }
 
-        hilog.info(DOMAIN, TAG, `node --version: exit=${exitCode} stdout=${stdout} stderr=${stderr}`);
+      // --- Step 3: Spawn the Node.js backend via NAPI ---
+      this.statusMessage = 'Starting Node.js engine...';
+      hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
 
-        if (exitCode !== 0) {
-          const detail = stderr || stdout || '(no output)';
-          throw new Error(
-            `Node.js binary failed (exit ${exitCode}). Output: ${detail.substring(0, 500)}`);
-        }
-        hilog.info(DOMAIN, TAG, `Node.js version: ${stdout.trim()}`);
+      let pid: number;
+      try {
+        pid = spawnProcess(nodeBin, [entryScript]);
+        hilog.info(DOMAIN, TAG, `Node.js backend spawned, PID: ${pid}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
-        hilog.error(DOMAIN, TAG, `Node version check failed: ${msg}`);
+        hilog.error(DOMAIN, TAG, `spawnProcess failed: ${msg}`);
 
-        // Build a comprehensive error message with diagnostics
         const errorParts: string[] = [];
-        errorParts.push(`Failed to run Node.js: ${msg}`);
-        errorParts.push('');
-        errorParts.push('=== Process API Diagnostics ===');
-        errorParts.push(this.diagInfo);
+        errorParts.push(`Failed to spawn Node.js: ${msg}`);
         errorParts.push('');
         errorParts.push(`nodeBin path: ${nodeBin}`);
         errorParts.push(`nodeBin exists: ${this.fileExists(nodeBin)}`);
@@ -225,29 +127,22 @@ struct Index {
         return;
       }
 
-      // --- Step 4: Spawn the Node.js backend ---
-      this.statusMessage = 'Starting Node.js engine...';
-      hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
+      if (pid <= 0) {
+        this.errorMessage = `spawnProcess returned invalid PID: ${pid}`;
+        this.statusMessage = 'Engine error';
+        return;
+      }
 
-      const command = `"${nodeBin}" "${entryScript}"`;
-      const child = await process.runCmd(command, { timeout: 0 });
+      NodeProcessState.set(pid);
 
-      NodeProcessState.set(child, child.pid);
-      hilog.info(DOMAIN, TAG, `Node.js backend started, PID: ${child.pid}`);
-
-      child.wait().then((code: number) => {
-        hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${code}`);
+      // --- Step 4: Monitor process exit asynchronously ---
+      waitProcess(pid).then((exitCode: number) => {
+        hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${exitCode}`);
         NodeProcessState.clear();
         this.backendExited = true;
-
-        child.getErrorOutput().then((stderr: string) => {
-          hilog.error(DOMAIN, TAG, `Node.js stderr: ${stderr.substring(0, 2000)}`);
-          this.showExitError(code, stderr);
-        }).catch(() => {
-          this.showExitError(code, '');
-        });
+        this.showExitError(exitCode, '');
       }).catch((err: BusinessError) => {
-        hilog.error(DOMAIN, TAG, `Node.js backend wait error: ${err.message}`);
+        hilog.error(DOMAIN, TAG, `waitProcess error: ${err.message}`);
         NodeProcessState.clear();
         this.backendExited = true;
         this.showExitError(-999, err.message);
@@ -395,35 +290,20 @@ struct Index {
             .textAlign(TextAlign.Center)
             .padding({ left: 20, right: 20 })
 
-          if (this.errorMessage.length > 0 || this.diagInfo.length > 0) {
+          if (this.errorMessage.length > 0) {
             Scroll() {
               Column() {
-                if (this.diagInfo.length > 0) {
-                  Text('Diagnostics:')
-                    .fontSize(14)
-                    .fontColor('#333333')
-                    .fontWeight(FontWeight.Bold)
-                    .padding({ left: 20, right: 20, top: 16, bottom: 8 })
-                  Text(this.diagInfo)
-                    .fontSize(12)
-                    .fontColor('#555555')
-                    .textAlign(TextAlign.Start)
-                    .padding({ left: 20, right: 20, bottom: 8 })
-                    .fontFamily('monospace')
-                }
-                if (this.errorMessage.length > 0) {
-                  Text('Error:')
-                    .fontSize(14)
-                    .fontColor('#cc0000')
-                    .fontWeight(FontWeight.Bold)
-                    .padding({ left: 20, right: 20, top: 8, bottom: 8 })
-                  Text(this.errorMessage)
-                    .fontSize(12)
-                    .fontColor('#cc0000')
-                    .textAlign(TextAlign.Start)
-                    .padding({ left: 20, right: 20, bottom: 16 })
-                    .fontFamily('monospace')
-                }
+                Text('Error:')
+                  .fontSize(14)
+                  .fontColor('#cc0000')
+                  .fontWeight(FontWeight.Bold)
+                  .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+                Text(this.errorMessage)
+                  .fontSize(12)
+                  .fontColor('#cc0000')
+                  .textAlign(TextAlign.Start)
+                  .padding({ left: 20, right: 20, bottom: 16 })
+                  .fontFamily('monospace')
               }
             }
             .layoutWeight(1)

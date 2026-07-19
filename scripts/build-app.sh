@@ -319,106 +319,12 @@ grep -rl "runCmd\|child_process\|ChildProcess" "${OHOS_SDK_HOME}" --include="*.d
   echo "  Found: ${f}"
 done
 
-# --- Patch SDK type declarations --------------------------------------------
-# SDK 5.0.1(13) omits process.runCmd from the @ohos.process type declarations.
-# We patch the .d.ts file to add the missing declarations so the ArkTS
-# compiler can type-check properly.  (The function may or may not exist at
-# runtime — the diagnostic dump above and runtime probing in Index.ets will
-# determine that.)
-
-echo "==> Patching SDK type declarations ..."
-
-# Find ALL @ohos.process.d.ts files (the SDK has both js/api/ and ets/api/)
-PROCESS_DTS_FILES=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null)
-
-if [ -n "${PROCESS_DTS_FILES}" ]; then
-  echo "${PROCESS_DTS_FILES}" | while IFS= read -r PROCESS_DTS; do
-    if [ ! -f "${PROCESS_DTS}" ]; then
-      continue
-    fi
-    echo "    File: ${PROCESS_DTS}"
-
-    if grep -q "runCmd" "${PROCESS_DTS}"; then
-      echo "    ✓ runCmd already declared"
-      continue
-    fi
-
-    # Use Python to insert declarations INSIDE the existing
-    # `declare namespace process { ... }` block.
-    # ArkTS does NOT support namespace merging (appending a second
-    # `declare namespace process {}` block), so we must modify the
-    # existing block by inserting before its closing brace.
-    export PROCESS_DTS
-    python3 << 'PYEOF'
-import sys, os
-
-dts = os.environ.get("PROCESS_DTS", "")
-if not dts:
-    print("    ✗ PROCESS_DTS env var not set")
-    sys.exit(1)
-
-with open(dts, "r") as f:
-    content = f.read()
-
-# Find "declare namespace process {"
-marker = "declare namespace process {"
-start = content.find(marker)
-if start == -1:
-    print("    ⚠ Could not find 'declare namespace process {' — skipping")
-    sys.exit(0)
-
-# Find the matching closing brace by counting
-brace_start = content.index("{", start)
-depth = 0
-i = brace_start
-while i < len(content):
-    if content[i] == "{":
-        depth += 1
-    elif content[i] == "}":
-        depth -= 1
-        if depth == 0:
-            break
-    i += 1
-
-if depth != 0:
-    print("    ✗ Could not find matching closing brace for namespace process")
-    sys.exit(1)
-
-# Insert new declarations before the closing brace
-new_decls = """
-  // --- Patched by build-app.sh: runCmd (missing in SDK 5.0.1 type decls) ---
-  interface ChildProcess {
-    pid: number;
-    exitCode: number;
-    killed: boolean;
-    kill(signal: number): boolean;
-    wait(): Promise<number>;
-    getOutput(): Promise<string>;
-    getErrorOutput(): Promise<string>;
-  }
-  interface CommandOptions {
-    timeout?: number;
-    killSignal?: number;
-    maxBuffer?: number;
-  }
-  function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
-  // Additional properties that may exist at runtime but are missing from SDK decls
-  let ppid: number;
-  let version: string;
-  function cwd(): string;
-"""
-
-content = content[:i] + new_decls + content[i:]
-
-with open(dts, "w") as f:
-    f.write(content)
-
-print("    ✓ Inserted runCmd + ChildProcess inside declare namespace process { }")
-PYEOF
-  done
-else
-  echo "    ⚠ @ohos.process.d.ts not found under OHOS_SDK_HOME — runCmd types may be missing"
-fi
+# NOTE: We no longer patch @ohos.process.d.ts to add runCmd declarations.
+# The process.runCmd API is a @systemapi (system-only API) in the SDK,
+# unavailable to third-party apps at runtime (returns undefined).
+# Instead, we use a NAPI native module (libspawn) that calls posix_spawn(3)
+# directly from C++, bypassing the systemapi restriction entirely.
+# The SDK dump above is kept for diagnostic reference.
 
 # --- Build the unsigned APP -------------------------------------------------
 

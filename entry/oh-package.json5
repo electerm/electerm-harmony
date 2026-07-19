@@ -4,5 +4,7 @@
   "description": "Free and open-sourced terminal/ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp client — HarmonyOS entry module",
   "main": "",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "libspawn": "file:./src/main/cpp/types/libspawn"
+  }
 }
