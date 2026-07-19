@@ -5,6 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import process from '@ohos.process';
+import http from '@ohos.net.http';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -14,17 +15,32 @@ const TAG = 'electerm';
 const BACKEND_PORT = 5577;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
+// How long to wait for the backend before giving up (ms).
+const POLL_INTERVAL = 1000;
+const POLL_TIMEOUT = 90000;
+
 @Entry
 @Component
 struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
-  @State webError: string = '';
+  @State errorMessage: string = '';
+  @State elapsedSeconds: number = 0;
   private electermDir: string = '';
+  private pollStartTime: number = 0;
+  private pollTimerId: number = -1;
+  private backendExited: boolean = false;
 
   aboutToAppear(): void {
     this.startBackend();
+  }
+
+  aboutToDisappear(): void {
+    if (this.pollTimerId !== -1) {
+      clearTimeout(this.pollTimerId);
+      this.pollTimerId = -1;
+    }
   }
 
   /**
@@ -63,7 +79,8 @@ struct Index {
    *   1. Extract rawfile/electerm/ → filesDir/electerm/
    *   2. Make the node binary executable
    *   3. Spawn the Node.js backend (node index.js)
-   *   4. Load loading.html (polls the backend, then redirects)
+   *   4. Poll http://127.0.0.1:5577 until the backend responds
+   *   5. Switch to the WebView loading the backend URL directly
    */
   async startBackend(): Promise<void> {
     try {
@@ -77,8 +94,6 @@ struct Index {
       const entryScript = `${this.electermDir}/index.js`;
 
       // --- Step 1: Extract rawfile resources if needed -------------------
-      // We check for the entry script — if it exists, the extraction was
-      // already done (or partially done) in a previous launch.
       if (!this.fileExists(entryScript)) {
         hilog.info(DOMAIN, TAG, 'Extracting bundled resources from rawfile...');
         this.statusMessage = 'Extracting resources...';
@@ -101,17 +116,12 @@ struct Index {
       }
 
       // --- Step 2: Make the node binary executable -----------------------
-      // Rawfile resources may lose the executable bit. Use chmod via runCmd.
-      // If process.runCmd doesn't exist at runtime, the call will throw
-      // and be caught by the outer catch block with a clear error message.
       this.statusMessage = 'Preparing Node.js engine...';
       try {
         const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
         await chmodChild.wait();
         hilog.info(DOMAIN, TAG, `chmod +x ${nodeBin} done`);
       } catch (e) {
-        // chmod might fail if the binary is already executable or if
-        // the filesystem doesn't support permissions. Not fatal.
         hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
       }
 
@@ -119,31 +129,22 @@ struct Index {
       this.statusMessage = 'Starting Node.js engine...';
       hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
 
-      // runCmd executes the command in a child process. We do NOT await
-      // child.wait() — the process should keep running for the lifetime
-      // of the app. The Promise from runCmd resolves once the process
-      // has started, giving us the ChildProcess handle.
       const command = `"${nodeBin}" "${entryScript}"`;
       const child = await process.runCmd(command, { timeout: 0 });
 
-      // Store the child process reference so EntryAbility can kill it
-      // when the app is destroyed.
       NodeProcessState.set(child, child.pid);
       hilog.info(DOMAIN, TAG, `Node.js backend started, PID: ${child.pid}`);
 
       // Monitor the process in the background — if it exits unexpectedly,
-      // update the status message so the user knows something went wrong.
-      // We don't await this; it runs as a fire-and-forget promise.
+      // set a flag so the polling loop can stop and show an error.
       child.wait().then((exitCode: number) => {
         hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${exitCode}`);
         NodeProcessState.clear();
-        // Only update state if we haven't already loaded the WebView
-        if (!this.serverReady) {
-          this.statusMessage = `Backend exited (code ${exitCode}). Check logs.`;
-        }
+        this.backendExited = true;
       }).catch((err: BusinessError) => {
         hilog.error(DOMAIN, TAG, `Node.js backend wait error: ${err.message}`);
         NodeProcessState.clear();
+        this.backendExited = true;
       });
 
       // Read stderr for debugging (non-blocking)
@@ -153,30 +154,62 @@ struct Index {
         }
       }).catch(() => {});
 
-      // --- Step 4: Load the loading page ---------------------------------
-      // loading.html polls http://127.0.0.1:5577 and redirects to the
-      // backend once it's responding. This gives the Node.js process
-      // a few seconds to boot before the WebView tries to connect.
-      //
-      // Verify loading.html exists before setting serverReady.
-      const loadingHtmlPath = `${this.electermDir}/loading.html`;
-      if (!this.fileExists(loadingHtmlPath)) {
-        throw new Error(`loading.html not found at ${loadingHtmlPath}`);
-      }
-
-      this.statusMessage = 'Loading...';
-      this.serverReady = true;
-
-      hilog.info(DOMAIN, TAG, `Loading page: file://${loadingHtmlPath}`);
-      hilog.info(DOMAIN, TAG, `electermDir: ${this.electermDir}`);
-      hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}, exists: ${this.fileExists(nodeBin)}`);
-      hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}, exists: ${this.fileExists(entryScript)}`);
+      // --- Step 4: Poll the backend until it responds --------------------
+      hilog.info(DOMAIN, TAG, 'Starting to poll backend...');
+      this.pollStartTime = Date.now();
+      this.pollBackend();
 
     } catch (err) {
       const msg = this.getErrorMessage(err as object);
       hilog.error(DOMAIN, TAG, `Failed to start: ${msg}`);
-      this.statusMessage = `Error: ${msg}`;
+      this.statusMessage = 'Error';
+      this.errorMessage = msg;
     }
+  }
+
+  /**
+   * Poll the backend HTTP endpoint. When it responds, switch to the
+   * WebView. Uses the HarmonyOS http module to make a GET request to
+   * http://127.0.0.1:5577/ — if the connection succeeds, the backend
+   * is running.
+   */
+  pollBackend(): void {
+    // Check if backend process already exited
+    if (this.backendExited) {
+      this.errorMessage =
+        'Node.js engine exited unexpectedly. It may have crashed during startup.';
+      this.statusMessage = 'Engine error';
+      return;
+    }
+
+    const elapsed = Date.now() - this.pollStartTime;
+    this.elapsedSeconds = Math.floor(elapsed / 1000);
+
+    // Check timeout
+    if (elapsed > POLL_TIMEOUT) {
+      this.errorMessage =
+        `Backend failed to start within ${Math.round(POLL_TIMEOUT / 1000)}s. ` +
+        'The Node.js engine may not be compatible with this device.';
+      this.statusMessage = 'Timeout';
+      return;
+    }
+
+    this.statusMessage = `Waiting for engine... (${this.elapsedSeconds}s)`;
+
+    const httpRequest = http.createHttp();
+    httpRequest.request(BACKEND_URL, {
+      method: http.RequestMethod.GET,
+      connectTimeout: 2000,
+      readTimeout: 2000,
+    }).then(() => {
+      httpRequest.destroy();
+      hilog.info(DOMAIN, TAG, 'Backend is ready! Switching to WebView.');
+      this.serverReady = true;
+    }).catch((err: BusinessError) => {
+      httpRequest.destroy();
+      // Backend not ready yet — schedule next poll
+      this.pollTimerId = setTimeout(() => this.pollBackend(), POLL_INTERVAL);
+    });
   }
 
   /**
@@ -231,53 +264,60 @@ struct Index {
   build() {
     Column() {
       if (this.serverReady) {
-        // Load loading.html — it polls the backend and redirects to
-        // http://127.0.0.1:5577/ once the server is ready.
-        Web({ src: `file://${this.electermDir}/loading.html`, controller: this.controller })
+        // Load the backend directly — no loading.html, no file:// protocol.
+        // The backend serves the full electerm web UI at http://127.0.0.1:5577/.
+        Web({ src: BACKEND_URL, controller: this.controller })
           .width('100%')
           .height('100%')
-          .backgroundColor('#15171a')
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .fileAccess(true)
           .imageAccess(true)
           .onlineImageAccess(true)
           .geolocationAccess(false)
-          // MixedMode.All allows loading HTTP content (the backend at
-          // 127.0.0.1:5577) from a file:// origin (loading.html).
           .mixedMode(MixedMode.All)
-          // Allow the WebView to make fetch() requests to the backend.
           .onControllerAttached(() => {
-            hilog.info(DOMAIN, TAG, 'WebView attached');
+            hilog.info(DOMAIN, TAG, 'WebView attached, loading backend URL');
           })
           .onPageEnd(() => {
             hilog.info(DOMAIN, TAG, 'WebView page ended loading');
           })
           .onErrorReceive(() => {
-            hilog.error(DOMAIN, TAG, 'WebView error: failed to load page');
-            this.webError = 'WebView failed to load loading.html';
+            hilog.error(DOMAIN, TAG, 'WebView error loading backend URL');
           })
       } else {
+        // Native ArkTS loading UI — always visible with explicit colors
+        // so it works regardless of system theme (dark/light).
         Column() {
           Text('Electerm')
             .fontSize(32)
             .fontWeight(FontWeight.Bold)
-            .margin({ bottom: 20 })
+            .fontColor('#333333')
+            .margin({ bottom: 24 })
+
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .color('#4aa3ff')
+            .margin({ bottom: 24 })
+
           Text(this.statusMessage)
             .fontSize(16)
-            .fontColor(Color.Gray)
+            .fontColor('#666666')
             .textAlign(TextAlign.Center)
             .padding({ left: 20, right: 20 })
-          if (this.webError.length > 0) {
-            Text(this.webError)
-              .fontSize(12)
-              .fontColor(Color.Red)
+
+          if (this.errorMessage.length > 0) {
+            Text(this.errorMessage)
+              .fontSize(14)
+              .fontColor('#ff0000')
               .textAlign(TextAlign.Center)
-              .padding({ left: 20, right: 20, top: 10 })
+              .padding({ left: 20, right: 20, top: 16 })
           }
         }
         .width('100%')
         .height('100%')
+        .backgroundColor('#ffffff')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
