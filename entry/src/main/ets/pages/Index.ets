@@ -20,6 +20,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
+  @State webError: string = '';
   private electermDir: string = '';
 
   aboutToAppear(): void {
@@ -101,6 +102,8 @@ struct Index {
 
       // --- Step 2: Make the node binary executable -----------------------
       // Rawfile resources may lose the executable bit. Use chmod via runCmd.
+      // If process.runCmd doesn't exist at runtime, the call will throw
+      // and be caught by the outer catch block with a clear error message.
       this.statusMessage = 'Preparing Node.js engine...';
       try {
         const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
@@ -120,10 +123,6 @@ struct Index {
       // child.wait() — the process should keep running for the lifetime
       // of the app. The Promise from runCmd resolves once the process
       // has started, giving us the ChildProcess handle.
-      //
-      // We set NODE_ENV and a few env vars via the command's environment
-      // by prefixing them (shell-style), though the entry script (index.js)
-      // already sets most of these via process.env assignments.
       const command = `"${nodeBin}" "${entryScript}"`;
       const child = await process.runCmd(command, { timeout: 0 });
 
@@ -158,10 +157,20 @@ struct Index {
       // loading.html polls http://127.0.0.1:5577 and redirects to the
       // backend once it's responding. This gives the Node.js process
       // a few seconds to boot before the WebView tries to connect.
+      //
+      // Verify loading.html exists before setting serverReady.
+      const loadingHtmlPath = `${this.electermDir}/loading.html`;
+      if (!this.fileExists(loadingHtmlPath)) {
+        throw new Error(`loading.html not found at ${loadingHtmlPath}`);
+      }
+
       this.statusMessage = 'Loading...';
       this.serverReady = true;
 
-      hilog.info(DOMAIN, TAG, `Loading page: file://${this.electermDir}/loading.html`);
+      hilog.info(DOMAIN, TAG, `Loading page: file://${loadingHtmlPath}`);
+      hilog.info(DOMAIN, TAG, `electermDir: ${this.electermDir}`);
+      hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}, exists: ${this.fileExists(nodeBin)}`);
+      hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}, exists: ${this.fileExists(entryScript)}`);
 
     } catch (err) {
       const msg = this.getErrorMessage(err as object);
@@ -227,6 +236,7 @@ struct Index {
         Web({ src: `file://${this.electermDir}/loading.html`, controller: this.controller })
           .width('100%')
           .height('100%')
+          .backgroundColor('#15171a')
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .fileAccess(true)
@@ -240,6 +250,13 @@ struct Index {
           .onControllerAttached(() => {
             hilog.info(DOMAIN, TAG, 'WebView attached');
           })
+          .onPageEnd(() => {
+            hilog.info(DOMAIN, TAG, 'WebView page ended loading');
+          })
+          .onErrorReceive(() => {
+            hilog.error(DOMAIN, TAG, 'WebView error: failed to load page');
+            this.webError = 'WebView failed to load loading.html';
+          })
       } else {
         Column() {
           Text('Electerm')
@@ -251,6 +268,13 @@ struct Index {
             .fontColor(Color.Gray)
             .textAlign(TextAlign.Center)
             .padding({ left: 20, right: 20 })
+          if (this.webError.length > 0) {
+            Text(this.webError)
+              .fontSize(12)
+              .fontColor(Color.Red)
+              .textAlign(TextAlign.Center)
+              .padding({ left: 20, right: 20, top: 10 })
+          }
         }
         .width('100%')
         .height('100%')

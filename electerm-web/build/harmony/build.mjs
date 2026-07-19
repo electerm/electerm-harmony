@@ -114,45 +114,70 @@ function writeLoadingPage () {
     html, body { height: 100%; margin: 0; background: #15171a; color: #cfd6e4;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .wrap { height: 100%; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: 18px; }
+      justify-content: center; gap: 18px; padding: 20px; box-sizing: border-box; }
     .logo { font-size: 22px; font-weight: 600; letter-spacing: .5px; }
     .spin { width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.15);
       border-top-color: #4aa3ff; border-radius: 50%; animation: r 1s linear infinite; }
     @keyframes r { to { transform: rotate(360deg); } }
-    .msg { font-size: 13px; opacity: .7; }
+    .msg { font-size: 13px; opacity: .7; text-align: center; max-width: 320px; word-break: break-word; }
+    .err { color: #ff6b6b; display: none; }
+    .retry { display: none; margin-top: 10px; padding: 8px 20px; background: #4aa3ff;
+      color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="logo">electerm</div>
-    <div class="spin"></div>
+    <div class="spin" id="spin"></div>
     <div class="msg" id="msg">Starting engine…</div>
+    <div class="msg err" id="err"></div>
+    <button class="retry" id="retry" onclick="location.reload()">Retry</button>
   </div>
   <script>
-    // Reach the on-device Node.js backend at http://127.0.0.1:5577.
-    // The page is loaded from file:// by the ArkWeb component. ArkWeb's
-    // MixedMode.All setting permits mixed content (http from file origin),
-    // so once the engine is up we navigate to it.
     var PORT = 5577;
     var BASE = 'http://127.0.0.1:' + PORT + '/';
     var done = false;
+    var attempts = 0;
+    var startTime = Date.now();
+    var MAX_WAIT = 60000; // 60 seconds before showing error
+
     function go () {
       if (done) return;
       done = true;
       location.replace(BASE);
     }
+
     function tryLoad () {
+      if (done) return;
+      attempts++;
+      var elapsed = Date.now() - startTime;
+
       fetch(BASE, { mode: 'no-cors' })
-        .then(function () { go(); })
+        .then(function () {
+          document.getElementById('msg').textContent = 'Engine ready, loading…';
+          go();
+        })
         .catch(function () {
-          document.getElementById('msg').textContent = 'Waiting for engine…';
-          setTimeout(tryLoad, 700);
+          if (done) return;
+          if (elapsed > MAX_WAIT) {
+            document.getElementById('spin').style.display = 'none';
+            document.getElementById('msg').textContent = 'Backend unreachable after ' + Math.round(elapsed / 1000) + 's';
+            document.getElementById('err').textContent =
+              'The Node.js engine failed to start. Possible causes:\\n' +
+              '• process.runCmd not available on this device\\n' +
+              '• Node binary architecture mismatch\\n' +
+              '• Backend crashed during startup\\n' +
+              'Attempts: ' + attempts;
+            document.getElementById('err').style.display = 'block';
+            document.getElementById('retry').style.display = 'block';
+            return;
+          }
+          document.getElementById('msg').textContent =
+            'Waiting for engine… (' + Math.round(elapsed / 1000) + 's)';
+          setTimeout(tryLoad, 1000);
         });
     }
     tryLoad();
-    // Fallback: after the engine has had time to come up (~2-4s), navigate
-    // directly. Top-level navigation is not subject to CORS restrictions.
-    setTimeout(function () { go(); }, 5000);
   </script>
 </body>
 </html>
