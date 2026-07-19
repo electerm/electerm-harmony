@@ -67,17 +67,23 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      # ── Step 1: Download ohos-node ───────────────────────────────────────
-      - name: Prepare ohos-node
-        run: ./scripts/prepare-node.sh
-        env:
-          OHOS_NODE_VERSION: ${{ env.OHOS_NODE_VERSION }}
-
-      # ── Step 2: Build electerm-web (from local source) ──────────────────
+      # ── Step 1: Build electerm-web (from local source) ──────────────────
+      #   Must run BEFORE prepare-node.sh, because prepare-web.sh does
+      #   `rm -rf rawfile/electerm/` which would delete the node binary
+      #   if prepare-node.sh had already placed it there.
       - name: Prepare electerm-web
         run: ./scripts/prepare-web.sh
         env:
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
+
+      # ── Step 2: Download ohos-node ───────────────────────────────────────
+      #   Runs after prepare-web.sh so the node binary is preserved in
+      #   rawfile/electerm/bin/ (prepare-node.sh only cleans bin/*, not
+      #   the parent electerm/ directory).
+      - name: Prepare ohos-node
+        run: ./scripts/prepare-node.sh
+        env:
+          OHOS_NODE_VERSION: ${{ env.OHOS_NODE_VERSION }}
 
       # ── Step 3: Download & extract REAL HarmonyOS Command Line Tools ──────
       - name: Download & extract HarmonyOS Command Line Tools
