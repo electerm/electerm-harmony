@@ -41,3 +41,18 @@ export const waitProcess: (pid: number) => Promise<number>;
  * @returns true if successful.
  */
 export const chmod: (path: string, mode: number) => boolean;
+
+/**
+ * Diagnoses a binary file — checks ELF magic, interpreter path, etc.
+ * @param path - File path to diagnose.
+ * @returns An object with diagnostic information.
+ */
+export interface Diagnostics {
+  exists: boolean;
+  executable: boolean;
+  stat: string;
+  magic: string;
+  interpreter: string;
+  interpreterExists: boolean;
+}
+export const diagnose: (path: string) => Diagnostics;

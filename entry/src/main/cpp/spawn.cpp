@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+#include <fcntl.h>
+#include <elf.h>
 
 extern char **environ;
 
@@ -61,6 +63,104 @@ static std::vector<char *> buildEnvp(
 
     envp.push_back(nullptr);
     return envp;
+}
+
+/* ------------------------------------------------------------------ */
+/*  diagnose(path) — return detailed info about a binary file          */
+/* ------------------------------------------------------------------ */
+
+static napi_value Diagnose(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    size_t pathLen = 0;
+    napi_get_value_string_utf8(env, args[0], nullptr, 0, &pathLen);
+    std::string path(pathLen + 1, '\0');
+    napi_get_value_string_utf8(env, args[0], &path[0], pathLen + 1, &pathLen);
+    path.resize(pathLen);
+
+    napi_value result;
+    napi_create_object(env, &result);
+
+    /* Check file existence and accessibility */
+    napi_value existsVal, execVal, errMsg;
+    napi_get_boolean(env, access(path.c_str(), F_OK) == 0, &existsVal);
+    napi_get_boolean(env, access(path.c_str(), X_OK) == 0, &execVal);
+    napi_set_named_property(env, result, "exists", existsVal);
+    napi_set_named_property(env, result, "executable", execVal);
+
+    /* Get file stat info */
+    struct stat st;
+    char statBuf[256];
+    if (stat(path.c_str(), &st) == 0) {
+        snprintf(statBuf, sizeof(statBuf), "mode=%o size=%lld uid=%d gid=%d",
+                 st.st_mode, (long long)st.st_size, st.st_uid, st.st_gid);
+    } else {
+        snprintf(statBuf, sizeof(statBuf), "stat failed: %s", strerror(errno));
+    }
+    napi_create_string_utf8(env, statBuf, NAPI_AUTO_LENGTH, &errMsg);
+    napi_set_named_property(env, result, "stat", errMsg);
+
+    /* Read ELF header to get interpreter path */
+    int fd = open(path.c_str(), O_RDONLY);
+    char interpBuf[512] = {0};
+    char magicBuf[32] = {0};
+
+    if (fd >= 0) {
+        /* Read first 4 bytes for magic */
+        unsigned char magic[4];
+        if (read(fd, magic, 4) == 4) {
+            snprintf(magicBuf, sizeof(magicBuf),
+                     "0x%02x 0x%02x 0x%02x 0x%02x%s",
+                     magic[0], magic[1], magic[2], magic[3],
+                     (magic[0] == 0x7f && magic[1] == 'E' &&
+                      magic[2] == 'L' && magic[3] == 'F')
+                         ? " (ELF!)" : " (NOT ELF)");
+        }
+
+        /* Read full ELF header */
+        lseek(fd, 0, SEEK_SET);
+        Elf64_Ehdr ehdr;
+        if (read(fd, &ehdr, sizeof(ehdr)) == sizeof(ehdr)) {
+            /* Read program headers to find PT_INTERP */
+            Elf64_Phdr phdr;
+            for (int i = 0; i < ehdr.e_phnum; i++) {
+                lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET);
+                if (read(fd, &phdr, sizeof(phdr)) != sizeof(phdr)) break;
+                if (phdr.p_type == PT_INTERP) {
+                    lseek(fd, phdr.p_offset, SEEK_SET);
+                    read(fd, interpBuf,
+                         phdr.p_filesz < sizeof(interpBuf)
+                             ? phdr.p_filesz : sizeof(interpBuf) - 1);
+                    break;
+                }
+            }
+        }
+        close(fd);
+    } else {
+        snprintf(magicBuf, sizeof(magicBuf), "open failed: %s", strerror(errno));
+    }
+
+    napi_create_string_utf8(env, magicBuf, NAPI_AUTO_LENGTH, &errMsg);
+    napi_set_named_property(env, result, "magic", errMsg);
+
+    napi_create_string_utf8(env, interpBuf[0] ? interpBuf : "(none)",
+                            NAPI_AUTO_LENGTH, &errMsg);
+    napi_set_named_property(env, result, "interpreter", errMsg);
+
+    /* Check if interpreter exists */
+    if (interpBuf[0]) {
+        napi_value interpExists;
+        napi_get_boolean(env, access(interpBuf, F_OK) == 0, &interpExists);
+        napi_set_named_property(env, result, "interpreterExists", interpExists);
+    } else {
+        napi_value interpExists;
+        napi_get_boolean(env, false, &interpExists);
+        napi_set_named_property(env, result, "interpreterExists", interpExists);
+    }
+
+    return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -308,6 +408,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"waitProcess",  nullptr, WaitProcess,  nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"chmod",        nullptr, Chmod,        nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"diagnose",     nullptr, Diagnose,     nullptr, nullptr, nullptr,
             napi_default, nullptr},
     };
     napi_define_properties(env, exports,

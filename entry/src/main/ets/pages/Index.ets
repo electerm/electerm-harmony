@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess, chmod } from 'libspawn.so';
+import { spawnProcess, waitProcess, chmod, diagnose, Diagnostics } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -134,6 +134,21 @@ struct Index {
         errorParts.push(`libDir exists: ${this.fileExists(libDir)}`);
         errorParts.push(`entryScript: ${entryScript}`);
         errorParts.push(`entryScript exists: ${this.fileExists(entryScript)}`);
+
+        // NAPI-side diagnostics: check ELF header, interpreter, etc.
+        try {
+          const diag: Diagnostics = diagnose(nodeBin);
+          errorParts.push('');
+          errorParts.push('=== NAPI Diagnostics ===');
+          errorParts.push(`exists: ${diag.exists}`);
+          errorParts.push(`executable: ${diag.executable}`);
+          errorParts.push(`stat: ${diag.stat}`);
+          errorParts.push(`magic: ${diag.magic}`);
+          errorParts.push(`interpreter: ${diag.interpreter}`);
+          errorParts.push(`interpreterExists: ${diag.interpreterExists}`);
+        } catch (diagErr) {
+          errorParts.push(`diagnose failed: ${this.getErrorMessage(diagErr as object)}`);
+        }
 
         this.errorMessage = errorParts.join('\n');
         this.statusMessage = 'Engine error';
