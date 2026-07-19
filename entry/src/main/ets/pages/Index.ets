@@ -450,7 +450,7 @@ struct Index {
               Text(this.errorMessage)
                 .fontSize(13)
                 .fontColor('#cc0000')
-                .textAlign(TextAlign.Left)
+                .textAlign(TextAlign.Start)
                 .padding({ left: 20, right: 20, top: 16 })
                 .fontFamily('monospace')
             }
