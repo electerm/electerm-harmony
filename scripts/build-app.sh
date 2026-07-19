@@ -298,13 +298,21 @@ cd "${PROJECT_ROOT}"
 
 echo "==> Patching SDK type declarations ..."
 
-PROCESS_DTS=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | head -1)
-if [ -n "${PROCESS_DTS}" ] && [ -f "${PROCESS_DTS}" ]; then
-  echo "    File: ${PROCESS_DTS}"
+# Find ALL @ohos.process.d.ts files (the SDK has both js/api/ and ets/api/)
+PROCESS_DTS_FILES=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null)
 
-  if grep -q "runCmd" "${PROCESS_DTS}"; then
-    echo "    ✓ runCmd already declared in $(basename "${PROCESS_DTS}")"
-  else
+if [ -n "${PROCESS_DTS_FILES}" ]; then
+  echo "${PROCESS_DTS_FILES}" | while IFS= read -r PROCESS_DTS; do
+    if [ ! -f "${PROCESS_DTS}" ]; then
+      continue
+    fi
+    echo "    File: ${PROCESS_DTS}"
+
+    if grep -q "runCmd" "${PROCESS_DTS}"; then
+      echo "    ✓ runCmd already declared"
+      continue
+    fi
+
     # Use Python to insert declarations INSIDE the existing
     # `declare namespace process { ... }` block.
     # ArkTS does NOT support namespace merging (appending a second
@@ -312,12 +320,12 @@ if [ -n "${PROCESS_DTS}" ] && [ -f "${PROCESS_DTS}" ]; then
     # existing block by inserting before its closing brace.
     export PROCESS_DTS
     python3 << 'PYEOF'
-import sys
+import sys, os
 
-dts = sys.argv[1] if len(sys.argv) > 1 else ""
-# Read the file path from the environment set by the shell
-import os
-dts = os.environ.get("PROCESS_DTS", dts)
+dts = os.environ.get("PROCESS_DTS", "")
+if not dts:
+    print("    ✗ PROCESS_DTS env var not set")
+    sys.exit(1)
 
 with open(dts, "r") as f:
     content = f.read()
@@ -326,8 +334,8 @@ with open(dts, "r") as f:
 marker = "declare namespace process {"
 start = content.find(marker)
 if start == -1:
-    print("    ✗ Could not find 'declare namespace process {' in the file")
-    sys.exit(1)
+    print("    ⚠ Could not find 'declare namespace process {' — skipping")
+    sys.exit(0)
 
 # Find the matching closing brace by counting
 brace_start = content.index("{", start)
@@ -373,8 +381,7 @@ with open(dts, "w") as f:
 
 print("    ✓ Inserted runCmd + ChildProcess inside declare namespace process { }")
 PYEOF
-    export PROCESS_DTS
-  fi
+  done
 else
   echo "    ⚠ @ohos.process.d.ts not found under OHOS_SDK_HOME — runCmd types may be missing"
 fi
