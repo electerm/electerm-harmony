@@ -291,6 +291,48 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
+# --- Patch SDK type declarations --------------------------------------------
+# SDK 5.0.1(13) omits process.runCmd from the @ohos.process type declarations,
+# even though the function exists at runtime (API 9+). We patch the .d.ts file
+# to add the missing declarations so the ArkTS compiler can type-check properly.
+
+echo "==> Patching SDK type declarations ..."
+
+PROCESS_DTS=$(find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | head -1)
+if [ -n "${PROCESS_DTS}" ] && [ -f "${PROCESS_DTS}" ]; then
+  if grep -q "runCmd" "${PROCESS_DTS}"; then
+    echo "    ✓ runCmd already declared in $(basename "${PROCESS_DTS}")"
+  else
+    # Append namespace augmentation — TypeScript merges this with the existing
+    # declare namespace process { ... } block in the file.
+    cat >> "${PROCESS_DTS}" <<'PATCH'
+
+// --- Patched by build-app.sh ---
+// SDK 5.0.1(13) omits runCmd from type declarations, but it exists at runtime.
+declare namespace process {
+  interface ChildProcess {
+    pid: number;
+    exitCode: number;
+    killed: boolean;
+    kill(signal: number): boolean;
+    wait(): Promise<number>;
+    getOutput(): Promise<string>;
+    getErrorOutput(): Promise<string>;
+  }
+  interface CommandOptions {
+    timeout?: number;
+    killSignal?: number;
+    maxBuffer?: number;
+  }
+  function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
+}
+PATCH
+    echo "    ✓ Patched $(basename "${PROCESS_DTS}") with runCmd + ChildProcess"
+  fi
+else
+  echo "    ⚠ @ohos.process.d.ts not found under OHOS_SDK_HOME — runCmd types may be missing"
+fi
+
 # --- Build the unsigned APP -------------------------------------------------
 
 echo "==> Building unsigned APP (${BUILD_MODE}) ..."

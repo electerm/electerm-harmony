@@ -7,36 +7,6 @@ import { util } from '@kit.ArkTS';
 import process from '@ohos.process';
 import { NodeProcessState } from '../NodeProcessState';
 
-/**
- * Child process handle returned by process.runCmd.
- * The @ohos.process module provides runCmd at runtime (API 9+),
- * but SDK 5.0.1(13) type declarations may omit it.
- */
-interface CmdChildProcess {
-  pid: number;
-  kill(signal: number): boolean;
-  wait(): Promise<number>;
-  getOutput(): Promise<string>;
-  getErrorOutput(): Promise<string>;
-}
-
-/** Options for process.runCmd. */
-interface CmdOptions {
-  timeout?: number;
-  killSignal?: number;
-  maxBuffer?: number;
-}
-
-/**
- * Extended process interface that includes runCmd.
- * `pid` creates type overlap with the real process object so the
- * `as` assertion is valid in ArkTS.
- */
-interface ProcessWithRunCmd {
-  pid: number;
-  runCmd(command: string, options?: CmdOptions): Promise<CmdChildProcess>;
-}
-
 const DOMAIN = 0x0001;
 const TAG = 'electerm';
 
@@ -133,8 +103,7 @@ struct Index {
       // Rawfile resources may lose the executable bit. Use chmod via runCmd.
       this.statusMessage = 'Preparing Node.js engine...';
       try {
-        const proc = process as ProcessWithRunCmd;
-        const chmodChild = await proc.runCmd(`chmod 755 "${nodeBin}"`);
+        const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
         await chmodChild.wait();
         hilog.info(DOMAIN, TAG, `chmod +x ${nodeBin} done`);
       } catch (e) {
@@ -156,8 +125,7 @@ struct Index {
       // by prefixing them (shell-style), though the entry script (index.js)
       // already sets most of these via process.env assignments.
       const command = `"${nodeBin}" "${entryScript}"`;
-      const proc2 = process as ProcessWithRunCmd;
-      const child = await proc2.runCmd(command, { timeout: 0 });
+      const child = await process.runCmd(command, { timeout: 0 });
 
       // Store the child process reference so EntryAbility can kill it
       // when the app is destroyed.

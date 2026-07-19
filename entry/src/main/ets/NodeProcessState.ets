@@ -7,20 +7,19 @@
  * session. Storing the ChildProcess reference here lets both layers
  * access it.
  *
- * We store the process as `object` to avoid importing the full
- * ChildProcess type interface (which may differ across SDK versions).
- * The only method we actually need is `kill(signal)`.
+ * We use process.ChildProcess (added to the SDK type declarations by
+ * build-app.sh) to ensure type compatibility with the return value of
+ * process.runCmd() without relying on structural typing (which ArkTS
+ * does not support).
  */
 
-interface Killable {
-  kill(signal: number): boolean;
-}
+import process from '@ohos.process';
 
 export class NodeProcessState {
-  static childProcess: Killable | null = null;
+  static childProcess: process.ChildProcess | null = null;
   static nodePid: number = -1;
 
-  static set(cp: Killable, pid: number): void {
+  static set(cp: process.ChildProcess, pid: number): void {
     NodeProcessState.childProcess = cp;
     NodeProcessState.nodePid = pid;
   }
