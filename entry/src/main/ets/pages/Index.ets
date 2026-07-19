@@ -125,7 +125,29 @@ struct Index {
       this.statusMessage = 'Opening engine binary...';
       hilog.info(DOMAIN, TAG, 'Opening node binary via ArkTS for fd-based spawn...');
 
-      const nodeFile = fs.openSync(nodeBin, fs.OpenMode.READ_ONLY);
+      let nodeFile: fs.File;
+      try {
+        nodeFile = fs.openSync(nodeBin, fs.OpenMode.READ_ONLY);
+      } catch (openErr) {
+        const msg = this.getErrorMessage(openErr as object);
+        hilog.error(DOMAIN, TAG, `fs.openSync(${nodeBin}) failed: ${msg}`);
+        const errorParts: string[] = [];
+        errorParts.push(`Cannot open node binary: ${msg}`);
+        errorParts.push('');
+        errorParts.push(`nodeBin: ${nodeBin}`);
+        errorParts.push(`nodeBin exists (ArkTS): ${this.fileExists(nodeBin)}`);
+        errorParts.push(`entryScript: ${entryScript}`);
+        errorParts.push(`entryScript exists (ArkTS): ${this.fileExists(entryScript)}`);
+        errorParts.push(`libDir exists: ${this.fileExists(`${this.electermDir}/lib`)}`);
+        // List what's actually in electermDir
+        try {
+          const electermExists = this.fileExists(this.electermDir);
+          errorParts.push(`electermDir exists: ${electermExists}`);
+        } catch { }
+        this.errorMessage = errorParts.join('\n');
+        this.statusMessage = 'Engine error';
+        return;
+      }
       hilog.info(DOMAIN, TAG, `nodeBin fd: ${nodeFile.fd}`);
 
       // Diagnose the fd to see if we can read the ELF header

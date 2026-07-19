@@ -39,8 +39,9 @@ else
   echo "    Using cached tarball: ${DOWNLOAD_DIR}/${TARBALL_NAME}"
 fi
 
-# Clean previous extraction
-rm -rf "${RAWFILE_NODE_DIR:?}/"*
+# Clean previous node binary extraction (only bin/ and lib/,
+# NOT the entire electerm/ directory — prepare-web.sh puts web files there too)
+rm -rf "${RAWFILE_NODE_DIR}/bin" "${RAWFILE_NODE_DIR}/lib"
 
 # Extract (strip top-level directory)
 echo "    Extracting to ${RAWFILE_NODE_DIR}/ ..."
