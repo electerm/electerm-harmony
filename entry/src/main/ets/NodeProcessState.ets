@@ -11,7 +11,7 @@
  * unavailable to third-party apps.
  */
 
-import { killProcess } from 'libspawn';
+import { killProcess } from 'libspawn.so';
 
 export class NodeProcessState {
   static nodePid: number = -1;
@@ -27,7 +27,7 @@ export class NodeProcessState {
   static kill(): boolean {
     if (NodeProcessState.nodePid > 0) {
       try {
-        const result = killProcess(NodeProcessState.nodePid, 9);
+        const result: boolean = killProcess(NodeProcessState.nodePid, 9);
         NodeProcessState.clear();
         return result;
       } catch {

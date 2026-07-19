@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess } from 'libspawn';
+import { spawnProcess, waitProcess, chmod } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -96,7 +96,7 @@ struct Index {
       // --- Step 2: Make node binary executable ---
       this.statusMessage = 'Preparing engine...';
       try {
-        fs.chmodSync(nodeBin, 0o755);
+        chmod(nodeBin, 0o755);
         hilog.info(DOMAIN, TAG, `chmod 0755 ${nodeBin}`);
       } catch (e) {
         hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);

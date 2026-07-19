@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 
@@ -124,6 +125,30 @@ static napi_value KillProcess(napi_env env, napi_callback_info info) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  chmod  (set file permissions)                                      */
+/* ------------------------------------------------------------------ */
+
+static napi_value Chmod(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    size_t pathLen = 0;
+    napi_get_value_string_utf8(env, args[0], nullptr, 0, &pathLen);
+    std::string path(pathLen + 1, '\0');
+    napi_get_value_string_utf8(env, args[0], &path[0], pathLen + 1, &pathLen);
+    path.resize(pathLen);
+
+    int32_t mode = 0;
+    napi_get_value_int32(env, args[1], &mode);
+
+    int ret = chmod(path.c_str(), (mode_t)mode);
+    napi_value result;
+    napi_get_boolean(env, ret == 0, &result);
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
 /*  waitProcess  (uses napi_async_work for thread safety)              */
 /* ------------------------------------------------------------------ */
 
@@ -198,6 +223,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"killProcess",  nullptr, KillProcess,  nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"waitProcess",  nullptr, WaitProcess,  nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"chmod",        nullptr, Chmod,        nullptr, nullptr, nullptr,
             napi_default, nullptr},
     };
     napi_define_properties(env, exports,

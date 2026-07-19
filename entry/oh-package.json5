@@ -5,6 +5,6 @@
   "main": "",
   "license": "MIT",
   "dependencies": {
-    "libspawn": "file:./src/main/cpp/types/libspawn"
+    "libspawn.so": "file:./src/main/cpp/types/libspawn"
   }
 }

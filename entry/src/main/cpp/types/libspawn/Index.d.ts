@@ -28,3 +28,11 @@ export const killProcess: (pid: number, signal?: number) => boolean;
  * @returns A Promise that resolves with the exit code, or rejects with -1 on error.
  */
 export const waitProcess: (pid: number) => Promise<number>;
+
+/**
+ * Changes file permissions (chmod).
+ * @param path - File path.
+ * @param mode - Permission mode (e.g. 0o755 = 493).
+ * @returns true if successful.
+ */
+export const chmod: (path: string, mode: number) => boolean;
