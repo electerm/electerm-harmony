@@ -291,10 +291,40 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
+# --- Dump SDK type declarations for diagnostics -----------------------------
+# Dump the ORIGINAL @ohos.process.d.ts and any child_process .d.ts files to
+# the build log so we can see exactly what APIs the SDK declares at compile
+# time.  This is critical for determining the correct runtime API to use.
+
+echo "==> Dumping SDK process/child_process type declarations ..."
+
+# Dump @ohos.process.d.ts (original, before patching)
+find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | while IFS= read -r f; do
+  echo "===== BEGIN ${f} (ORIGINAL) ====="
+  cat "${f}"
+  echo "===== END ${f} ====="
+done
+
+# Search for child_process declarations
+echo "==> Searching for child_process related .d.ts files ..."
+find "${OHOS_SDK_HOME}" -name "*child_process*" -o -name "*childprocess*" 2>/dev/null | while IFS= read -r f; do
+  echo "===== BEGIN ${f} ====="
+  cat "${f}"
+  echo "===== END ${f} ====="
+done
+
+# Also search for any .d.ts containing "spawn" or "runCmd"
+echo "==> Searching for .d.ts files containing spawn/runCmd ..."
+grep -rl "runCmd\|child_process\|ChildProcess" "${OHOS_SDK_HOME}" --include="*.d.ts" 2>/dev/null | while IFS= read -r f; do
+  echo "  Found: ${f}"
+done
+
 # --- Patch SDK type declarations --------------------------------------------
-# SDK 5.0.1(13) omits process.runCmd from the @ohos.process type declarations,
-# even though the function exists at runtime (API 9+). We patch the .d.ts file
-# to add the missing declarations so the ArkTS compiler can type-check properly.
+# SDK 5.0.1(13) omits process.runCmd from the @ohos.process type declarations.
+# We patch the .d.ts file to add the missing declarations so the ArkTS
+# compiler can type-check properly.  (The function may or may not exist at
+# runtime — the diagnostic dump above and runtime probing in Index.ets will
+# determine that.)
 
 echo "==> Patching SDK type declarations ..."
 
@@ -372,6 +402,10 @@ new_decls = """
     maxBuffer?: number;
   }
   function runCmd(command: string, options?: CommandOptions): Promise<ChildProcess>;
+  // Additional properties that may exist at runtime but are missing from SDK decls
+  let ppid: number;
+  let version: string;
+  function cwd(): string;
 """
 
 content = content[:i] + new_decls + content[i:]
