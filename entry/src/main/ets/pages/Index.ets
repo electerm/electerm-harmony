@@ -11,18 +11,8 @@ import { NodeProcessState } from '../NodeProcessState';
 const DOMAIN = 0x0001;
 const TAG = 'electerm';
 
-// Result of running a command via runCommandCapture.
-interface CmdResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-// The port the Node.js backend listens on (must match .env PORT).
 const BACKEND_PORT = 5577;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
-
-// How long to wait for the backend before giving up (ms).
 const POLL_INTERVAL = 1000;
 const POLL_TIMEOUT = 90000;
 
@@ -33,14 +23,11 @@ struct Index {
   @State serverReady: boolean = false;
   @State statusMessage: string = 'Starting electerm...';
   @State errorMessage: string = '';
-  @State elapsedSeconds: number = 0;
+  @State diagInfo: string = '';
   private electermDir: string = '';
   private pollStartTime: number = 0;
   private pollTimerId: number = -1;
   private backendExited: boolean = false;
-  private exitCode: number = -1;
-  private stderrText: string = '';
-  private stdoutText: string = '';
 
   aboutToAppear(): void {
     this.startBackend();
@@ -53,9 +40,6 @@ struct Index {
     }
   }
 
-  /**
-   * Check if a file exists without throwing.
-   */
   fileExists(path: string): boolean {
     try {
       fs.accessSync(path);
@@ -65,9 +49,6 @@ struct Index {
     }
   }
 
-  /**
-   * Safely extract a human-readable message from an error object.
-   */
   getErrorMessage(err: object): string {
     const businessErr = err as BusinessError;
     if (businessErr && businessErr.message) {
@@ -85,48 +66,94 @@ struct Index {
   }
 
   /**
-   * Run a command and capture its stdout, stderr, and exit code.
+   * Diagnostic: probe the process object to find what APIs are available.
+   * Logs results to hilog and returns a summary string.
    */
-  async runCommandCapture(command: string): Promise<CmdResult> {
-    const child = await process.runCmd(command, { timeout: 0 });
-    const exitCode = await child.wait();
-    let stdout = '';
-    let stderr = '';
+  probeProcessApi(): string {
+    const lines: string[] = [];
+
+    // Test basic properties that should always exist
     try {
-      stdout = await child.getOutput();
+      const pid = process.pid;
+      lines.push(`process.pid = ${pid}`);
+      hilog.info(DOMAIN, TAG, `DIAG process.pid = ${pid}`);
     } catch (e) {
-      hilog.warn(DOMAIN, TAG, `getOutput failed: ${this.getErrorMessage(e as object)}`);
+      lines.push(`process.pid: ERROR ${this.getErrorMessage(e as object)}`);
     }
+
     try {
-      stderr = await child.getErrorOutput();
+      const ppid = process.ppid;
+      lines.push(`process.ppid = ${ppid}`);
+      hilog.info(DOMAIN, TAG, `DIAG process.ppid = ${ppid}`);
     } catch (e) {
-      hilog.warn(DOMAIN, TAG, `getErrorOutput failed: ${this.getErrorMessage(e as object)}`);
+      lines.push(`process.ppid: ERROR ${this.getErrorMessage(e as object)}`);
     }
-    const result: CmdResult = { exitCode, stdout, stderr };
-    return result;
+
+    // Try process.version (API 9+)
+    try {
+      const ver = process.version;
+      lines.push(`process.version = ${ver}`);
+      hilog.info(DOMAIN, TAG, `DIAG process.version = ${ver}`);
+    } catch (e) {
+      lines.push(`process.version: ERROR ${this.getErrorMessage(e as object)}`);
+    }
+
+    // Try process.cwd() (API 9+)
+    try {
+      const cwd = process.cwd();
+      lines.push(`process.cwd() = ${cwd}`);
+      hilog.info(DOMAIN, TAG, `DIAG process.cwd() = ${cwd}`);
+    } catch (e) {
+      lines.push(`process.cwd(): ERROR ${this.getErrorMessage(e as object)}`);
+    }
+
+    // Try process.uptime() 
+    try {
+      const up = process.uptime();
+      lines.push(`process.uptime() = ${up}`);
+      hilog.info(DOMAIN, TAG, `DIAG process.uptime() = ${up}`);
+    } catch (e) {
+      lines.push(`process.uptime(): ERROR ${this.getErrorMessage(e as object)}`);
+    }
+
+    // Try process.runCmd (the one we need)
+    // We try to call it with a simple command. If the function doesn't
+    // exist, we'll get "undefined is not callable" or similar.
+    try {
+      hilog.info(DOMAIN, TAG, 'DIAG: attempting process.runCmd("echo test")...');
+      const child = process.runCmd('echo test');
+      lines.push('process.runCmd: EXISTS (returned a promise)');
+      hilog.info(DOMAIN, TAG, 'DIAG process.runCmd EXISTS! It returned a value.');
+    } catch (e) {
+      const msg = this.getErrorMessage(e as object);
+      lines.push(`process.runCmd: NOT AVAILABLE (${msg})`);
+      hilog.error(DOMAIN, TAG, `DIAG process.runCmd NOT AVAILABLE: ${msg}`);
+    }
+
+    // Try process.kill (exists in API 9+)
+    try {
+      // process.kill(signal, pid) — just check it's callable, don't actually kill
+      // We check by calling with pid 0 (self) and signal 0 (just check existence)
+      hilog.info(DOMAIN, TAG, 'DIAG: checking process.kill...');
+      // Don't actually call kill, just note it should exist
+      lines.push('process.kill: declared (not tested)');
+    } catch (e) {
+      lines.push(`process.kill: ERROR ${this.getErrorMessage(e as object)}`);
+    }
+
+    return lines.join('\n');
   }
 
-  /**
-   * Main startup sequence:
-   *   1. Extract rawfile/electerm/ → filesDir/electerm/
-   *   2. Make the node binary executable
-   *   3. Pre-flight: test node --version
-   *   4. Spawn the Node.js backend (node index.js)
-   *   5. Poll http://127.0.0.1:5577 until the backend responds
-   *   6. Switch to the WebView loading the backend URL directly
-   */
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
       const sandboxDir = context.filesDir;
       this.electermDir = `${sandboxDir}/electerm`;
 
-      // The node binary path inside the extracted sandbox.
       const nodeBin = `${this.electermDir}/bin/bin/node`;
-      // The entry script that sets env vars and imports app.bundle.mjs.
       const entryScript = `${this.electermDir}/index.js`;
 
-      // --- Step 1: Extract rawfile resources if needed -------------------
+      // --- Step 1: Extract rawfile resources if needed ---
       if (!this.fileExists(entryScript)) {
         hilog.info(DOMAIN, TAG, 'Extracting bundled resources from rawfile...');
         this.statusMessage = 'Extracting resources...';
@@ -136,85 +163,69 @@ struct Index {
         hilog.info(DOMAIN, TAG, 'Resources already extracted, skipping.');
       }
 
-      // Verify the node binary exists
       if (!this.fileExists(nodeBin)) {
-        throw new Error(
-          `Node.js binary not found at ${nodeBin}.`);
+        throw new Error(`Node.js binary not found at ${nodeBin}.`);
       }
       if (!this.fileExists(entryScript)) {
-        throw new Error(
-          `Entry script not found at ${entryScript}.`);
+        throw new Error(`Entry script not found at ${entryScript}.`);
       }
 
       hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}`);
       hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}`);
-      hilog.info(DOMAIN, TAG, `electermDir: ${this.electermDir}`);
-      hilog.info(DOMAIN, TAG, `sandboxDir: ${sandboxDir}`);
 
-      // --- Step 2: Make the node binary executable -----------------------
-      this.statusMessage = 'Preparing Node.js engine...';
-      try {
-        const chmodChild = await process.runCmd(`chmod 755 "${nodeBin}"`);
-        await chmodChild.wait();
-        hilog.info(DOMAIN, TAG, `chmod +x ${nodeBin} done`);
-      } catch (e) {
-        hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
-      }
+      // --- Step 2: Probe process API availability ---
+      this.statusMessage = 'Diagnosing runtime API...';
+      hilog.info(DOMAIN, TAG, '=== PROCESS API DIAGNOSTICS ===');
+      const diag = this.probeProcessApi();
+      this.diagInfo = diag;
+      hilog.info(DOMAIN, TAG, '=== END DIAGNOSTICS ===');
 
-      // --- Step 3: Pre-flight check — does node run at all? -------------
-      // Run "node --version" to verify the binary is executable on this
-      // device. If this fails, there's no point trying to run the backend.
+      // --- Step 3: Try to run node --version via process.runCmd ---
       this.statusMessage = 'Verifying Node.js engine...';
-      hilog.info(DOMAIN, TAG, 'Pre-flight: running node --version...');
+      hilog.info(DOMAIN, TAG, 'Attempting to run node --version...');
+
       try {
-        const result = await this.runCommandCapture(`"${nodeBin}" --version`);
-        hilog.info(DOMAIN, TAG, `node --version exit code: ${result.exitCode}`);
-        hilog.info(DOMAIN, TAG, `node --version stdout: ${result.stdout}`);
-        hilog.info(DOMAIN, TAG, `node --version stderr: ${result.stderr}`);
-
-        if (result.exitCode !== 0) {
-          // Node binary exists but crashes — likely arch mismatch
-          const detail = result.stderr || result.stdout || '(no output)';
-          throw new Error(
-            `Node.js binary failed to run (exit ${result.exitCode}). ` +
-            `Output: ${detail.substring(0, 500)}. ` +
-            'This likely means the binary architecture does not match the device.');
+        const child = await process.runCmd(`"${nodeBin}" --version`, { timeout: 10000 });
+        const exitCode = await child.wait();
+        let stdout = '';
+        let stderr = '';
+        try { stdout = await child.getOutput(); } catch (e) {
+          hilog.warn(DOMAIN, TAG, `getOutput failed: ${this.getErrorMessage(e as object)}`);
         }
-        hilog.info(DOMAIN, TAG, `Node.js version: ${result.stdout.trim()}`);
-      } catch (e) {
-        // If runCmd itself threw (not the node process), e.g. "no such file"
-        const msg = this.getErrorMessage(e as object);
-        hilog.error(DOMAIN, TAG, `Pre-flight check failed: ${msg}`);
-        throw new Error(
-          `Node.js pre-flight check failed: ${msg}. ` +
-          'The binary may not be compatible with this device architecture.');
-      }
-
-      // --- Step 4: Pre-flight check — can node execute a simple script? --
-      this.statusMessage = 'Testing Node.js runtime...';
-      const testScript = `console.log("node-ok")`;
-      hilog.info(DOMAIN, TAG, 'Pre-flight: running node -e test...');
-      try {
-        const result = await this.runCommandCapture(
-          `"${nodeBin}" -e "${testScript}"`
-        );
-        hilog.info(DOMAIN, TAG, `node -e test exit code: ${result.exitCode}`);
-        hilog.info(DOMAIN, TAG, `node -e test stdout: ${result.stdout}`);
-        hilog.info(DOMAIN, TAG, `node -e test stderr: ${result.stderr}`);
-
-        if (result.exitCode !== 0) {
-          const detail = result.stderr || result.stdout || '(no output)';
-          throw new Error(
-            `Node.js script execution failed (exit ${result.exitCode}). ` +
-            `Output: ${detail.substring(0, 500)}`);
+        try { stderr = await child.getErrorOutput(); } catch (e) {
+          hilog.warn(DOMAIN, TAG, `getErrorOutput failed: ${this.getErrorMessage(e as object)}`);
         }
+
+        hilog.info(DOMAIN, TAG, `node --version: exit=${exitCode} stdout=${stdout} stderr=${stderr}`);
+
+        if (exitCode !== 0) {
+          const detail = stderr || stdout || '(no output)';
+          throw new Error(
+            `Node.js binary failed (exit ${exitCode}). Output: ${detail.substring(0, 500)}`);
+        }
+        hilog.info(DOMAIN, TAG, `Node.js version: ${stdout.trim()}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
-        hilog.error(DOMAIN, TAG, `Script test failed: ${msg}`);
-        throw new Error(`Node.js script test failed: ${msg}`);
+        hilog.error(DOMAIN, TAG, `Node version check failed: ${msg}`);
+
+        // Build a comprehensive error message with diagnostics
+        const errorParts: string[] = [];
+        errorParts.push(`Failed to run Node.js: ${msg}`);
+        errorParts.push('');
+        errorParts.push('=== Process API Diagnostics ===');
+        errorParts.push(this.diagInfo);
+        errorParts.push('');
+        errorParts.push(`nodeBin path: ${nodeBin}`);
+        errorParts.push(`nodeBin exists: ${this.fileExists(nodeBin)}`);
+        errorParts.push(`entryScript: ${entryScript}`);
+        errorParts.push(`entryScript exists: ${this.fileExists(entryScript)}`);
+
+        this.errorMessage = errorParts.join('\n');
+        this.statusMessage = 'Engine error';
+        return;
       }
 
-      // --- Step 5: Spawn the Node.js backend -----------------------------
+      // --- Step 4: Spawn the Node.js backend ---
       this.statusMessage = 'Starting Node.js engine...';
       hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
 
@@ -224,40 +235,25 @@ struct Index {
       NodeProcessState.set(child, child.pid);
       hilog.info(DOMAIN, TAG, `Node.js backend started, PID: ${child.pid}`);
 
-      // Monitor the process in the background. When it exits, capture
-      // stdout, stderr, and exit code, then build a detailed error message.
       child.wait().then((code: number) => {
         hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${code}`);
         NodeProcessState.clear();
-        this.exitCode = code;
         this.backendExited = true;
 
-        // Capture stderr and stdout after process exits
         child.getErrorOutput().then((stderr: string) => {
-          this.stderrText = stderr || '';
-          hilog.error(DOMAIN, TAG, `Node.js stderr (len=${stderr.length}): ${stderr.substring(0, 2000)}`);
-          this.buildExitError();
+          hilog.error(DOMAIN, TAG, `Node.js stderr: ${stderr.substring(0, 2000)}`);
+          this.showExitError(code, stderr);
         }).catch(() => {
-          this.buildExitError();
-        });
-
-        child.getOutput().then((stdout: string) => {
-          this.stdoutText = stdout || '';
-          hilog.info(DOMAIN, TAG, `Node.js stdout (len=${stdout.length}): ${stdout.substring(0, 1000)}`);
-          this.buildExitError();
-        }).catch(() => {
-          this.buildExitError();
+          this.showExitError(code, '');
         });
       }).catch((err: BusinessError) => {
         hilog.error(DOMAIN, TAG, `Node.js backend wait error: ${err.message}`);
         NodeProcessState.clear();
-        this.exitCode = -999;
-        this.stderrText = err.message;
         this.backendExited = true;
-        this.buildExitError();
+        this.showExitError(-999, err.message);
       });
 
-      // --- Step 6: Poll the backend until it responds --------------------
+      // --- Step 5: Poll the backend ---
       hilog.info(DOMAIN, TAG, 'Starting to poll backend...');
       this.pollStartTime = Date.now();
       this.pollBackend();
@@ -270,66 +266,38 @@ struct Index {
     }
   }
 
-  /**
-   * Build a detailed error message when the Node.js process exits.
-   * Includes exit code, stderr, and stdout.
-   */
-  buildExitError(): void {
-    if (!this.backendExited) {
-      return;
-    }
-    // Only build once we have both stdout and stderr (or they've been
-    // attempted). We use a small delay to let both promises settle.
+  showExitError(code: number, stderr: string): void {
     const parts: string[] = [];
-    parts.push(`Node.js engine exited (code ${this.exitCode}).`);
-
-    if (this.stderrText.length > 0) {
-      // Truncate stderr to keep the UI readable
-      const trimmed = this.stderrText.substring(0, 800);
-      parts.push(`stderr: ${trimmed}`);
+    parts.push(`Node.js engine exited (code ${code}).`);
+    if (stderr.length > 0) {
+      parts.push(`stderr: ${stderr.substring(0, 800)}`);
+    } else {
+      parts.push('(no stderr output)');
     }
-    if (this.stdoutText.length > 0) {
-      const trimmed = this.stdoutText.substring(0, 400);
-      parts.push(`stdout: ${trimmed}`);
-    }
-    if (this.stderrText.length === 0 && this.stdoutText.length === 0) {
-      parts.push('(no output captured)');
-    }
-
     this.errorMessage = parts.join('\n');
     this.statusMessage = 'Engine error';
     hilog.error(DOMAIN, TAG, `Exit error: ${this.errorMessage}`);
   }
 
-  /**
-   * Poll the backend HTTP endpoint. When it responds, switch to the
-   * WebView. Uses the HarmonyOS http module to make a GET request to
-   * http://127.0.0.1:5577/ — if the connection succeeds, the backend
-   * is running.
-   */
   pollBackend(): void {
-    // Check if backend process already exited
     if (this.backendExited) {
-      // buildExitError() will have set the error message
       if (this.errorMessage.length === 0) {
-        this.buildExitError();
+        this.showExitError(-1, '');
       }
       return;
     }
 
     const elapsed = Date.now() - this.pollStartTime;
-    this.elapsedSeconds = Math.floor(elapsed / 1000);
+    const secs = Math.floor(elapsed / 1000);
 
-    // Check timeout
     if (elapsed > POLL_TIMEOUT) {
       this.errorMessage =
-        `Backend failed to start within ${Math.round(POLL_TIMEOUT / 1000)}s. ` +
-        'The Node.js engine may not be compatible with this device.';
+        `Backend failed to start within ${Math.round(POLL_TIMEOUT / 1000)}s.`;
       this.statusMessage = 'Timeout';
       return;
     }
 
-    this.statusMessage = `Waiting for engine... (${this.elapsedSeconds}s)`;
+    this.statusMessage = `Waiting for engine... (${secs}s)`;
 
     const httpRequest = http.createHttp();
     httpRequest.request(BACKEND_URL, {
@@ -338,23 +306,16 @@ struct Index {
       readTimeout: 2000,
     }).then(() => {
       httpRequest.destroy();
-      hilog.info(DOMAIN, TAG, 'Backend is ready! Switching to WebView.');
+      hilog.info(DOMAIN, TAG, 'Backend is ready!');
       this.serverReady = true;
-    }).catch((err: BusinessError) => {
+    }).catch(() => {
       httpRequest.destroy();
-      // Backend not ready yet — schedule next poll
       this.pollTimerId = setTimeout(() => this.pollBackend(), POLL_INTERVAL);
     });
   }
 
-  /**
-   * Extract all rawfile resources to the sandbox using the manifest.json
-   * that is generated at build time by scripts/gen-manifest.sh.
-   */
   async extractAllRawfiles(context: common.Context, sandboxDir: string): Promise<void> {
     const resourceMgr = context.resourceManager;
-
-    // Read manifest.json from rawfile
     const manifestBytes = await resourceMgr.getRawFileContent('manifest.json');
     const decoder = util.TextDecoder.create('utf-8');
     const manifest: Record<string, string[]> =
@@ -366,8 +327,6 @@ struct Index {
     let count = 0;
     for (const filePath of files) {
       const destPath = `${sandboxDir}/${filePath}`;
-
-      // Create parent directories
       const lastSlash = destPath.lastIndexOf('/');
       if (lastSlash > 0) {
         const parentDir = destPath.substring(0, lastSlash);
@@ -375,8 +334,6 @@ struct Index {
           fs.mkdirSync(parentDir, true);
         }
       }
-
-      // Read from rawfile and write to sandbox
       const content = await resourceMgr.getRawFileContent(filePath);
       const file = fs.openSync(destPath,
         fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
@@ -385,22 +342,18 @@ struct Index {
         length: content.byteLength,
       });
       fs.closeSync(file);
-
       count++;
       if (count % 200 === 0) {
         this.statusMessage = `Extracting... (${count}/${files.length})`;
         hilog.info(DOMAIN, TAG, `Extracted ${count}/${files.length} files`);
       }
     }
-
     hilog.info(DOMAIN, TAG, `Extraction complete: ${count} files`);
   }
 
   build() {
     Column() {
       if (this.serverReady) {
-        // Load the backend directly — no loading.html, no file:// protocol.
-        // The backend serves the full electerm web UI at http://127.0.0.1:5577/.
         Web({ src: BACKEND_URL, controller: this.controller })
           .width('100%')
           .height('100%')
@@ -412,7 +365,7 @@ struct Index {
           .geolocationAccess(false)
           .mixedMode(MixedMode.All)
           .onControllerAttached(() => {
-            hilog.info(DOMAIN, TAG, 'WebView attached, loading backend URL');
+            hilog.info(DOMAIN, TAG, 'WebView attached');
           })
           .onPageEnd(() => {
             hilog.info(DOMAIN, TAG, 'WebView page ended loading');
@@ -421,8 +374,6 @@ struct Index {
             hilog.error(DOMAIN, TAG, 'WebView error loading backend URL');
           })
       } else {
-        // Native ArkTS loading UI — always visible with explicit colors
-        // so it works regardless of system theme (dark/light).
         Column() {
           Text('Electerm')
             .fontSize(32)
@@ -444,19 +395,40 @@ struct Index {
             .textAlign(TextAlign.Center)
             .padding({ left: 20, right: 20 })
 
-          if (this.errorMessage.length > 0) {
-            // Use Scroll so long error messages are readable
+          if (this.errorMessage.length > 0 || this.diagInfo.length > 0) {
             Scroll() {
-              Text(this.errorMessage)
-                .fontSize(13)
-                .fontColor('#cc0000')
-                .textAlign(TextAlign.Start)
-                .padding({ left: 20, right: 20, top: 16 })
-                .fontFamily('monospace')
+              Column() {
+                if (this.diagInfo.length > 0) {
+                  Text('Diagnostics:')
+                    .fontSize(14)
+                    .fontColor('#333333')
+                    .fontWeight(FontWeight.Bold)
+                    .padding({ left: 20, right: 20, top: 16, bottom: 8 })
+                  Text(this.diagInfo)
+                    .fontSize(12)
+                    .fontColor('#555555')
+                    .textAlign(TextAlign.Start)
+                    .padding({ left: 20, right: 20, bottom: 8 })
+                    .fontFamily('monospace')
+                }
+                if (this.errorMessage.length > 0) {
+                  Text('Error:')
+                    .fontSize(14)
+                    .fontColor('#cc0000')
+                    .fontWeight(FontWeight.Bold)
+                    .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+                  Text(this.errorMessage)
+                    .fontSize(12)
+                    .fontColor('#cc0000')
+                    .textAlign(TextAlign.Start)
+                    .padding({ left: 20, right: 20, bottom: 16 })
+                    .fontFamily('monospace')
+                }
+              }
             }
             .layoutWeight(1)
             .width('100%')
-            .padding({ top: 8 })
+            .backgroundColor('#f5f5f5')
           }
         }
         .width('100%')
