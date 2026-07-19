@@ -65,7 +65,7 @@ static napi_value SpawnProcess(napi_env env, napi_callback_info info) {
     std::vector<char *> argv;
 
     argStrings.push_back(binPath);  /* argv[0] = program name */
-    argv.push_back(argStrings.back().data());
+    argv.push_back(&argStrings.back()[0]);
 
     for (uint32_t i = 0; i < argCount; i++) {
         napi_value elem;
@@ -78,7 +78,7 @@ static napi_value SpawnProcess(napi_env env, napi_callback_info info) {
         argStr.resize(elemLen);
 
         argStrings.push_back(std::move(argStr));
-        argv.push_back(argStrings.back().data());
+        argv.push_back(&argStrings.back()[0]);
     }
     argv.push_back(nullptr);
 
