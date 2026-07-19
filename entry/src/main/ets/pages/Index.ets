@@ -11,6 +11,13 @@ import { NodeProcessState } from '../NodeProcessState';
 const DOMAIN = 0x0001;
 const TAG = 'electerm';
 
+// Result of running a command via runCommandCapture.
+interface CmdResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 // The port the Node.js backend listens on (must match .env PORT).
 const BACKEND_PORT = 5577;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -31,6 +38,9 @@ struct Index {
   private pollStartTime: number = 0;
   private pollTimerId: number = -1;
   private backendExited: boolean = false;
+  private exitCode: number = -1;
+  private stderrText: string = '';
+  private stdoutText: string = '';
 
   aboutToAppear(): void {
     this.startBackend();
@@ -75,12 +85,35 @@ struct Index {
   }
 
   /**
+   * Run a command and capture its stdout, stderr, and exit code.
+   */
+  async runCommandCapture(command: string): Promise<CmdResult> {
+    const child = await process.runCmd(command, { timeout: 0 });
+    const exitCode = await child.wait();
+    let stdout = '';
+    let stderr = '';
+    try {
+      stdout = await child.getOutput();
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, `getOutput failed: ${this.getErrorMessage(e as object)}`);
+    }
+    try {
+      stderr = await child.getErrorOutput();
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, `getErrorOutput failed: ${this.getErrorMessage(e as object)}`);
+    }
+    const result: CmdResult = { exitCode, stdout, stderr };
+    return result;
+  }
+
+  /**
    * Main startup sequence:
    *   1. Extract rawfile/electerm/ → filesDir/electerm/
    *   2. Make the node binary executable
-   *   3. Spawn the Node.js backend (node index.js)
-   *   4. Poll http://127.0.0.1:5577 until the backend responds
-   *   5. Switch to the WebView loading the backend URL directly
+   *   3. Pre-flight: test node --version
+   *   4. Spawn the Node.js backend (node index.js)
+   *   5. Poll http://127.0.0.1:5577 until the backend responds
+   *   6. Switch to the WebView loading the backend URL directly
    */
   async startBackend(): Promise<void> {
     try {
@@ -106,14 +139,17 @@ struct Index {
       // Verify the node binary exists
       if (!this.fileExists(nodeBin)) {
         throw new Error(
-          `Node.js binary not found at ${nodeBin}. ` +
-          'Run ./scripts/prepare-node.sh to download it.');
+          `Node.js binary not found at ${nodeBin}.`);
       }
       if (!this.fileExists(entryScript)) {
         throw new Error(
-          `Entry script not found at ${entryScript}. ` +
-          'Run ./scripts/prepare-web.sh to build it.');
+          `Entry script not found at ${entryScript}.`);
       }
+
+      hilog.info(DOMAIN, TAG, `nodeBin: ${nodeBin}`);
+      hilog.info(DOMAIN, TAG, `entryScript: ${entryScript}`);
+      hilog.info(DOMAIN, TAG, `electermDir: ${this.electermDir}`);
+      hilog.info(DOMAIN, TAG, `sandboxDir: ${sandboxDir}`);
 
       // --- Step 2: Make the node binary executable -----------------------
       this.statusMessage = 'Preparing Node.js engine...';
@@ -125,7 +161,60 @@ struct Index {
         hilog.warn(DOMAIN, TAG, `chmod failed (non-fatal): ${this.getErrorMessage(e as object)}`);
       }
 
-      // --- Step 3: Spawn the Node.js backend -----------------------------
+      // --- Step 3: Pre-flight check — does node run at all? -------------
+      // Run "node --version" to verify the binary is executable on this
+      // device. If this fails, there's no point trying to run the backend.
+      this.statusMessage = 'Verifying Node.js engine...';
+      hilog.info(DOMAIN, TAG, 'Pre-flight: running node --version...');
+      try {
+        const result = await this.runCommandCapture(`"${nodeBin}" --version`);
+        hilog.info(DOMAIN, TAG, `node --version exit code: ${result.exitCode}`);
+        hilog.info(DOMAIN, TAG, `node --version stdout: ${result.stdout}`);
+        hilog.info(DOMAIN, TAG, `node --version stderr: ${result.stderr}`);
+
+        if (result.exitCode !== 0) {
+          // Node binary exists but crashes — likely arch mismatch
+          const detail = result.stderr || result.stdout || '(no output)';
+          throw new Error(
+            `Node.js binary failed to run (exit ${result.exitCode}). ` +
+            `Output: ${detail.substring(0, 500)}. ` +
+            'This likely means the binary architecture does not match the device.');
+        }
+        hilog.info(DOMAIN, TAG, `Node.js version: ${result.stdout.trim()}`);
+      } catch (e) {
+        // If runCmd itself threw (not the node process), e.g. "no such file"
+        const msg = this.getErrorMessage(e as object);
+        hilog.error(DOMAIN, TAG, `Pre-flight check failed: ${msg}`);
+        throw new Error(
+          `Node.js pre-flight check failed: ${msg}. ` +
+          'The binary may not be compatible with this device architecture.');
+      }
+
+      // --- Step 4: Pre-flight check — can node execute a simple script? --
+      this.statusMessage = 'Testing Node.js runtime...';
+      const testScript = `console.log("node-ok")`;
+      hilog.info(DOMAIN, TAG, 'Pre-flight: running node -e test...');
+      try {
+        const result = await this.runCommandCapture(
+          `"${nodeBin}" -e "${testScript}"`
+        );
+        hilog.info(DOMAIN, TAG, `node -e test exit code: ${result.exitCode}`);
+        hilog.info(DOMAIN, TAG, `node -e test stdout: ${result.stdout}`);
+        hilog.info(DOMAIN, TAG, `node -e test stderr: ${result.stderr}`);
+
+        if (result.exitCode !== 0) {
+          const detail = result.stderr || result.stdout || '(no output)';
+          throw new Error(
+            `Node.js script execution failed (exit ${result.exitCode}). ` +
+            `Output: ${detail.substring(0, 500)}`);
+        }
+      } catch (e) {
+        const msg = this.getErrorMessage(e as object);
+        hilog.error(DOMAIN, TAG, `Script test failed: ${msg}`);
+        throw new Error(`Node.js script test failed: ${msg}`);
+      }
+
+      // --- Step 5: Spawn the Node.js backend -----------------------------
       this.statusMessage = 'Starting Node.js engine...';
       hilog.info(DOMAIN, TAG, `Spawning: ${nodeBin} ${entryScript}`);
 
@@ -135,26 +224,40 @@ struct Index {
       NodeProcessState.set(child, child.pid);
       hilog.info(DOMAIN, TAG, `Node.js backend started, PID: ${child.pid}`);
 
-      // Monitor the process in the background — if it exits unexpectedly,
-      // set a flag so the polling loop can stop and show an error.
-      child.wait().then((exitCode: number) => {
-        hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${exitCode}`);
+      // Monitor the process in the background. When it exits, capture
+      // stdout, stderr, and exit code, then build a detailed error message.
+      child.wait().then((code: number) => {
+        hilog.error(DOMAIN, TAG, `Node.js backend exited with code ${code}`);
         NodeProcessState.clear();
+        this.exitCode = code;
         this.backendExited = true;
+
+        // Capture stderr and stdout after process exits
+        child.getErrorOutput().then((stderr: string) => {
+          this.stderrText = stderr || '';
+          hilog.error(DOMAIN, TAG, `Node.js stderr (len=${stderr.length}): ${stderr.substring(0, 2000)}`);
+          this.buildExitError();
+        }).catch(() => {
+          this.buildExitError();
+        });
+
+        child.getOutput().then((stdout: string) => {
+          this.stdoutText = stdout || '';
+          hilog.info(DOMAIN, TAG, `Node.js stdout (len=${stdout.length}): ${stdout.substring(0, 1000)}`);
+          this.buildExitError();
+        }).catch(() => {
+          this.buildExitError();
+        });
       }).catch((err: BusinessError) => {
         hilog.error(DOMAIN, TAG, `Node.js backend wait error: ${err.message}`);
         NodeProcessState.clear();
+        this.exitCode = -999;
+        this.stderrText = err.message;
         this.backendExited = true;
+        this.buildExitError();
       });
 
-      // Read stderr for debugging (non-blocking)
-      child.getErrorOutput().then((stderr: string) => {
-        if (stderr && stderr.length > 0) {
-          hilog.warn(DOMAIN, TAG, `Node.js stderr: ${stderr.substring(0, 2000)}`);
-        }
-      }).catch(() => {});
-
-      // --- Step 4: Poll the backend until it responds --------------------
+      // --- Step 6: Poll the backend until it responds --------------------
       hilog.info(DOMAIN, TAG, 'Starting to poll backend...');
       this.pollStartTime = Date.now();
       this.pollBackend();
@@ -168,6 +271,37 @@ struct Index {
   }
 
   /**
+   * Build a detailed error message when the Node.js process exits.
+   * Includes exit code, stderr, and stdout.
+   */
+  buildExitError(): void {
+    if (!this.backendExited) {
+      return;
+    }
+    // Only build once we have both stdout and stderr (or they've been
+    // attempted). We use a small delay to let both promises settle.
+    const parts: string[] = [];
+    parts.push(`Node.js engine exited (code ${this.exitCode}).`);
+
+    if (this.stderrText.length > 0) {
+      // Truncate stderr to keep the UI readable
+      const trimmed = this.stderrText.substring(0, 800);
+      parts.push(`stderr: ${trimmed}`);
+    }
+    if (this.stdoutText.length > 0) {
+      const trimmed = this.stdoutText.substring(0, 400);
+      parts.push(`stdout: ${trimmed}`);
+    }
+    if (this.stderrText.length === 0 && this.stdoutText.length === 0) {
+      parts.push('(no output captured)');
+    }
+
+    this.errorMessage = parts.join('\n');
+    this.statusMessage = 'Engine error';
+    hilog.error(DOMAIN, TAG, `Exit error: ${this.errorMessage}`);
+  }
+
+  /**
    * Poll the backend HTTP endpoint. When it responds, switch to the
    * WebView. Uses the HarmonyOS http module to make a GET request to
    * http://127.0.0.1:5577/ — if the connection succeeds, the backend
@@ -176,9 +310,10 @@ struct Index {
   pollBackend(): void {
     // Check if backend process already exited
     if (this.backendExited) {
-      this.errorMessage =
-        'Node.js engine exited unexpectedly. It may have crashed during startup.';
-      this.statusMessage = 'Engine error';
+      // buildExitError() will have set the error message
+      if (this.errorMessage.length === 0) {
+        this.buildExitError();
+      }
       return;
     }
 
@@ -295,11 +430,13 @@ struct Index {
             .fontColor('#333333')
             .margin({ bottom: 24 })
 
-          LoadingProgress()
-            .width(48)
-            .height(48)
-            .color('#4aa3ff')
-            .margin({ bottom: 24 })
+          if (this.errorMessage.length === 0) {
+            LoadingProgress()
+              .width(48)
+              .height(48)
+              .color('#4aa3ff')
+              .margin({ bottom: 24 })
+          }
 
           Text(this.statusMessage)
             .fontSize(16)
@@ -308,17 +445,24 @@ struct Index {
             .padding({ left: 20, right: 20 })
 
           if (this.errorMessage.length > 0) {
-            Text(this.errorMessage)
-              .fontSize(14)
-              .fontColor('#ff0000')
-              .textAlign(TextAlign.Center)
-              .padding({ left: 20, right: 20, top: 16 })
+            // Use Scroll so long error messages are readable
+            Scroll() {
+              Text(this.errorMessage)
+                .fontSize(13)
+                .fontColor('#cc0000')
+                .textAlign(TextAlign.Left)
+                .padding({ left: 20, right: 20, top: 16 })
+                .fontFamily('monospace')
+            }
+            .layoutWeight(1)
+            .width('100%')
+            .padding({ top: 8 })
           }
         }
         .width('100%')
         .height('100%')
         .backgroundColor('#ffffff')
-        .justifyContent(FlexAlign.Center)
+        .justifyContent(this.errorMessage.length > 0 ? FlexAlign.Start : FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
     }
