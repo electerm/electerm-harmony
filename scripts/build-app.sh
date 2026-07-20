@@ -144,27 +144,28 @@ echo "==> Patching web_engine NativeMessagingAdapter for API compatibility ..."
 
 NATIVE_MSG_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/NativeMessagingAdapter.ets"
 if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
-  # The Electron runtime may import APIs that don't exist in the target SDK.
-  # Strategy: comment out unsupported imports AND all lines that reference
-  # those symbols, to prevent both "no exported member" and "cannot find name" errors.
-  PATCHED=false
-  if grep -q 'dataShare' "${NATIVE_MSG_ADAPTER}" 2>/dev/null; then
-    echo "    Patching: commenting out 'dataShare' references (import + usages)"
-    # Comment out any line containing dataShare that isn't already commented
-    perl -i -pe 's/^([^\/].*\bdataShare\b)/\/\/ PATCHED: $1/' "${NATIVE_MSG_ADAPTER}"
-    PATCHED=true
-  fi
-  if grep -q 'webNativeMessagingExtensionManager' "${NATIVE_MSG_ADAPTER}" 2>/dev/null; then
-    echo "    Patching: commenting out 'webNativeMessagingExtensionManager' references (import + usages)"
-    # Comment out any line containing webNativeMessagingExtensionManager that isn't already commented
-    perl -i -pe 's/^([^\/].*\bwebNativeMessagingExtensionManager\b)/\/\/ PATCHED: $1/' "${NATIVE_MSG_ADAPTER}"
-    PATCHED=true
-  fi
-  if [ "${PATCHED}" = true ]; then
-    echo "    NativeMessagingAdapter patched (unsupported API references commented out)"
-  else
-    echo "    NativeMessagingAdapter: no patches needed"
-  fi
+  # The Electron runtime imports APIs (dataShare from @kit.ArkData,
+  # webNativeMessagingExtensionManager from @kit.ArkWeb) that don't exist
+  # in the target SDK. Replacing the entire file with a minimal stub is
+  # the safest approach — line-by-line patching breaks code structure.
+  echo "    Replacing NativeMessagingAdapter.ets with minimal stub"
+  cat > "${NATIVE_MSG_ADAPTER}" <<'NMASTUB'
+// NativeMessagingAdapter.ets — Stubbed for API compatibility
+// Original file uses dataShare (@kit.ArkData) and webNativeMessagingExtensionManager
+// (@kit.ArkWeb) which are not available in the target SDK.
+export class NativeMessagingAdapter {
+  static connectNative(name: string, callback: (err: string, data: string) => void): void {
+    callback('', '')
+  }
+  static disconnectNative(connectionId: number, callback: (err: string) => void): void {
+    callback('')
+  }
+  static getManifestConfig(name: string, callback: (err: string, config: string) => void): void {
+    callback('', '')
+  }
+}
+NMASTUB
+  echo "    NativeMessagingAdapter replaced with stub"
 else
   echo "    (NativeMessagingAdapter.ets not found, skipping)"
 fi
@@ -175,10 +176,12 @@ echo "==> Patching web_engine AppWindowAdapter for API compatibility ..."
 
 APP_WINDOW_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/AppWindowAdapter.ets"
 if [ -f "${APP_WINDOW_ADAPTER}" ]; then
-  # shiftAppWindowTouchEvent may not exist in the target SDK
+  # shiftAppWindowTouchEvent may not exist on window in the target SDK.
+  # Use a cast to ESObject to bypass the type check.
   if grep -q 'shiftAppWindowTouchEvent' "${APP_WINDOW_ADAPTER}" 2>/dev/null; then
-    echo "    Patching: commenting out 'shiftAppWindowTouchEvent' references"
-    perl -i -pe 's/^([^\/].*\bshiftAppWindowTouchEvent\b)/\/\/ PATCHED: $1/' "${APP_WINDOW_ADAPTER}"
+    echo "    Patching: neutralizing 'shiftAppWindowTouchEvent' calls"
+    # Replace window.shiftAppWindowTouchEvent with (window as ESObject).shiftAppWindowTouchEvent
+    perl -i -pe 's/window\.shiftAppWindowTouchEvent/(window as ESObject).shiftAppWindowTouchEvent/g' "${APP_WINDOW_ADAPTER}"
     echo "    AppWindowAdapter patched"
   else
     echo "    AppWindowAdapter: no patches needed"
