@@ -198,33 +198,6 @@ echo "==> Configuring build-profile.json5 ..."
 
 BUILD_PROFILE="${PROJECT_ROOT}/build-profile.json5"
 
-# --- Detect SDK version from sdk-pkg.json ---
-SDK_PKG_JSON="${OHOS_SDK_HOME}/default/sdk-pkg.json"
-if [ -f "${SDK_PKG_JSON}" ]; then
-  SDK_API_VERSION=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['apiVersion'])" 2>/dev/null || echo "")
-  SDK_DISPLAY_NAME=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['displayName'])" 2>/dev/null || echo "")
-  # Extract version number from display name (e.g. "HarmonyOS 5.0.1" -> "5.0.1")
-  SDK_VERSION=$(echo "${SDK_DISPLAY_NAME}" | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
-  if [ -n "${SDK_API_VERSION}" ] && [ -n "${SDK_VERSION}" ]; then
-    COMPILE_SDK_VERSION="${SDK_VERSION}(${SDK_API_VERSION})"
-    echo "    Detected SDK: ${SDK_DISPLAY_NAME} (API ${SDK_API_VERSION})"
-  else
-    COMPILE_SDK_VERSION="5.0.1(13)"
-    echo "    Warning: Could not parse SDK version from sdk-pkg.json, using default 5.0.1(13)"
-  fi
-else
-  COMPILE_SDK_VERSION="5.0.1(13)"
-  echo "    Warning: sdk-pkg.json not found at ${SDK_PKG_JSON}, using default 5.0.1(13)"
-fi
-
-# --- Create local.properties for hvigor ---
-LOCAL_PROPERTIES="${PROJECT_ROOT}/local.properties"
-cat > "${LOCAL_PROPERTIES}" <<LOCPROP
-sdk.dir=${OHOS_SDK_HOME}/default/openharmony
-ohos.sdk.dir=${OHOS_SDK_HOME}
-LOCPROP
-echo "    ✓ Created local.properties"
-
 cat > "${BUILD_PROFILE}" <<EOF
 {
   "app": {
@@ -232,8 +205,8 @@ cat > "${BUILD_PROFILE}" <<EOF
     "products": [
       {
         "name": "default",
-        "compatibleSdkVersion": "${COMPILE_SDK_VERSION}",
-        "compileSdkVersion": "${COMPILE_SDK_VERSION}",
+        "compatibleSdkVersion": "5.0.5(17)",
+        "compileSdkVersion": "5.0.5(17)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "nativeLib": {
@@ -262,7 +235,7 @@ cat > "${BUILD_PROFILE}" <<EOF
 }
 EOF
 
-echo "    ✓ build-profile.json5 generated (unsigned build, SDK ${COMPILE_SDK_VERSION})"
+echo "    ✓ build-profile.json5 generated (unsigned build)"
 
 # --- Update app version from electerm-web -----------------------------------
 
