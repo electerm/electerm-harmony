@@ -116,9 +116,6 @@
         "name": "ohos.permission.ACCELEROMETER"
       },
       {
-        "name": "ohos.permission.SET_ABILITY_INSTANCE_INFO"
-      },
-      {
         "name": "ohos.permission.GET_FILE_ICON"
       },
       {
