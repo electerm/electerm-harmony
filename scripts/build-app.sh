@@ -121,25 +121,24 @@ if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
 fi
 echo "    ✓ Found: web_engine/Index.ets"
 
-# --- Fix permissions for Profile compatibility --------------------------------
+# --- Fix permissions for SDK compatibility ------------------------------------
 
-echo "==> Fixing permissions for Profile compatibility ..."
+echo "==> Fixing permissions for SDK compatibility ..."
 
-# Restricted ACL permissions that exist in the package but not in the Profile file.
-# These must be removed from both entry and web_engine module.json5 at build time.
-ACL_PERMS="READ_PASTEBOARD READ_WRITE_DESKTOP_DIRECTORY READ_WRITE_DOCUMENTS_DIRECTORY READ_WRITE_DOWNLOAD_DIRECTORY"
-
-# Also remove permissions unsupported by the target SDK from web_engine.
+# Permissions unsupported by the target SDK — must be removed from both
+# entry and web_engine module.json5 at build time.
+# NOTE: Restricted ACL permissions (READ_WRITE_DOWNLOAD_DIRECTORY,
+# READ_WRITE_DOCUMENTS_DIRECTORY, READ_WRITE_DESKTOP_DIRECTORY, READ_PASTEBOARD)
+# are NOT removed here — they must be granted in the Profile (.p7b) file
+# via AppGallery Connect. See docs/ENV_SETUP.md §2.6 for details.
 UNSUPPORTED_PERMS="SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE"
-
-ALL_PERMS="${ACL_PERMS} ${UNSUPPORTED_PERMS}"
 
 # Fix entry module.json5
 ENTRY_MODULE_JSON="${PROJECT_ROOT}/entry/src/main/module.json5"
 if [ -f "${ENTRY_MODULE_JSON}" ]; then
-  for perm in ${ALL_PERMS}; do
+  for perm in ${UNSUPPORTED_PERMS}; do
     if grep -q "ohos.permission.${perm}" "${ENTRY_MODULE_JSON}" 2>/dev/null; then
-      echo "    entry: removing permission ohos.permission.${perm}"
+      echo "    entry: removing unsupported permission ohos.permission.${perm}"
       perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${ENTRY_MODULE_JSON}"
     fi
   done
@@ -151,9 +150,9 @@ fi
 # Fix web_engine module.json5
 WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
 if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
-  for perm in ${ALL_PERMS}; do
+  for perm in ${UNSUPPORTED_PERMS}; do
     if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
-      echo "    web_engine: removing permission ohos.permission.${perm}"
+      echo "    web_engine: removing unsupported permission ohos.permission.${perm}"
       perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${WEB_ENGINE_MODULE_JSON}"
     fi
   done

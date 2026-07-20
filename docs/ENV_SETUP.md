@@ -135,9 +135,9 @@ hdc shell bm get --udid
 hdc shell param get const.product.udid
 ```
 
-### 2.6 About ACL Permissions (通常不需要)
+### 2.6 ACL Permissions (受限权限申请)
 
-> **Short answer**: Creating a Profile does NOT require ACL. You can skip this section.
+> **Required**: electerm-harmony uses restricted ACL permissions. You MUST apply for them and re-download the Profile.
 
 ACL (Access Control List) is a separate concept from Profile. In HarmonyOS, app permissions have three authorization levels:
 
@@ -147,13 +147,33 @@ ACL (Access Control List) is a separate concept from Profile. In HarmonyOS, app 
 | `system_basic` | Yes | `ohos.permission.READ_MEDIA`, `ohos.permission.WRITE_MEDIA` |
 | `system_core` | No (system apps only) | System-level APIs |
 
-**electerm-harmony currently only uses `normal` level permissions** — no ACL application needed.
+**electerm-harmony requires the following restricted ACL permissions**:
 
-ACL is only required if you later add restricted permissions to `module.json5` → `requestPermissions` (e.g., accessing user files outside the app sandbox). To apply:
+| Permission | Purpose |
+|-----------|---------|
+| `ohos.permission.READ_PASTEBOARD` | Read clipboard for copy/paste operations |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | File transfer to/from Download directory |
+| `ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY` | File transfer to/from Documents directory |
+| `ohos.permission.READ_WRITE_DESKTOP_DIRECTORY` | File transfer to/from Desktop directory |
+
+These permissions are declared in `entry/src/main/module.json5` → `requestPermissions`, but they also **must be granted in the Profile (.p7b) file**. If the Profile does not include these ACL permissions, the build will succeed but installation will fail with a permission mismatch error.
+
+#### How to apply for ACL permissions and update the Profile:
 
 1. Go to **AppGallery Connect** → your app → **HarmonyOS** tab → **Permissions** (应用权限)
-2. Select the permission you need
-3. Submit for review and wait for approval
+   - Direct link: <https://developer.huawei.com/consumer/cn/agconnect/caa-app/appPermission>
+2. Click **Add Permission** (添加权限)
+3. Search for and add each of the 4 permissions listed above
+4. Submit for review and wait for approval (usually instant for these permissions)
+5. After approval, go to **Profile Management** (Profile 管理)
+   - Direct link: <https://developer.huawei.com/consumer/cn/agconnect/caa-app/appProfile>
+6. **Re-create or re-download** your Profile (.p7b) — the new Profile will now include the ACL permissions
+7. Replace `signing/electermRelease.p7b` with the newly downloaded file
+8. Re-encode and update the `OHOS_PROFILE_B64` GitHub Secret:
+   ```bash
+   base64 -w 0 signing/electermRelease.p7b  # Linux
+   base64 -i signing/electermRelease.p7b | tr -d '\n'  # macOS
+   ```
 
 ### 2.7 Keystore JDK Compatibility (if keystore was created with JDK 22+)
 
