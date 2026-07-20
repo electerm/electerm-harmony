@@ -154,11 +154,10 @@ if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
 // Original file uses dataShare (@kit.ArkData) and webNativeMessagingExtensionManager
 // (@kit.ArkWeb) which are not available in the target SDK.
 export class NativeMessagingAdapter {
-  connectNative(name: string, callback: (err: string, data: string) => void): void {
+  connectNative(name: string, commands: Object, callback: (err: string, data: string) => void): void {
     callback('', '')
   }
-  disconnectNative(connectionId: number, callback: (err: string) => void): void {
-    callback('')
+  disconnectNative(connectionId: number): void {
   }
   getManifestConfig(name: string, callback: (err: string, config: string) => void): void {
     callback('', '')
@@ -181,9 +180,9 @@ if [ -f "${APP_WINDOW_ADAPTER}" ]; then
   # Replace the entire call expression with void(0) to avoid type errors.
   if grep -q 'shiftAppWindowTouchEvent' "${APP_WINDOW_ADAPTER}" 2>/dev/null; then
     echo "    Patching: neutralizing 'shiftAppWindowTouchEvent' calls"
-    # Replace window.shiftAppWindowTouchEvent(...) with void(0)
-    # Handle both single-line and multi-line calls
-    perl -i -0777 -pe 's/window\.shiftAppWindowTouchEvent\s*\([^)]*\)/void(0)/g' "${APP_WINDOW_ADAPTER}"
+    # Replace window.shiftAppWindowTouchEvent(...) with Promise.resolve()
+    # so that any .then() chained calls still work
+    perl -i -0777 -pe 's/window\.shiftAppWindowTouchEvent\s*\([^)]*\)/Promise.resolve()/g' "${APP_WINDOW_ADAPTER}"
     echo "    AppWindowAdapter patched"
   else
     echo "    AppWindowAdapter: no patches needed"
