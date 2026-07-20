@@ -154,13 +154,11 @@ if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
 // Original file uses dataShare (@kit.ArkData) and webNativeMessagingExtensionManager
 // (@kit.ArkWeb) which are not available in the target SDK.
 export class NativeMessagingAdapter {
-  connectNative(name: Object, commands: Object, callback: (err: string, data: string) => void): void {
-    callback('', '')
+  connectNative(name: Object, commands: Object, callback: Object): void {
   }
   disconnectNative(connectionId: number): void {
   }
-  getManifestConfig(name: string, callback: (err: string, config: string) => void): void {
-    callback('', '')
+  getManifestConfig(name: string, callback: Object): void {
   }
 }
 NMASTUB
