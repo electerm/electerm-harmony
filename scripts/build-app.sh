@@ -235,8 +235,7 @@ cat > "${BUILD_PROFILE}" <<EOF
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "nativeLib": {
-            "collectAllLibs": true,
-            "abiFilters": ["arm64-v8a"]
+            "collectAllLibs": true
           }
         }
       }
