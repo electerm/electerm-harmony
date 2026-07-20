@@ -204,15 +204,12 @@ struct Index {
         hilog.warn(DOMAIN, TAG, `diagnoseFd failed: ${this.getErrorMessage(e as object)}`);
       }
 
-      // Derive libDir for LD_LIBRARY_PATH (still virtual, but dynamic linker
-      // in child process may have same restriction... we'll try anyway)
-      const libDir = `${this.electermDir}/lib`;
-
       // Build environment variables
+      // Note: lib/node_modules is not included — app.bundle.mjs has all deps inlined.
+      // LD_LIBRARY_PATH points to lib/ in case node needs shared libs, but lib/ may
+      // not exist (we only extract bin/ from the node tarball now).
       const envVars: Record<string, string> = {
-        'LD_LIBRARY_PATH': libDir,
         'HOME': sandboxDir,
-        'NODE_PATH': `${libDir}/node_modules`,
       };
 
       let pid: number;
@@ -230,7 +227,6 @@ struct Index {
         errorParts.push('');
         errorParts.push(`nodeBin (virtual): ${nodeBin}`);
         errorParts.push(`nodeBin exists (ArkTS): ${this.fileExists(nodeBin)}`);
-        errorParts.push(`libDir: ${libDir}`);
         errorParts.push(`entryScript: ${entryScript}`);
 
         // FdDiagnostics

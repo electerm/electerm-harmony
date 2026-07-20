@@ -39,15 +39,20 @@ else
   echo "    Using cached tarball: ${DOWNLOAD_DIR}/${TARBALL_NAME}"
 fi
 
-# Clean previous node binary extraction (only bin/ and lib/,
+# Clean previous node binary extraction (only bin/,
 # NOT the entire electerm/ directory — prepare-web.sh puts web files there too)
-rm -rf "${RAWFILE_NODE_DIR}/bin" "${RAWFILE_NODE_DIR}/lib"
+rm -rf "${RAWFILE_NODE_DIR}/bin"
 
-# Extract (strip top-level directory)
-echo "    Extracting to ${RAWFILE_NODE_DIR}/ ..."
+# Extract only bin/ from the tarball.
+# We skip lib/node_modules (npm, corepack) because:
+#   1. The app uses app.bundle.mjs (esbuild bundle) — all deps are inlined
+#   2. lib/node_modules adds ~12MB to the HAP unnecessarily
+#   3. Some dotfiles in npm's node_modules cause getRawFileDescriptor failures
+echo "    Extracting bin/ to ${RAWFILE_NODE_DIR}/ ..."
 tar -zxf "${DOWNLOAD_DIR}/${TARBALL_NAME}" \
   --strip-components=1 \
-  -C "${RAWFILE_NODE_DIR}"
+  -C "${RAWFILE_NODE_DIR}" \
+  bin/
 
 # Verify the node binary exists
 NODE_BIN="${RAWFILE_NODE_DIR}/bin/node"
