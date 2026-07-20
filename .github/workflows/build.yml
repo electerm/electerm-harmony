@@ -70,19 +70,37 @@ jobs:
         env:
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
-      # ── Step 3: Download & extract HarmonyOS Command Line Tools ──────────
-      - name: Download & extract HarmonyOS Command Line Tools
+      # ── Step 3: Cache / download HarmonyOS Command Line Tools (~2 GB) ────
+      - name: Compute Command Line Tools cache key
+        id: cmdkey
         env:
           OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
         run: |
-          set -euo pipefail
           if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
             echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
             exit 1
           fi
+          # Hash the URL so the cache invalidates automatically when the
+          # secret points to a new version of the tools.
+          HASH="$(echo -n "${OHOS_CMDLINE_TOOLS_URL}" | md5sum | cut -d' ' -f1)"
+          echo "key=cmdline-tools-${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache HarmonyOS Command Line Tools
+        id: cmdline_cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Download & extract HarmonyOS Command Line Tools
+        if: steps.cmdline_cache.outputs.cache-hit != 'true'
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          set -euo pipefail
           mkdir -p .cache
           ZIP=".cache/commandline-tools.zip"
-          echo "Downloading HarmonyOS Command Line Tools (~2 GB) from secret URL ..."
+          echo "Cache miss — downloading HarmonyOS Command Line Tools (~2 GB) ..."
           curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
             -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
             -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
@@ -97,6 +115,12 @@ jobs:
           rm -rf .cache/commandline-tools
           mkdir -p .cache/commandline-tools
           unzip -o -q "$ZIP" -d .cache/commandline-tools
+          rm -f "$ZIP"
+          echo "Downloaded and extracted HarmonyOS Command Line Tools"
+
+      - name: Configure Command Line Tools environment
+        run: |
+          set -euo pipefail
           COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
           if [ ! -d "$COMMANDLINE_TOOLS" ]; then
             COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
@@ -107,12 +131,23 @@ jobs:
           echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
           echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
           echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
-          echo "Extracted HarmonyOS Command Line Tools at $COMMANDLINE_TOOLS"
+          echo "HarmonyOS Command Line Tools ready at $COMMANDLINE_TOOLS"
 
       - name: Configure ohpm registry
         run: |
           ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
+
+      - name: Cache ohpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+          restore-keys: |
+            ohpm-
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
