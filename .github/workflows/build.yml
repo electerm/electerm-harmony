@@ -13,9 +13,9 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Electron harmony OS runtime tarball URL is set via ELECTRON_RUNTIME_URL secret
-  # to avoid exposing the private address in the workflow file.
+# Note: The Electron harmony OS runtime tarball URL is set via the
+# ELECTRON_RUNTIME_URL secret in the "Prepare Electron runtime" step below,
+# to avoid exposing the private address in the workflow file.
 
 jobs:
   build:
