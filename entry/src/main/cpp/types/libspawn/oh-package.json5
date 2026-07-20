@@ -1,5 +1,0 @@
-{
-  "name": "libspawn",
-  "version": "1.0.0",
-  "description": "NAPI module for spawning child processes via posix_spawn on HarmonyOS"
-}

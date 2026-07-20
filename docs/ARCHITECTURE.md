@@ -1,181 +1,171 @@
 # Architecture — electerm-harmony
 
-> Building [electerm](https://github.com/electerm/electerm) for HarmonyOS (OpenHarmony)
+## 1. Overview
 
----
+electerm-harmony brings the [electerm-web](https://github.com/electerm/electerm-web) ssh/sftp/telnet/RDP/VNC/Spice/ftp client to HarmonyOS using the [Electron 鸿蒙 runtime](https://gitcode.com/openharmony-sig/electron).
 
-## 1. High-level Overview
+The Electron 鸿蒙 runtime provides:
+- **Node.js** — runs the electerm-web Express backend
+- **Chromium** — renders the web UI via BrowserWindow
+- **web_engine HAR module** — ArkTS API (WebAbility, WebWindow, JsBindingUtils) that bridges HarmonyOS UI with the Electron runtime
+
+This eliminates the need for custom process spawning, child_process shims, or HTTP polling between native and web layers.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  HarmonyOS Device                    │
+┌─────────────────── HarmonyOS App ───────────────────┐
 │                                                      │
-│  ┌──────────────────┐    ┌────────────────────────┐ │
-│  │   Native Shell    │    │   electerm-web (Node)  │ │
-│  │   (ArkUI / ETS)   │    │                        │ │
-│  │                   │    │  ohos-node runtime     │ │
-│  │  ┌─────────────┐  │    │  (Node.js 24 ARM64)    │ │
-│  │  │   Web       │──┼────│                        │ │
-│  │  │  Component  │  │    │  Express server        │ │
-│  │  │ (ArkWeb)    │  │    │  on 127.0.0.1:5577     │ │
-│  │  └─────────────┘  │    │                        │ │
-│  │                   │    │  ssh/sftp/telnet engine  │ │
-│  │  process.start()  │    │  (node-pty, ssh2, ...)  │ │
-│  └────────┬──────────┘    └───────────┬────────────┘ │
-│           │                            │              │
-│           │       localhost HTTP       │              │
-│           └────────────────────────────┘              │
+│  ┌───────────────┐    ┌────────────────────────────┐ │
+│  │ ArkUI Shell    │    │  Electron Runtime           │ │
+│  │ (WebWindow)    │    │  (libelectron.so)           │ │
+│  │                │    │                             │ │
+│  │  WebWindow     │───►│  Node.js (main.js)          │ │
+│  │  from          │    │  ├── Express backend        │ │
+│  │  web_engine    │    │  │   (app.bundle.cjs)       │ │
+│  │                │    │  └── BrowserWindow          │ │
+│  │                │    │      (Chromium WebView)     │ │
+│  └───────────────┘    └────────────────────────────┘ │
 │                                                      │
-└─────────────────────────────────────────────────────┘
+│  libadapter.so — bridges ArkTS ↔ Electron            │
+│  (provided by web_engine HAR module)                  │
+└──────────────────────────────────────────────────────┘
 ```
 
-The app consists of **two layers** running on the same device:
+## 2. Components
 
-| Layer | Technology | Role |
-|-------|-----------|------|
-| **Native Shell** | HarmonyOS ArkUI (ArkTS / ETS) | Creates a full-screen window, launches the Node.js backend, then renders the web UI via the `Web` component (ArkWeb) |
-| **Backend** | `ohos-node` + `electerm-web` | Node.js server providing the terminal/ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp functionality and serving the web UI over localhost |
+### 2.1 Electron 鸿蒙 Runtime (`openharmony-sig/electron`)
 
----
+- **Repo**: <https://gitcode.com/openharmony-sig/electron>
+- **What it is**: A port of Electron (Chromium + Node.js) for HarmonyOS
+- **Distribution**: Pre-built tarball (e.g. `electron40_hap_electron_v40.0.0_20260629.tar.gz`)
+- **Tarball contents**:
+  - `web_engine/` — Complete HAR module (ArkTS source + resfile resources + libadapter.so type definitions)
+  - `electron/libs/arm64-v8a/*.so` — Native libraries:
+    - `libelectron.so` — Chromium + Node.js + V8 (the main runtime, ~175 MB)
+    - `libadapter.so` — ArkTS ↔ Electron bridge
+    - `libffmpeg.so` — Media codec support
+    - `libvk_swiftshader.so` — Vulkan software renderer
+    - `libc++_shared.so` — C++ standard library
+    - `vscode-sqlite3.node` — SQLite native module
+- **In this project**:
+  - `web_engine/` is extracted to the project root (gitignored, downloaded at build time)
+  - `.so` files are extracted to `entry/libs/arm64-v8a/` (gitignored, downloaded at build time)
 
-## 2. Component Breakdown
+### 2.2 web_engine HAR Module
 
-### 2.1 ohos-node (`hqzing/ohos-node`)
+The `web_engine/` module is the core integration layer between HarmonyOS and Electron. It provides:
 
-- **Repo**: <https://github.com/hqzing/ohos-node>
-- **Purpose**: Pre-compiled Node.js binary for OpenHarmony ARM64
-- **Latest release**: `v24.2.0` — `node-v24.2.0-openharmony-arm64.tar.gz`
-- **How it works**: Cross-compiles Node.js using the OpenHarmony SDK + LLVM-19 toolchain on a Linux x64 host, then signs the resulting binary with the OpenHarmony binary-sign-tool
-- **In this project**: The prebuilt `node` binary is bundled into the HarmonyOS app's `rawfile` resources and extracted to the app's sandbox at runtime
+- **`WebAbilityStage`** — Base class for `AbilityStage`, initializes the Electron native context
+- **`WebAbility`** — Base class for `EntryAbility`, handles window creation and XComponent setup
+- **`WebWindow`** — ArkUI component that hosts the XComponent surface for Electron
+- **`JsBindingUtils`** — Utility class for managing native Electron contexts
+- **resfile resources** — Chromium runtime resources (`icudtl.dat`, `.pak` files, `v8_context_snapshot.bin`, `locales/`)
 
-### 2.2 electerm-web (`electerm/electerm-web`)
+This module is **not modified** by this project — it's used as-is from the tarball.
+
+### 2.3 electerm-web (bundled source)
 
 - **Repo**: <https://github.com/electerm/electerm-web>
-- **Purpose**: Web-app version of electerm — a free and open-sourced terminal/ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp client (linux, mac, win, HarmonyOS)
-- **Node.js requirement**: `>= 24.0.0` (matches ohos-node v24.x)
-- **Build output**: After `npm run build`, produces a server bundle in `build/vite/` and static assets
-- **Runtime**: `NODE_ENV=production node ./src/app/app.js` starts an Express server (default `127.0.0.1:5577`)
-- **In this project**: The built electerm-web code is bundled alongside the ohos-node binary and launched at app start
+- **What it is**: Web-based ssh/sftp/telnet/RDP/VNC/Spice/ftp client
+- **Build**: The source is bundled in `electerm-web/` and built with:
+  - **Vite** — builds the React frontend → `dist/assets/`
+  - **esbuild** — bundles the Node.js backend → `app.bundle.cjs` (CJS format)
+- **In this project**: Built output goes to `web_engine/src/main/resources/resfile/resources/app/`
 
-### 2.3 Native Shell (HarmonyOS ArkUI App)
+### 2.4 Electron Main Process (`main.js`)
 
-- **Language**: ArkTS (TypeScript superset for HarmonyOS)
-- **UI Framework**: ArkUI declarative UI
-- **Web rendering**: `Web` component from `@kit.ArkWeb` — HarmonyOS's built-in WebView engine (chromium-based, called **ArkWeb**)
-- **Process management**: Uses `@ohos.child_process` or `@ohos.process` to spawn the Node.js backend
-- **Lifecycle**: 
-  1. App `onCreate` → extract bundled `node` binary + electerm-web files to sandbox
-  2. Start the Node.js server as a child process
-  3. Poll `http://127.0.0.1:5577` until the server responds
-  4. Load the URL in the `Web` component
-  5. On `onDestroy` → kill the child process
+The Electron main process entry point, generated by `build.mjs`:
 
-### 2.4 HarmonyOS App Package Structure
+1. Sets environment variables (HOST, PORT, SERVER_SECRET, etc.)
+2. Starts the Express backend via `require('./app.bundle.cjs')`
+3. Polls `http://127.0.0.1:5577` until the backend is ready
+4. Creates a `BrowserWindow` that loads the frontend from the backend's HTTP server
 
-```
-entry/                              # Main ability module
-└── src/
-    └── main/
-        ├── ets/                    # ArkTS source code
-        │   ├── entryability/
-        │   │   └── EntryAbility.ets
-        │   └── pages/
-        │       └── Index.ets       # Web component page
-        ├── resources/
-        │   └── rawfile/            # Bundled assets
-        │       ├── node/           # ohos-node binary (extracted at runtime)
-        │       └── electerm-web/   # Built electerm-web server code
-        └── module.json5            # Module config
-```
+### 2.5 ArkTS Layer (entry module)
 
----
+- **`AbilityStage.ets`** — Extends `WebAbilityStage` from `web_engine`, which initializes the Electron native context
+- **`EntryAbility.ets`** — Extends `WebAbility` from `web_engine`, handles UIAbility lifecycle
+- **`pages/Index.ets`** — Uses the `WebWindow` component from `web_engine` to host the Electron surface
 
-## 3. Build Pipeline (CI/CD)
+## 3. Build Flow
 
 ```
-GitHub Actions (ubuntu-latest, x64)
-│
-├── 1. Checkout code
-├── 2. Setup Node.js 24 (for building electerm-web)
-├── 3. Setup JDK 21 (for hap-sign-tool.jar signing)
-├── 4. Install system dependencies (build-essential, etc.)
-├── 5. Download ohos-node prebuilt binary
-│      └── from hqzing/ohos-node releases → rawfile/node/
-├── 6. Clone & build electerm-web
-│      ├── git clone electerm/electerm-web
-│      ├── npm ci
-│      ├── npm run build
-│      └── Copy to rawfile/electerm-web/
-├── 7. Download & extract HarmonyOS Command Line Tools (Linux, ~2 GB)
-│      ├── Configure ohpm + hvigorw + SDK
-│      └── Configure ohpm registry mirror
-├── 8. Decode signing materials from GitHub Secrets
-│      ├── OHOS_KEYSTORE_B64 → signing/electerm.p12
-│      ├── OHOS_CERT_B64     → signing/electerm_publish.cer
-│      └── OHOS_PROFILE_B64  → signing/electermRelease.p7b
-├── 9. Configure bundle name (from OHOS_BUNDLE_NAME secret → app.json5)
-├── 10. Build unsigned APP (two-phase signing, phase 1)
-│       ├── Generate build-profile.json5 (empty signingConfigs)
-│       ├── ohpm install
-│       └── hvigorw assembleApp -p enableSignTask=false
-├── 11. Sign APP with hap-sign-tool.jar (two-phase signing, phase 2)
-│       └── java -jar hap-sign-tool.jar sign-app -mode localSign ...
-└── 12. Upload .app artifact (retained 30 days)
+┌──────────────────────────────────────────────────────────────────┐
+│  Build Pipeline                                                     │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  1. prepare-electron-runtime.sh                                    │
+│     ├── Extract tarball (downloaded or local file)                 │
+│     ├── Copy web_engine/ → project root                           │
+│     └── Copy .so files → entry/libs/arm64-v8a/                    │
+│                                                                    │
+│  2. prepare-web.sh                                                 │
+│     ├── npm install (electerm-web/)                                │
+│     ├── build.mjs:                                                 │
+│     │   ├── Vite build (frontend) → dist/assets/                  │
+│     │   ├── esbuild (backend) → app.bundle.cjs (CJS)              │
+│     │   └── Generate main.js (Electron main process)              │
+│     └── Copy output → web_engine/.../resfile/resources/app/       │
+│                                                                    │
+│  3. build-app.sh                                                   │
+│     ├── Generate build-profile.json5 (entry + web_engine modules) │
+│     ├── ohpm install                                               │
+│     ├── hvigorw assembleApp (unsigned)                            │
+│     └── hap-sign-tool.jar sign-app (signed .app)                  │
+│                                                                    │
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-### Two-Phase Signing
-
-This project does **not** use hvigor's built-in signer (which requires DevEco Studio's encrypted passwords). Instead:
-
-1. **Build unsigned** — `hvigorw assembleApp` with `-p enableSignTask=false` and empty `signingConfigs`
-2. **Sign separately** — `hap-sign-tool.jar` with plaintext passwords from GitHub Secrets
-
-See [`BUILD.md §5`](./BUILD.md#5-how-signing-works) for details.
-
----
 
 ## 4. Runtime Flow
 
 ```
-User taps app icon
-        │
-        ▼
-EntryAbility.onCreate()
-        │
-        ├── Extract rawfile/node → sandbox/elcterm/bin/node
-        ├── Extract rawfile/electerm-web → sandbox/elcterm/web/
-        │
-        ├── child_process.spawn('node', ['src/app/app.js'], {
-        │     env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: '5577' }
-        │   })
-        │
-        ├── Wait for http://127.0.0.1:5577 to respond (poll)
-        │
-        └── Web component loads http://127.0.0.1:5577
-                    │
-                    ▼
-            electerm-web UI renders
-            User can ssh/sftp/telnet/etc.
+App Launch
+    │
+    ▼
+AbilityStage.onCreate()
+    │  WebAbilityStage initializes Electron native context
+    │
+    ▼
+EntryAbility.onWindowStageCreate()
+    │  WebAbility loads 'pages/Index'
+    │
+    ▼
+Index.ets → WebWindow component
+    │  XComponent surface ready → Electron runtime starts
+    │
+    ▼
+Electron Runtime starts (libelectron.so)
+    │
+    ├── Runs main.js (Node.js)
+    │   ├── Sets env vars
+    │   ├── require('./app.bundle.cjs') → starts Express on :5577
+    │   └── Polls http://127.0.0.1:5577
+    │
+    └── Creates BrowserWindow (Chromium)
+        └── Loads http://127.0.0.1:5577 (electerm UI)
 ```
-
----
 
 ## 5. Key Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| Use prebuilt `ohos-node` instead of building from source | Building Node.js for OpenHarmony takes ~30 min on CI; prebuilt releases are available and signed |
-| Bundle everything into `rawfile` | HarmonyOS `rawfile` resources are accessible at runtime and can be copied to the app sandbox |
-| Use `Web` component (ArkWeb) instead of custom renderer | electerm-web is already a web app; ArkWeb provides a full chromium engine |
-| Run Node.js as child process (not embedded) | Keeps the native shell simple; Node.js runs independently with its own event loop |
-| Localhost HTTP only | No need for HTTPS — traffic never leaves the device; `127.0.0.1` is used for both server and WebView |
+| Use Electron 鸿蒙 runtime instead of standalone ohos-node | Provides both Node.js and Chromium in one package; no need for custom process spawning or WebView bridging |
+| Use web_engine HAR module as-is from tarball | Provides the complete ArkTS ↔ Electron integration layer; no need to maintain custom bridge code |
+| CJS format for backend bundle | Electron's main process uses CommonJS `require()` |
+| Download runtime at build time, not committed | The tarball is ~200 MB of binary/ArkTS artifacts that don't need modification |
+| `resfile/` for app code | Directly accessible by the Electron runtime (no extraction needed, unlike `rawfile/`) |
 
----
+## 6. What's Committed vs. Downloaded
 
-## 6. References
-
-- [ohos-node](https://github.com/hqzing/ohos-node) — Node.js for OpenHarmony
-- [electerm-web](https://github.com/electerm/electerm-web) — Web version of electerm
-- [HarmonyOS Web Component (ArkWeb)](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-basic-components-web-V14) — `Web` component docs
-- [HarmonyOS Command Line Tools](https://developer.huawei.com/consumer/cn/download/) — SDK & build tools
-- [Huawei Developer Console](https://developer.huawei.com/) — App management & certificates
+| Path | Committed? | Description |
+|------|-----------|-------------|
+| `entry/src/main/ets/` | Yes | Our ArkTS source (AbilityStage, EntryAbility, Index) |
+| `entry/src/main/module.json5` | Yes | Module configuration with permissions |
+| `entry/build-profile.json5` | Yes | Module build profile |
+| `entry/oh-package.json5` | Yes | Depends on `web_engine` |
+| `electerm-web/` | Yes | Web app source code |
+| `scripts/` | Yes | Build scripts |
+| `docs/` | Yes | Documentation |
+| `AppScope/` | Yes | App-level config |
+| `web_engine/` | **No** (downloaded) | HAR module from tarball (gitignored) |
+| `entry/libs/` | **No** (downloaded) | .so libraries from tarball (gitignored) |
+| `build-profile.json5` | **No** (generated) | Generated by `build-app.sh` (gitignored) |

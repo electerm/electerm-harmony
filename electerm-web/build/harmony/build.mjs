@@ -1,37 +1,36 @@
 /**
- * Build the electerm HarmonyOS web bundle.
+ * Build the electerm HarmonyOS web bundle for the Electron 鸿蒙 runtime.
  *
- * Produces `build/harmony/rawfile/electerm/`, which gets copied into the
- * HarmonyOS app's rawfile resources:
+ * Produces `build/harmony/resfile/resources/app/`, which gets placed into
+ * the HarmonyOS app's resfile resources:
  *
- *   rawfile/electerm/
- *     ├── loading.html            local "loading" page (waits for the Node backend)
- *     ├── index.js                node entry script (sets env, imports app.bundle.mjs)
- *     ├── app.bundle.mjs          the electerm Node.js backend (esbuild bundle)
-*     ├── package.json            { name, version, main, type:module }
-*     ├── views/
- *     │   └── index.pug           pug template for the Express index route
+ *   resfile/resources/app/
+ *     ├── main.js              Electron main process (starts backend + creates BrowserWindow)
+ *     ├── app.bundle.cjs       the electerm Node.js backend (esbuild CJS bundle)
+ *     ├── package.json         { name, version, main }
+ *     ├── views/
+ *     │   └── index.pug        pug template for the Express index route
  *     └── dist/
- *         └── assets/             vite-built frontend (js, css, images, chunks)
+ *         └── assets/          vite-built frontend (js, css, images, chunks)
  *
- * The HarmonyOS app extracts these from rawfile to its sandbox at runtime,
- * then spawns the ohos-node binary to run `index.js`.
+ * The Electron 鸿蒙 runtime (libelectron.so + libadapter.so) runs main.js
+ * when XComponent.onLoad() calls nativeContext.runBrowser(). main.js starts
+ * the Express backend, then creates a BrowserWindow that loads
+ * http://127.0.0.1:5577.
  *
- * Key differences from the Android build (build/android/build.mjs):
- *   - Target: node24 (not node18) — ohos-node is Node 24
- *   - No node:sqlite shim — Node 24 has it built-in
- *   - No path-to-regexp regex patch — Node 24 has full ICU
- *   - child_process is aliased to a no-op shim (see child-process-shim.mjs)
- *   - Native modules (node-pty, serialport, node-bash, font-list) kept external
+ * Key differences from the old ohos-node build:
+ *   - No child_process shim (Electron provides child_process natively)
+ *   - CJS format (Electron main process uses require())
+ *   - No loading.html (BrowserWindow replaces WebView + HTTP polling)
+ *   - No index.js node entry script (main.js is the Electron entry)
+ *   - Output goes to resfile/ (directly accessible) not rawfile/ (needs extraction)
  */
 import { build as viteBuild } from 'vite'
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const ROOT = path.resolve(__dirname, '..', '..') // build/harmony -> electerm-web root
@@ -40,7 +39,7 @@ const ROOT = path.resolve(__dirname, '..', '..') // build/harmony -> electerm-we
 // regardless of where this script is invoked from.
 process.chdir(ROOT)
 
-const OUTPUT_DIR = path.resolve(__dirname, 'rawfile', 'electerm')
+const OUTPUT_DIR = path.resolve(__dirname, 'resfile', 'resources', 'app')
 const VERSION = JSON.parse(
   fs.readFileSync(path.resolve(ROOT, 'package.json'), 'utf8')
 ).version
@@ -100,92 +99,7 @@ function copyFrontendAssets () {
 }
 
 // --------------------------------------------------------------------------
-// 3. Loading page (tiny HTML that polls the backend, then redirects)
-// --------------------------------------------------------------------------
-function writeLoadingPage () {
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>electerm</title>
-  <style>
-    html, body { height: 100%; margin: 0; background: #15171a; color: #cfd6e4;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .wrap { height: 100%; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: 18px; padding: 20px; box-sizing: border-box; }
-    .logo { font-size: 22px; font-weight: 600; letter-spacing: .5px; }
-    .spin { width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.15);
-      border-top-color: #4aa3ff; border-radius: 50%; animation: r 1s linear infinite; }
-    @keyframes r { to { transform: rotate(360deg); } }
-    .msg { font-size: 13px; opacity: .7; text-align: center; max-width: 320px; word-break: break-word; }
-    .err { color: #ff6b6b; display: none; }
-    .retry { display: none; margin-top: 10px; padding: 8px 20px; background: #4aa3ff;
-      color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="logo">electerm</div>
-    <div class="spin" id="spin"></div>
-    <div class="msg" id="msg">Starting engine…</div>
-    <div class="msg err" id="err"></div>
-    <button class="retry" id="retry" onclick="location.reload()">Retry</button>
-  </div>
-  <script>
-    var PORT = 5577;
-    var BASE = 'http://127.0.0.1:' + PORT + '/';
-    var done = false;
-    var attempts = 0;
-    var startTime = Date.now();
-    var MAX_WAIT = 60000; // 60 seconds before showing error
-
-    function go () {
-      if (done) return;
-      done = true;
-      location.replace(BASE);
-    }
-
-    function tryLoad () {
-      if (done) return;
-      attempts++;
-      var elapsed = Date.now() - startTime;
-
-      fetch(BASE, { mode: 'no-cors' })
-        .then(function () {
-          document.getElementById('msg').textContent = 'Engine ready, loading…';
-          go();
-        })
-        .catch(function () {
-          if (done) return;
-          if (elapsed > MAX_WAIT) {
-            document.getElementById('spin').style.display = 'none';
-            document.getElementById('msg').textContent = 'Backend unreachable after ' + Math.round(elapsed / 1000) + 's';
-            document.getElementById('err').textContent =
-              'The Node.js engine failed to start. Possible causes:\\n' +
-              '• process.runCmd not available on this device\\n' +
-              '• Node binary architecture mismatch\\n' +
-              '• Backend crashed during startup\\n' +
-              'Attempts: ' + attempts;
-            document.getElementById('err').style.display = 'block';
-            document.getElementById('retry').style.display = 'block';
-            return;
-          }
-          document.getElementById('msg').textContent =
-            'Waiting for engine… (' + Math.round(elapsed / 1000) + 's)';
-          setTimeout(tryLoad, 1000);
-        });
-    }
-    tryLoad();
-  </script>
-</body>
-</html>
-`
-  fs.writeFileSync(path.resolve(OUTPUT_DIR, 'loading.html'), html)
-}
-
-// --------------------------------------------------------------------------
-// 4. Backend (esbuild) with child_process shim + native module externals
+// 3. Backend (esbuild) — CJS format for Electron main process
 // --------------------------------------------------------------------------
 
 // esbuild plugin: mark all .node native-addon files as external.
@@ -204,39 +118,29 @@ const nativeNodePlugin = {
 
 async function bundleBackend () {
   console.log('[harmony] bundling backend (esbuild)…')
-  const shimPath = path.resolve(__dirname, 'child-process-shim.mjs')
 
   await esbuild.build({
     entryPoints: [path.resolve(ROOT, 'src/app/app.js')],
     bundle: true,
-    format: 'esm',
+    format: 'cjs',
     platform: 'node',
-    target: 'node24',
-    outfile: path.resolve(OUTPUT_DIR, 'app.bundle.mjs'),
-    alias: {
-      // Replace child_process with our no-op shim. Every import of
-      // 'child_process' in the backend resolves to the shim instead of the
-      // real Node.js built-in. The shim fails gracefully (callbacks receive
-      // an Error, spawn returns a dummy EventEmitter that emits 'error').
-      'child_process': shimPath
-    },
+    target: 'node20',
+    outfile: path.resolve(OUTPUT_DIR, 'app.bundle.cjs'),
     // Native modules that are not built for HarmonyOS yet. Keep them external
     // so esbuild never tries to resolve them; the guarded import() calls in
-    // the source fall back gracefully at runtime (see DISABLE_LOCAL_TERMINAL).
+    // the source fall back gracefully at runtime.
     external: [
       'node-pty',
       'serialport',
       'node-bash',
-      'font-list'
+      'font-list',
+      // Electron built-in modules — provided by the Electron runtime
+      'electron'
     ],
-    // Some bundled CJS deps reference __dirname / __filename, which don't
-    // exist in an ESM bundle. Define them from import.meta.url.
-    // NOTE: do NOT `import { dirname } from "path"` here — the bundle already
-    // imports `dirname` at top level, which would collide. Alias fileURLToPath
-    // to a private name for the same reason, and derive __dirname from a
-    // directory URL.
+    // In CJS, __dirname and __filename are already defined by Node.js.
+    // We only need to provide `require` for modules that check for it.
     banner: {
-      js: "import { createRequire } from 'module'; import { fileURLToPath as __etu } from 'url'; const require = createRequire(import.meta.url); const __filename = __etu(import.meta.url); const __dirname = __etu(new URL('.', import.meta.url));"
+      js: '// electerm-web backend bundle (CJS) for Electron 鸿蒙\n'
     },
     plugins: [nativeNodePlugin],
     // keep node built-ins external; everything else is bundled
@@ -245,77 +149,131 @@ async function bundleBackend () {
 }
 
 // --------------------------------------------------------------------------
-// 5. Runtime .env — SKIPPED
+// 4. Electron main process (main.js)
 // --------------------------------------------------------------------------
-// All env vars are set directly in index.js via process.env.* assignments.
-// .env is not needed, and HarmonyOS resourceManager cannot handle dotfile
-// names (files starting with ".") — getRawFileContent returns ENOENT.
-// dotenv.config() in app.bundle.mjs will silently skip if .env is absent.
+// This is the Electron main process entry point. It:
+//   1. Sets environment variables for the electerm-web backend
+//   2. Starts the Express backend (app.bundle.cjs)
+//   3. Polls the backend until it's ready
+//   4. Creates a BrowserWindow that loads http://127.0.0.1:5577
+//
+// No child_process shim needed — Electron provides child_process natively.
+// Local terminal is disabled via DISABLE_LOCAL_TERMINAL=1 since HarmonyOS
+// doesn't have a local shell accessible without HNP packaging.
 
-// --------------------------------------------------------------------------
-// 6. Node entry script (index.js)
-// --------------------------------------------------------------------------
-function writeNodeEntry () {
-  const entry = `import { resolve } from 'node:path'
-import { mkdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+function writeMainJs () {
+  const main = `/**
+ * Electron main process for electerm on HarmonyOS.
+ *
+ * This file is run by the Electron 鸿蒙 runtime (libelectron.so) when
+ * the HarmonyOS app calls nativeContext.runBrowser().
+ *
+ * It starts the electerm-web Express backend, then opens a BrowserWindow
+ * that loads the frontend from the backend's HTTP server.
+ */
+const { app, BrowserWindow } = require('electron')
+const path = require('path')
+const http = require('http')
 
-const __d = fileURLToPath(new URL('.', import.meta.url))
+const __d = __dirname
 
-// The Node.js engine may start with cwd "/" or some other directory.
-// electerm's runtime-constants.js reads "package.json" via
-// resolve(process.cwd(), 'package.json'), so without chdir it tries to open
-// "/package.json" -> ENOENT -> uncaught exception.
-// Switch cwd to the project directory before loading the backend bundle.
-process.chdir(__d)
-
-// Runtime configuration for the on-device electerm server.
+// --- Runtime configuration for the on-device electerm server ---
 process.env.NODE_ENV = 'production'
 process.env.HOST = '127.0.0.1'
 process.env.PORT = '5577'
-// Local-only app: a fixed secret is fine. ENABLE_AUTH is not set, so the
-// web UI auto-logs-in without a JWT challenge.
 process.env.SERVER_SECRET = 'electerm-harmony-local-dev-secret'
-// No real pty on HarmonyOS -> disable the local terminal feature.
+// No local shell on HarmonyOS without HNP — disable local terminal.
 process.env.DISABLE_LOCAL_TERMINAL = '1'
-// Tell the server where the pug views live (cwd is now the node project dir).
-process.env.VIEW_FOLDER = resolve(__d, 'views')
+process.env.VIEW_FOLDER = path.resolve(__d, 'views')
 
-// Stable, app-private user-data directory.
-// The Node.js project is extracted by the HarmonyOS app into its internal
-// storage (filesDir/electerm/). If we keep user data inside that extracted
-// project it can be wiped when the bundled node project is refreshed on an
-// app update. Putting it in a sibling directory keeps the database, uploads
-// and logs safe across updates.
-const userDataDir = (() => {
-  try {
-    const dir = resolve(__d, '..', 'electerm-data')
-    mkdirSync(dir, { recursive: true })
-    return dir
-  } catch (e) {
-    const fallback = resolve(__d, 'data')
-    mkdirSync(fallback, { recursive: true })
-    return fallback
-  }
-})()
+// --- Stable, app-private user-data directory ---
+const fs = require('fs')
+const userDataDir = path.resolve(__d, '..', '..', '..', 'electerm-data')
+try { fs.mkdirSync(userDataDir, { recursive: true }) } catch {}
 process.env.DB_PATH = userDataDir
 
-// HarmonyOS may not set a meaningful HOME directory. Point HOME at the
-// writable user-data directory so that:
-//   - os.homedir() returns a path the app can read/write
-//   - SSH keys stored in <userDataDir>/.ssh are found automatically
-//   - The .ssh dir is created once on first launch
-const sshDir = resolve(userDataDir, '.ssh')
-mkdirSync(sshDir, { recursive: true })
+// Create .ssh directory for SSH key storage
+const sshDir = path.resolve(userDataDir, '.ssh')
+try { fs.mkdirSync(sshDir, { recursive: true }) } catch {}
 process.env.HOME = userDataDir
 
-await import('./app.bundle.mjs')
+// --- Start the backend ---
+let backendReady = false
+let mainWindow = null
+
+// The backend bundle starts the Express server on import.
+try {
+  require('./app.bundle.cjs')
+} catch (err) {
+  console.error('Failed to start backend:', err)
+}
+
+// --- Poll the backend until it's ready, then create the window ---
+function pollBackend () {
+  const req = http.get('http://127.0.0.1:5577', () => {
+    backendReady = true
+    createWindow()
+  })
+  req.on('error', () => {
+    if (!backendReady) {
+      setTimeout(pollBackend, 1000)
+    }
+  })
+  req.setTimeout(2000, () => {
+    req.destroy()
+    if (!backendReady) {
+      setTimeout(pollBackend, 1000)
+    }
+  })
+}
+
+function createWindow () {
+  if (mainWindow) return
+
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  })
+
+  mainWindow.loadURL('http://127.0.0.1:5577')
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+}
+
+app.whenReady().then(() => {
+  console.log('Electron app ready, polling backend...')
+  pollBackend()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  // On HarmonyOS, quit when all windows are closed.
+  app.quit()
+})
 `
-  fs.writeFileSync(path.resolve(OUTPUT_DIR, 'index.js'), entry)
+
+  fs.writeFileSync(path.resolve(OUTPUT_DIR, 'main.js'), main)
+
   fs.writeFileSync(
     path.resolve(OUTPUT_DIR, 'package.json'),
     JSON.stringify(
-      { name: 'electerm-node', version: VERSION, main: 'index.js', type: 'module' },
+      {
+        name: 'electerm-electron',
+        version: VERSION,
+        main: 'main.js',
+        description: 'electerm HarmonyOS Electron app'
+      },
       null,
       2
     )
@@ -325,11 +283,6 @@ await import('./app.bundle.mjs')
 // --------------------------------------------------------------------------
 // Pre-build: copy @electerm/electerm-react client into src/client/
 // --------------------------------------------------------------------------
-// The frontend source imports from '../electerm-react/...' which resolves
-// to src/client/electerm-react/. This directory is a copy of the
-// @electerm/electerm-react npm package's client/ folder. The Android build
-// does the same thing via build/bin/install.js (which uses shelljs).
-// We use Node's built-in fs.cpSync to avoid the shelljs dependency.
 function installElectermReact () {
   const src = path.resolve(ROOT, 'node_modules/@electerm/electerm-react/client')
   const dest = path.resolve(ROOT, 'src/client/electerm-react')
@@ -346,7 +299,7 @@ function installElectermReact () {
 // Main
 // --------------------------------------------------------------------------
 async function main () {
-  console.log('[harmony] building electerm HarmonyOS bundle…')
+  console.log('[harmony] building electerm HarmonyOS Electron bundle…')
   console.log('[harmony] version:', VERSION)
   console.log('[harmony] output:', OUTPUT_DIR)
 
@@ -358,11 +311,9 @@ async function main () {
 
   await runVite()
   copyFrontendAssets()
-  writeLoadingPage()
 
   await bundleBackend()
-  writeNodeEntry()
-  // copyEnv() — skipped, env vars are set in index.js
+  writeMainJs()
 
   // Summary
   const size = getDirSize(OUTPUT_DIR)

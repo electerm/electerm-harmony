@@ -261,15 +261,33 @@ Or use the helper script (reads from `temp/.env` and `signing/`):
 | `OHOS_CMDLINE_TOOLS_URL` | download URL | HarmonyOS Command Line Tools download link (see section 5 below) |
 | `OHOS_SERVER_SECRET` | random string | Secret key for electerm-web server (generate with `openssl rand -base64 32`) |
 
-### 4.4 Workflow Environment Variables (not secrets)
+### 4.4 Electron 鸿蒙 Runtime
+
+The app uses the Electron 鸿蒙 runtime (from `openharmony-sig/electron`) for Node.js + WebView.
+The pre-built runtime is distributed as a tarball. The URL is set as a GitHub secret to avoid
+exposing the private hosting address in the workflow file.
+
+Set this secret in GitHub repo → **Settings → Secrets and variables → Actions**.
+
+> **Note:** Ask the project maintainer for the URL value — it is not committed to the repo.
+
+The tarball contains:
+- `web_engine/` — Complete HAR module (ArkTS API + resfile resources)
+- `electron/libs/arm64-v8a/*.so` — Native libraries
+
+| Secret Name | Required | Description |
+|-------------|----------|-------------|
+| `ELECTRON_RUNTIME_URL` | **Yes** | URL to download the pre-built Electron runtime tarball |
+
+See [BUILD.md §3](./BUILD.md#3-obtaining-the-electron-鸿蒙-runtime) for details.
+
+### 4.5 Workflow Environment Variables (not secrets)
 
 These are defined in `.github/workflows/build.yml` under `env:` and can be changed without touching secrets:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OHOS_NODE_VERSION` | `v24.2.0` | ohos-node release version |
-| `ELECTERM_WEB_REPO` | `electerm/electerm-web` | GitHub repo for electerm-web |
-| `ELECTERM_WEB_REF` | `main` | Branch/tag/commit for electerm-web |
+| (none) | | Runtime version is controlled by the URL you provide |
 
 ---
 
@@ -331,6 +349,7 @@ Before your first CI build, make sure you have:
   - [ ] `OHOS_APP_ID`
   - [ ] `OHOS_CMDLINE_TOOLS_URL`
   - [ ] `OHOS_SERVER_SECRET`
+  - [ ] `ELECTRON_RUNTIME_URL` (ask maintainer for the value)
 - [ ] Workflow enabled under repo → **Actions** tab
 
 ---
@@ -338,7 +357,7 @@ Before your first CI build, make sure you have:
 ## 7. Security Notes
 
 - **Never commit** `.p12`, `.cer`, `.p7b`, or passwords to the repository
-- The `.gitignore` file excludes the `signing/` directory and `temp/` directory
+- The `.gitignore` file excludes the `signing/` directory, `web_engine/`, `entry/libs/`, and `temp/` directory
 - GitHub Secrets are encrypted and never exposed in logs
 - If a signing material is compromised, revoke it on AppGallery Connect and generate new ones
 - Use **release certificates** only for published builds; use **debug certificates** for testing

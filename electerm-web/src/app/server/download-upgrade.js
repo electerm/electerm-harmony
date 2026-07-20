@@ -2,7 +2,7 @@
  * download upgrade class
  *
  * Ported from the desktop electerm source. Adapted for the
- * electerm-android ESM backend:
+ * electerm-harmony Electron backend:
  *   - ESM imports
  *   - message ids aligned with the @electerm/electerm-react client
  *     contract (upgrade:data / upgrade:end / upgrade:err)

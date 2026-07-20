@@ -6,7 +6,7 @@ import globalState from './global-state.js'
 import { TerminalBase } from './session-base.js'
 import log from '../common/log.js'
 
-// `node-pty` is a native module that is not built for Android yet. Load it
+// `node-pty` is a native module that is not built for HarmonyOS yet. Load it
 // lazily and tolerate its absence so the server can still start; the local
 // terminal is also disabled via DISABLE_LOCAL_TERMINAL.
 let nodePtyPromise = null

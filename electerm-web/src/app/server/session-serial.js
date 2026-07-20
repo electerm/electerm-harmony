@@ -5,7 +5,7 @@ import { TerminalBase } from './session-base.js'
 import log from '../common/log.js'
 import globalState from './global-state.js'
 
-// `serialport` is a native module that is not built for Android yet. Load it
+// `serialport` is a native module that is not built for HarmonyOS yet. Load it
 // lazily and tolerate its absence so the server can still start.
 let serialPortPromise = null
 function loadSerialPort () {

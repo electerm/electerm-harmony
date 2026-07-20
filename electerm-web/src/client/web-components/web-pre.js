@@ -48,7 +48,7 @@ window.pre = {
     'destroy'
   ],
   // Safe defaults for API-dependent data to prevent render crashes
-  // before /api/get-constants response arrives (fixes Android info-modal
+  // before /api/get-constants response arrives (fixes HarmonyOS info-modal
   // showing only background with no content)
   osInfoData: [],
   osInfo: () => { return window.pre.osInfoData || [] },
@@ -106,7 +106,7 @@ window.pre = {
 }
 
 // Ensure window.et.packInfo has all fields required by info-modal.jsx
-// On Android/Capacitor the packInfo is minimal and missing author/bugs/releases/etc.
+// On HarmonyOS/Electron the packInfo is minimal and missing author/bugs/releases/etc.
 const _packInfoDefaults = {
   author: {
     name: 'ZHAO Xudong',

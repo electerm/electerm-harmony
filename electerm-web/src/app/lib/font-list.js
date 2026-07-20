@@ -4,7 +4,7 @@
 import log from '../common/log.js'
 
 // `font-list` (a native-ish module) may be absent on some platforms (e.g. the
-// Android runtime). Load it lazily and tolerate its absence so the server can
+// HarmonyOS runtime). Load it lazily and tolerate its absence so the server can
 // still start.
 let fontsPromise = null
 function loadGetFonts () {

@@ -71,7 +71,7 @@ const isWinDrive = function (path) {
 }
 
 // `node-bash` (a native-ish module) is not available on every platform
-// (e.g. the Android runtime). Load it lazily and tolerate its absence so the
+// (e.g. the HarmonyOS runtime). Load it lazily and tolerate its absence so the
 // server can still start; callers that need a local shell get a clear error.
 let bashPromise = null
 function loadBash () {

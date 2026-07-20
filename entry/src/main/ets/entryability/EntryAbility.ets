@@ -1,46 +1,47 @@
-import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
-import { NodeProcessState } from '../NodeProcessState';
+/**
+ * EntryAbility — main ability for the electerm-harmony app.
+ *
+ * Extends WebAbility from the web_engine module, which handles window
+ * creation, XComponent setup, and Electron runtime startup.
+ */
 
-const DOMAIN = 0x0001;
-const TAG = 'EntryAbility';
+import window from '@ohos.window';
+import Want from '@ohos.app.ability.Want';
+import AbilityConstant from '@ohos.app.ability.AbilityConstant';
+import { Configuration } from '@ohos.app.ability.Configuration';
 
-export default class EntryAbility extends UIAbility {
-  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    hilog.info(DOMAIN, TAG, 'onCreate');
+import { WebAbility } from 'web_engine';
+
+export default class EntryAbility extends WebAbility {
+  onConfigurationUpdate(config: Configuration) {
+    super.onConfigurationUpdate(config);
   }
 
-  onDestroy(): void {
-    hilog.info(DOMAIN, TAG, 'onDestroy');
-    // Kill the Node.js child process if it's still running.
-    if (NodeProcessState.kill()) {
-      hilog.info(DOMAIN, TAG, 'Node.js backend process killed.');
-    } else {
-      hilog.info(DOMAIN, TAG, 'No Node.js backend process to kill.');
-    }
+  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
+    super.onCreate(want, launchParam);
   }
 
-  onWindowStageCreate(windowStage: window.WindowStage): void {
-    hilog.info(DOMAIN, TAG, 'onWindowStageCreate');
-    windowStage.loadContent('pages/Index', (err) => {
-      if (err.code) {
-        hilog.error(DOMAIN, TAG, `Failed to load content: ${JSON.stringify(err)}`);
-        return;
-      }
-      hilog.info(DOMAIN, TAG, 'Content loaded successfully.');
-    });
+  async onPrepareToTerminateAsync(): Promise<boolean> {
+    return await super.onPrepareToTerminateAsync();
   }
 
-  onWindowStageDestroy(): void {
-    hilog.info(DOMAIN, TAG, 'onWindowStageDestroy');
+  async onDestroy(): Promise<void> {
+    await super.onDestroy();
   }
 
-  onForeground(): void {
-    hilog.info(DOMAIN, TAG, 'onForeground');
+  onWindowStageCreate(windowStage: window.WindowStage) {
+    super.onWindowStageCreate(windowStage);
   }
 
-  onBackground(): void {
-    hilog.info(DOMAIN, TAG, 'onBackground');
+  onWindowStageDestroy() {
+    super.onWindowStageDestroy();
+  }
+
+  onForeground() {
+    super.onForeground();
+  }
+
+  onBackground() {
+    super.onBackground();
   }
 }

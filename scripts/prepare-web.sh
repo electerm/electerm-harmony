@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # prepare-web.sh — Install, build, and bundle electerm-web
-# from the local electerm-web/ directory into the HarmonyOS app's rawfile resources.
+# from the local electerm-web/ directory into the HarmonyOS app's resfile resources.
 #
 # This script:
 #   1. Installs npm dependencies in electerm-web/
 #   2. Runs build/harmony/build.mjs which:
 #      - Vite-builds the React frontend → dist/assets/
-#      - esbuild-bundles the Node.js backend → app.bundle.mjs
-#      - Generates loading.html, index.js, package.json
-#      - Aliases child_process to a no-op shim
-#   3. Copies the output into the HarmonyOS rawfile directory
+#      - esbuild-bundles the Node.js backend → app.bundle.cjs (CJS format)
+#      - Generates main.js (Electron main process)
+#      - Generates package.json
+#   3. Copies the output into the HarmonyOS resfile directory
 #
 # Usage:
 #   ./scripts/prepare-web.sh
@@ -24,10 +24,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# electerm-web source (copied from electerm-android, now in the repo)
+# electerm-web source (in the repo)
 WEB_SRC_DIR="${PROJECT_ROOT}/electerm-web"
-# Output: rawfile/electerm/ (node binary + web project + backend bundle)
-RAWFILE_ELECTERM_DIR="${PROJECT_ROOT}/entry/src/main/resources/rawfile/electerm"
+# Output: web_engine/src/main/resources/resfile/resources/app/
+# (Electron app directory in the web_engine HAR module's resfile)
+RESFILE_APP_DIR="${PROJECT_ROOT}/web_engine/src/main/resources/resfile/resources/app"
 
 # --- Main -------------------------------------------------------------------
 
@@ -45,34 +46,28 @@ WEB_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['ve
 echo "    Version: ${WEB_VERSION}"
 
 # Install dependencies (needed for esbuild, vite, and static asset packages)
-# On Windows, native modules (node-pty, serialport) may fail to compile.
-# Use --ignore-scripts if that happens — these modules are marked as
-# external in the esbuild bundle and use guarded dynamic imports, so
-# their compiled binaries are not needed for the build.
 echo "    Installing dependencies ..."
 npm install --legacy-peer-deps
 
-# Create .env from .sample.env
+# Create .env from .sample.env (needed by the backend, though main.js
+# overrides most env vars at runtime)
 echo "    Creating .env ..."
 cp .sample.env .env
 
-# Set SERVER_SECRET from CI env var (optional — the entry script sets a
-# default if this is not provided)
+# Set SERVER_SECRET from CI env var (optional)
 if [ -n "${OHOS_SERVER_SECRET:-}" ]; then
   echo "    Setting SERVER_SECRET from OHOS_SERVER_SECRET ..."
   sed -i.bak "s/^SERVER_SECRET=.*/SERVER_SECRET=${OHOS_SERVER_SECRET}/" .env
   rm -f .env.bak
-else
-  echo "    ⚠ OHOS_SERVER_SECRET not set, using default from .sample.env"
 fi
 
-# Run the HarmonyOS build script (vite + esbuild + loading page + node entry)
-echo "    Building HarmonyOS bundle ..."
+# Run the HarmonyOS build script (vite + esbuild + Electron main.js)
+echo "    Building HarmonyOS Electron bundle ..."
 npm run build:harmony
 
-# --- Copy output into rawfile ----------------------------------------------
+# --- Copy output into resfile -----------------------------------------------
 
-HARMONY_OUTPUT="${WEB_SRC_DIR}/build/harmony/rawfile/electerm"
+HARMONY_OUTPUT="${WEB_SRC_DIR}/build/harmony/resfile/resources/app"
 
 if [ ! -d "${HARMONY_OUTPUT}" ]; then
   echo "    ✗ Build output not found at ${HARMONY_OUTPUT}"
@@ -80,19 +75,24 @@ if [ ! -d "${HARMONY_OUTPUT}" ]; then
   exit 1
 fi
 
-echo "    Copying into ${RAWFILE_ELECTERM_DIR}/ ..."
+# Verify web_engine exists (should have been prepared by prepare-electron-runtime.sh)
+if [ ! -d "${PROJECT_ROOT}/web_engine" ]; then
+  echo "    ✗ web_engine/ not found. Run ./scripts/prepare-electron-runtime.sh first."
+  exit 1
+fi
+
+echo "    Copying into ${RESFILE_APP_DIR}/ ..."
 
 # Clean previous
-rm -rf "${RAWFILE_ELECTERM_DIR}"
-mkdir -p "${RAWFILE_ELECTERM_DIR}"
+rm -rf "${RESFILE_APP_DIR}"
+mkdir -p "${RESFILE_APP_DIR}"
 
-# Copy the entire electerm/ output (loading.html, index.js, app.bundle.mjs,
-# package.json, views/, dist/) into rawfile/electerm/
-cp -r "${HARMONY_OUTPUT}/." "${RAWFILE_ELECTERM_DIR}/"
+# Copy the entire app/ output (main.js, app.bundle.cjs, package.json,
+# views/, dist/) into resfile/resources/app/
+cp -r "${HARMONY_OUTPUT}/." "${RESFILE_APP_DIR}/"
 
-# Remove any .env file — HarmonyOS resourceManager cannot handle dotfiles,
-# and all env vars are set directly in index.js via process.env.*
-rm -f "${RAWFILE_ELECTERM_DIR}/.env"
+# Remove any .env file — not needed in the Electron app (main.js sets env vars)
+rm -f "${RESFILE_APP_DIR}/.env"
 
-echo "    ✓ Bundled size: $(du -sh "${RAWFILE_ELECTERM_DIR}" | cut -f1)"
+echo "    ✓ Bundled size: $(du -sh "${RESFILE_APP_DIR}" | cut -f1)"
 echo "==> electerm-web preparation complete."

@@ -3,8 +3,6 @@
 #
 # This script builds an UNSIGNED .app using hvigorw assembleApp, then signs
 # it directly using hap-sign-tool.jar with plaintext passwords.
-# This bypasses the hvigor plugin's password encryption requirement
-# (which needs DevEco Studio's encrypted passwords + material/ key dirs).
 #
 # The .app package is a ZIP containing the HAP(s) + pack.info, and is the
 # format required by AppGallery Connect for uploading.
@@ -12,7 +10,7 @@
 # Prerequisites:
 #   - HarmonyOS Command Line Tools installed (ohpm, hvigorw in PATH)
 #   - Signing materials in signing/ directory
-#   - prepare-node.sh and prepare-web.sh already run
+#   - prepare-electron-runtime.sh and prepare-web.sh already run
 #
 # Usage:
 #   ./scripts/build-app.sh [--debug|--release]
@@ -51,12 +49,9 @@ CERT_FILE="${CERT_FILE:-electerm_publish.cer}"
 PROFILE_FILE="${PROFILE_FILE:-electermRelease.p7b}"
 KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
-# Target architecture (ohos-node is arm64; override with APP_ARCH env var)
 APP_ARCH="${APP_ARCH:-arm64}"
 
 # --- Read version from electerm-web -----------------------------------------
-# The version is read from the local electerm-web source directory.
-# This ensures the app version always tracks the bundled electerm-web.
 
 echo "==> Reading version from electerm-web ..."
 
@@ -73,7 +68,6 @@ APP_VERSION=$(python3 -c "import json; print(json.load(open('${ELECTERM_WEB_PKG}
 echo "    ✓ electerm-web version: ${APP_VERSION}"
 
 # Compute versionCode from semver: major * 10000000 + minor * 100000 + patch
-# e.g. 4.15.121 → 41500121
 VERSION_CODE=$(python3 -c "
 import re
 v = '${APP_VERSION}'
@@ -92,6 +86,41 @@ fi
 
 echo "    ✓ versionCode: ${VERSION_CODE}"
 
+# --- Verify build prerequisites ---------------------------------------------
+
+echo "==> Verifying build prerequisites ..."
+
+LIBS_DIR="${PROJECT_ROOT}/entry/libs/arm64-v8a"
+WEB_ENGINE_DIR="${PROJECT_ROOT}/web_engine"
+RESFILE_DIR="${WEB_ENGINE_DIR}/src/main/resources/resfile"
+APP_DIR="${RESFILE_DIR}/resources/app"
+
+# Check .so libraries
+for lib in libelectron.so libadapter.so libffmpeg.so; do
+  if [ ! -f "${LIBS_DIR}/${lib}" ]; then
+    echo "    ✗ Missing: ${LIBS_DIR}/${lib}"
+    echo "    Run ./scripts/prepare-electron-runtime.sh first."
+    exit 1
+  fi
+  echo "    ✓ Found: ${lib}"
+done
+
+# Check app code
+if [ ! -f "${APP_DIR}/main.js" ]; then
+  echo "    ✗ Missing: ${APP_DIR}/main.js"
+  echo "    Run ./scripts/prepare-electron-runtime.sh then ./scripts/prepare-web.sh first."
+  exit 1
+fi
+echo "    ✓ Found: main.js"
+
+# Check web_engine module
+if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
+  echo "    ✗ Missing: ${WEB_ENGINE_DIR}/Index.ets"
+  echo "    Run ./scripts/prepare-electron-runtime.sh first."
+  exit 1
+fi
+echo "    ✓ Found: web_engine/Index.ets"
+
 # --- Check signing materials ------------------------------------------------
 
 echo "==> Checking signing materials ..."
@@ -103,7 +132,7 @@ PROFILE_PATH="${SIGNING_DIR}/${PROFILE_FILE}"
 for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   if [ ! -f "${f}" ]; then
     echo "    ✗ Missing: ${f}"
-    echo "    See build/ENV_SETUP.md for instructions."
+    echo "    See docs/ENV_SETUP.md for instructions."
     exit 1
   fi
   echo "    ✓ Found: $(basename "${f}")"
@@ -118,7 +147,6 @@ fi
 
 echo "==> Locating HarmonyOS build tools ..."
 
-# Try COMMANDLINE_TOOLS env var, then common paths
 if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
   for candidate in \
     "/opt/commandline-tools-linux-x64" \
@@ -152,7 +180,6 @@ export PATH="${PATH}:${COMMANDLINE_TOOLS}/bin:${COMMANDLINE_TOOLS}/hvigor/bin"
 # Locate hap-sign-tool.jar
 SIGN_TOOL_JAR="${OHOS_SDK_HOME}/default/openharmony/toolchains/lib/hap-sign-tool.jar"
 if [ ! -f "${SIGN_TOOL_JAR}" ]; then
-  # Try alternative path
   SIGN_TOOL_JAR=$(find "${OHOS_SDK_HOME}" -name "hap-sign-tool.jar" -type f 2>/dev/null | head -1)
 fi
 if [ -z "${SIGN_TOOL_JAR:-}" ] || [ ! -f "${SIGN_TOOL_JAR}" ]; then
@@ -166,8 +193,6 @@ echo "    hvigorw: ${HVIGORW}"
 echo "    sign tool: ${SIGN_TOOL_JAR}"
 
 # --- Generate build-profile.json5 (without signing config) ------------------
-# We build an UNSIGNED APP and sign it separately with hap-sign-tool.jar.
-# This avoids the hvigor plugin's password encryption requirement.
 
 echo "==> Configuring build-profile.json5 ..."
 
@@ -180,9 +205,14 @@ cat > "${BUILD_PROFILE}" <<EOF
     "products": [
       {
         "name": "default",
-        "compatibleSdkVersion": "5.0.1(13)",
-        "compileSdkVersion": "5.0.1(13)",
-        "runtimeOS": "HarmonyOS"
+        "compatibleSdkVersion": "5.0.5(17)",
+        "compileSdkVersion": "5.0.5(17)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "nativeLib": {
+            "collectAllLibs": true
+          }
+        }
       }
     ]
   },
@@ -196,6 +226,10 @@ cat > "${BUILD_PROFILE}" <<EOF
           "applyToProducts": ["default"]
         }
       ]
+    },
+    {
+      "name": "web_engine",
+      "srcPath": "./web_engine"
     }
   ]
 }
@@ -204,8 +238,6 @@ EOF
 echo "    ✓ build-profile.json5 generated (unsigned build)"
 
 # --- Update app version from electerm-web -----------------------------------
-# Sync versionName/versionCode in app.json5 and version in oh-package.json5
-# files so the built package carries the electerm-web version.
 
 echo "==> Updating app version to ${APP_VERSION} ..."
 
@@ -226,13 +258,12 @@ echo "    ✓ app.json5:        versionName=${APP_VERSION}, versionCode=${VERSIO
 echo "    ✓ oh-package.json5: version=${APP_VERSION}"
 echo "    ✓ entry/oh-package.json5: version=${APP_VERSION}"
 
-# --- Generate hvigor-config.json5 using bundled hvigor version ----------------
+# --- Generate hvigor-config.json5 -------------------------------------------
 
 echo "==> Configuring hvigor-config.json5 ..."
 
 HVIGOR_CONFIG="${PROJECT_ROOT}/hvigor/hvigor-config.json5"
 
-# Read the bundled hvigor version from the command line tools
 BUNDLED_HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor"
 BUNDLED_PLUGIN_DIR="${COMMANDLINE_TOOLS}/hvigor/hvigor-ohos-plugin"
 
@@ -243,9 +274,6 @@ else
 fi
 echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
 
-# Use file: protocol to reference the bundled plugin directly.
-# This avoids version mismatch between the plugin and the hvigor engine,
-# and avoids relying on the npm registry for the plugin.
 if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
   cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
@@ -267,7 +295,7 @@ else
   echo "    ⚠ Bundled plugin directory not found, keeping existing hvigor-config.json5"
 fi
 
-# --- Configure npm registry for hvigor (uses pnpm internally) ----------------
+# --- Configure npm registry for hvigor --------------------------------------
 
 echo "==> Configuring npm registry for hvigor ..."
 
@@ -278,61 +306,16 @@ registry=https://registry.npmjs.org/
 NPMRC
 echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
-# --- Generate rawfile manifest ----------------------------------------------
-# Creates a JSON file listing all files in rawfile/ so the app can extract them
-# to the sandbox at runtime (HarmonyOS resourceManager has no recursive listing API).
-
-echo "==> Generating rawfile manifest ..."
-bash "${SCRIPT_DIR}/gen-manifest.sh"
-
 # --- Install ohpm dependencies ----------------------------------------------
 
 echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
-# --- Dump SDK type declarations for diagnostics -----------------------------
-# Dump the ORIGINAL @ohos.process.d.ts and any child_process .d.ts files to
-# the build log so we can see exactly what APIs the SDK declares at compile
-# time.  This is critical for determining the correct runtime API to use.
-
-echo "==> Dumping SDK process/child_process type declarations ..."
-
-# Dump @ohos.process.d.ts (original, before patching)
-find "${OHOS_SDK_HOME}" -name "@ohos.process.d.ts" -type f 2>/dev/null | while IFS= read -r f; do
-  echo "===== BEGIN ${f} (ORIGINAL) ====="
-  cat "${f}"
-  echo "===== END ${f} ====="
-done
-
-# Search for child_process declarations
-echo "==> Searching for child_process related .d.ts files ..."
-find "${OHOS_SDK_HOME}" -name "*child_process*" -o -name "*childprocess*" 2>/dev/null | while IFS= read -r f; do
-  echo "===== BEGIN ${f} ====="
-  cat "${f}"
-  echo "===== END ${f} ====="
-done
-
-# Also search for any .d.ts containing "spawn" or "runCmd"
-echo "==> Searching for .d.ts files containing spawn/runCmd ..."
-grep -rl "runCmd\|child_process\|ChildProcess" "${OHOS_SDK_HOME}" --include="*.d.ts" 2>/dev/null | while IFS= read -r f; do
-  echo "  Found: ${f}"
-done
-
-# NOTE: We no longer patch @ohos.process.d.ts to add runCmd declarations.
-# The process.runCmd API is a @systemapi (system-only API) in the SDK,
-# unavailable to third-party apps at runtime (returns undefined).
-# Instead, we use a NAPI native module (libspawn) that calls posix_spawn(3)
-# directly from C++, bypassing the systemapi restriction entirely.
-# The SDK dump above is kept for diagnostic reference.
-
 # --- Build the unsigned APP -------------------------------------------------
 
 echo "==> Building unsigned APP (${BUILD_MODE}) ..."
 
-# Build with enableSignTask=false to skip the hvigor signing step.
-# We sign separately using hap-sign-tool.jar with plaintext passwords.
-# assembleApp produces a .app package (ZIP containing HAP + pack.info).
 if [ "${BUILD_MODE}" = "debug" ]; then
   "${HVIGORW}" assembleApp -p product=default \
     -p buildMode=debug -p enableSignTask=false --no-daemon
@@ -343,12 +326,11 @@ fi
 
 # --- Locate the unsigned APP ------------------------------------------------
 
-# assembleApp outputs to build/outputs/default/*.app (project root level)
-APP_DIR="${PROJECT_ROOT}/build/outputs/default"
-UNSIGNED_APP=$(find "${APP_DIR}" -name "*.app" -type f 2>/dev/null | head -1)
+APP_OUTPUT_DIR="${PROJECT_ROOT}/build/outputs/default"
+UNSIGNED_APP=$(find "${APP_OUTPUT_DIR}" -name "*.app" -type f 2>/dev/null | head -1)
 
 if [ -z "${UNSIGNED_APP}" ]; then
-  echo "    ✗ No .app file found in ${APP_DIR}"
+  echo "    ✗ No .app file found in ${APP_OUTPUT_DIR}"
   echo "    Searching entire build tree ..."
   UNSIGNED_APP=$(find "${PROJECT_ROOT}/build" -name "*.app" -type f 2>/dev/null | head -1)
   if [ -z "${UNSIGNED_APP}" ]; then
@@ -363,17 +345,11 @@ echo "    ✓ Unsigned APP: ${UNSIGNED_APP} ($(du -h "${UNSIGNED_APP}" | cut -f1
 
 echo "==> Signing APP with hap-sign-tool.jar ..."
 
-# Show Java version for debugging (PKCS12 keystore compatibility)
 JAVA_VERSION=$(java -version 2>&1 | head -1)
 echo "    Java: ${JAVA_VERSION}"
 
 SIGNED_APP="${UNSIGNED_APP%.app}-signed.app"
 
-# Sign the APP package.
-# hap-sign-tool.jar can sign both .hap and .app files.
-# NOTE: -mode localSign is required (COMMAND_ERROR code 101 if missing).
-# NOTE: -compatibleVersion, -signCode, -pwdInputMode are NOT supported by
-# this SDK version (COMMAND_PARAM_ERROR code 110). They were added later.
 java -jar "${SIGN_TOOL_JAR}" sign-app \
   -mode localSign \
   -keyAlias "${KEY_ALIAS}" \
@@ -398,7 +374,6 @@ APP_FILE="${UNSIGNED_APP}"
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 
 # --- Rename artifact with proper name ---------------------------------------
-# Final artifact name: electerm-{arch}-{version}.app
 
 FINAL_APP_NAME="electerm-${APP_ARCH}-${APP_VERSION}.app"
 FINAL_APP="$(dirname "${APP_FILE}")/${FINAL_APP_NAME}"
@@ -407,7 +382,7 @@ echo "==> Renaming artifact to ${FINAL_APP_NAME} ..."
 mv -f "${APP_FILE}" "${FINAL_APP}"
 APP_FILE="${FINAL_APP}"
 
-# Export for CI (if GITHUB_ENV is available, e.g. GitHub Actions)
+# Export for CI
 if [ -n "${GITHUB_ENV:-}" ]; then
   echo "APP_VERSION=${APP_VERSION}" >> "${GITHUB_ENV}"
   echo "APP_ARCH=${APP_ARCH}" >> "${GITHUB_ENV}"

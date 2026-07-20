@@ -1,10 +1,10 @@
 {
   "name": "entry",
   "version": "4.15.121",
-  "description": "Free and open-sourced terminal/ssh/sftp/telnet/serialport/RDP/VNC/Spice/ftp client — HarmonyOS entry module",
+  "description": "Electerm HarmonyOS entry module — provides UI surface and Electron runtime integration",
   "main": "",
   "license": "MIT",
   "dependencies": {
-    "libspawn.so": "file:./src/main/cpp/types/libspawn"
+    "web_engine": "file:../web_engine"
   }
 }

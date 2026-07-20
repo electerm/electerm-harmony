@@ -7,7 +7,7 @@ config()
 // Lightweight, dependency-free logger.
 // - Logs to the console (level-aware) and, when possible, to a rolling file
 //   under the node project's `data/log` directory so logs can be pulled for
-//   debugging on Android.
+//   debugging on HarmonyOS.
 // - Replaces `electron-log` entirely so the backend has no native/desktop-only
 //   dependency and starts reliably on the mobile Node runtime.
 
@@ -22,7 +22,7 @@ const threshold = levelFromEnv()
 
 let logFile = null
 try {
-  // Honour DB_PATH (set by the Android entry point to a stable, app-private
+  // Honour DB_PATH (set by the Electron main process to a stable, app-private
   // directory) so logs live next to the database/uploads. Fall back to
   // <cwd>/data/log when DB_PATH is not set (desktop / local runs).
   const base = process.env.DB_PATH

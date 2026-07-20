@@ -1,9 +1,7 @@
-// Vite config used to build the electerm *frontend* for the HarmonyOS app.
+// Vite config used to build the electerm *frontend* for the HarmonyOS Electron app.
 //
-// It is almost identical to build/vite/conf.js (the web build) and
-// build/android/vite.android.mjs (the Android build) except the output goes
-// into the HarmonyOS rawfile directory so it ends up next to the Node.js
-// backend bundle that actually serves it on the device.
+// Output goes into the Electron app directory (resfile/resources/app/dist/assets/)
+// so the Express backend can serve it at runtime on the device.
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
@@ -46,11 +44,9 @@ export default defineConfig({
     cssCodeSplit: false,
     codeSplitting: false,
     emptyOutDir: false,
-    // Output the built frontend *inside* the Node.js project so the backend
-    // (which serves `dist/assets`) finds it at runtime on the device.
-    // This path is relative to the electerm-web root (cwd) and will be
-    // set by build.mjs via --outDir override.
-    outDir: resolve(cwd, 'build/harmony/rawfile/electerm/dist/assets'),
+    // Output the built frontend *inside* the Electron app directory so the
+    // backend (which serves `dist/assets`) finds it at runtime on the device.
+    outDir: resolve(cwd, 'build/harmony/resfile/resources/app/dist/assets'),
     rollupOptions: {
       input: buildInput(),
       output: {

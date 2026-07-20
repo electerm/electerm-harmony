@@ -1,7 +1,7 @@
 {
   "name": "electerm-web",
   "version": "4.15.156",
-  "description": "electerm — a free and open-source ssh/sftp/telnet/RDP/VNC/Spice/ftp client, built on the electerm-web codebase.",
+  "description": "electerm — a free and open-source ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS, built on the electerm-web codebase.",
   "main": "src/app/app.js",
   "type": "module",
   "scripts": {
@@ -11,7 +11,6 @@
     "start": "NODE_ENV=development node ./build/vite/dev-server.js",
     "clean": "node build/bin/clean",
     "compile": "node build/bin/build",
-    "build:android": "node build/android/build.mjs",
     "build:harmony": "node build/harmony/build.mjs",
     "vite-build": "cross-env NODE_ENV=production vite build --config ./build/vite/conf.js",
     "install": "node build/bin/install",
@@ -31,8 +30,7 @@
   "sponsorLink": "https://electerm.org/sponsor-electerm.html",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/electerm/electerm-android.git",
-    "harmonyUrl": "https://github.com/electerm/electerm-harmony"
+    "url": "git+https://github.com/electerm/electerm-harmony.git"
   },
   "author": {
     "name": "ZHAO Xudong",
@@ -40,10 +38,10 @@
     "url": "https://github.com/zxdong262"
   },
   "bugs": {
-    "url": "https://github.com/electerm/electerm-android/issues"
+    "url": "https://github.com/electerm/electerm-harmony/issues"
   },
   "homepage": "https://electerm.org",
-  "releases": "https://github.com/electerm/electerm-android/releases",
+  "releases": "https://github.com/electerm/electerm-harmony/releases",
   "engines": {
     "node": ">=24.0.0"
   },

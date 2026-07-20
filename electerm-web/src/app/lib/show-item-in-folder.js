@@ -22,7 +22,7 @@ export async function showItemInFolder (filePath) {
   }
 
   return new Promise((resolve) => {
-    // Best-effort: the file manager may be unavailable (e.g. Android, headless
+    // Best-effort: the file manager may be unavailable (e.g. HarmonyOS, headless
     // Linux). Never reject — "show in folder" is purely cosmetic and a missing
     // handler must not crash or surface an unhandled rejection.
     exec(command, (error, _stdout, stderr) => {
