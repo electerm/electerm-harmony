@@ -130,7 +130,7 @@ if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
   for perm in SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE; do
     if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
       echo "    Removing unsupported permission: ohos.permission.${perm}"
-      sed -i "/ohos.permission.${perm}/d" "${WEB_ENGINE_MODULE_JSON}"
+      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${WEB_ENGINE_MODULE_JSON}"
     fi
   done
   echo "    web_engine permissions cleaned"
