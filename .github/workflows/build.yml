@@ -189,48 +189,6 @@ jobs:
           cat AppScope/app.json5
 
       # ── Step 6: Build & sign the APP ─────────────────────────────────────
-      - name: Diagnose SDK layout
-        env:
-          COMMANDLINE_TOOLS: ${{ env.COMMANDLINE_TOOLS }}
-          OHOS_SDK_HOME: ${{ env.OHOS_SDK_HOME }}
-        run: |
-          echo "=== COMMANDLINE_TOOLS: ${COMMANDLINE_TOOLS} ==="
-          echo "=== OHOS_SDK_HOME: ${OHOS_SDK_HOME} ==="
-          echo ""
-          echo "--- SDK top-level ---"
-          ls -la "${OHOS_SDK_HOME}" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- SDK/default ---"
-          ls -la "${OHOS_SDK_HOME}/default" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- SDK/default/openharmony ---"
-          ls -la "${OHOS_SDK_HOME}/default/openharmony" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- Find api-level dirs ---"
-          find "${OHOS_SDK_HOME}" -maxdepth 3 -type d -name "[0-9]*" 2>/dev/null | sort
-          echo ""
-          echo "--- Find sdk-pkg.json / sdk.json ---"
-          find "${OHOS_SDK_HOME}" -maxdepth 4 \( -name "sdk-pkg.json" -o -name "sdk.json" -o -name "oh-uni-package.json" \) 2>/dev/null | head -20
-          echo ""
-          echo "--- sdk-pkg.json content ---"
-          cat "${OHOS_SDK_HOME}/default/sdk-pkg.json" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- ets/oh-uni-package.json content ---"
-          cat "${OHOS_SDK_HOME}/default/openharmony/ets/oh-uni-package.json" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- ets directory listing ---"
-          ls -la "${OHOS_SDK_HOME}/default/openharmony/ets/" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- native directory listing ---"
-          ls -la "${OHOS_SDK_HOME}/default/openharmony/native/" 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "--- Create local.properties ---"
-          {
-            echo "sdk.dir=${OHOS_SDK_HOME}/default/openharmony"
-            echo "ohos.sdk.dir=${OHOS_SDK_HOME}"
-          } > local.properties
-          cat local.properties
-
       - name: Build HarmonyOS app
         run: ./scripts/build-app.sh --${{ github.event.inputs.build_mode || 'release' }}
         env:
