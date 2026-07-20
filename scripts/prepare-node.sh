@@ -49,10 +49,12 @@ rm -rf "${RAWFILE_NODE_DIR}/bin"
 #   2. lib/node_modules adds ~12MB to the HAP unnecessarily
 #   3. Some dotfiles in npm's node_modules cause getRawFileDescriptor failures
 echo "    Extracting bin/ to ${RAWFILE_NODE_DIR}/ ..."
+# The tarball has a top-level directory (e.g. node-v24.2.0-openharmony-arm64/),
+# so we use --wildcards to match '*/bin/' and --strip-components=1 to flatten.
 tar -zxf "${DOWNLOAD_DIR}/${TARBALL_NAME}" \
   --strip-components=1 \
   -C "${RAWFILE_NODE_DIR}" \
-  bin/
+  --wildcards '*/bin/'
 
 # Verify the node binary exists
 NODE_BIN="${RAWFILE_NODE_DIR}/bin/node"
