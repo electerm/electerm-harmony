@@ -138,6 +138,37 @@ else
   echo "    (web_engine module.json5 not found, skipping)"
 fi
 
+# --- Patch NativeMessagingAdapter.ets for API compatibility ------------------
+
+echo "==> Patching web_engine NativeMessagingAdapter for API compatibility ..."
+
+NATIVE_MSG_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/NativeMessagingAdapter.ets"
+if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
+  # The Electron runtime may import APIs that don't exist in the target SDK.
+  # Comment out unsupported imports and add stub declarations so the file compiles.
+  PATCHED=false
+  if grep -q 'dataShare' "${NATIVE_MSG_ADAPTER}" 2>/dev/null; then
+    echo "    Patching: commenting out unsupported 'dataShare' import from @kit.ArkData"
+    perl -i -pe 's/^(\s*import\s.*dataShare.*)$/\/\/ PATCHED: $1/' "${NATIVE_MSG_ADAPTER}"
+    PATCHED=true
+  fi
+  if grep -q 'webNativeMessagingExtensionManager' "${NATIVE_MSG_ADAPTER}" 2>/dev/null; then
+    echo "    Patching: commenting out unsupported 'webNativeMessagingExtensionManager' import from @kit.ArkWeb"
+    perl -i -pe 's/^(\s*import\s.*webNativeMessagingExtensionManager.*)$/\/\/ PATCHED: $1/' "${NATIVE_MSG_ADAPTER}"
+    PATCHED=true
+  fi
+  if [ "${PATCHED}" = true ]; then
+    # Prepend stub declarations to prevent "cannot find name" errors
+    # Use ESObject (ArkTS-compatible) as a universal placeholder type
+    perl -i -0777 -pe 's/\A/\/\/ --- Stubs for removed imports (API compatibility) ---\ntype dataShare = Object;\ntype webNativeMessagingExtensionManager = Object;\n\n/' "${NATIVE_MSG_ADAPTER}"
+    echo "    NativeMessagingAdapter patched (imports stubbed)"
+  else
+    echo "    NativeMessagingAdapter: no patches needed"
+  fi
+else
+  echo "    (NativeMessagingAdapter.ets not found, skipping)"
+fi
+
 # --- Check signing materials ------------------------------------------------
 
 echo "==> Checking signing materials ..."
