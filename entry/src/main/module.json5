@@ -64,18 +64,30 @@
       },
       {
         "name": "ohos.permission.MICROPHONE",
-        "reason": "$string:microphone"
+        "reason": "$string:microphone",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       },
       {
         "name": "ohos.permission.CAMERA",
-        "reason": "$string:camera"
+        "reason": "$string:camera",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       },
       {
         "name": "ohos.permission.PRINT"
       },
       {
         "name": "ohos.permission.READ_PASTEBOARD",
-        "reason": "$string:access_pasteboard"
+        "reason": "$string:access_pasteboard",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       },
       {
         "name": "ohos.permission.ACCESS_BIOMETRIC"
@@ -114,7 +126,11 @@
       },
       {
         "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
-        "reason": "$string:screenshot"
+        "reason": "$string:screenshot",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       },
       {
         "name": "ohos.permission.LOCK_WINDOW_CURSOR"
