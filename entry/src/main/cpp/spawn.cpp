@@ -724,6 +724,27 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     }
     size_t fileSize = srcStat.st_size;
 
+    /* --- Read ELF interpreter from source binary --- */
+    char interpreter[512] = {0};
+    {
+        Elf64_Ehdr ehdr;
+        ssize_t nread = pread(srcFd, &ehdr, sizeof(ehdr), 0);
+        if (nread == (ssize_t)sizeof(ehdr)) {
+            Elf64_Phdr phdr;
+            for (int i = 0; i < ehdr.e_phnum; i++) {
+                nread = pread(srcFd, &phdr, sizeof(phdr),
+                              ehdr.e_phoff + i * sizeof(Elf64_Phdr));
+                if (nread != (ssize_t)sizeof(phdr)) break;
+                if (phdr.p_type == PT_INTERP) {
+                    size_t plen = phdr.p_filesz < sizeof(interpreter)
+                        ? phdr.p_filesz : sizeof(interpreter) - 1;
+                    pread(srcFd, interpreter, plen, phdr.p_offset);
+                    break;
+                }
+            }
+        }
+    }
+
     /* --- Read /proc/sys/vm/memfd_noexec for diagnostics --- */
     int memfdNoexecVal = -1;
     {
@@ -739,12 +760,20 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
         }
     }
 
-    /* --- Create memfd with MFD_EXEC flag --- */
-    /* MFD_EXEC explicitly allows execution (needed when vm.memfd_noexec=1) */
-    int memFd = syscall(__NR_memfd_create, "node_bin", MFD_CLOEXEC | MFD_EXEC);
+    /*
+     * --- Create memfd WITHOUT MFD_CLOEXEC ---
+     *
+     * We deliberately do NOT set MFD_CLOEXEC because the memfd must
+     * survive execve() so the dynamic linker can access it via
+     * /proc/self/fd/<memfd>.
+     *
+     * We DO set MFD_EXEC to explicitly request execution permission
+     * (needed when vm.memfd_noexec=1).
+     */
+    int memFd = syscall(__NR_memfd_create, "node_bin", MFD_EXEC);
     if (memFd < 0 && (errno == EINVAL || errno == ENOSYS)) {
-        /* MFD_EXEC not supported (pre-6.3 kernel), fall back to MFD_CLOEXEC */
-        memFd = syscall(__NR_memfd_create, "node_bin", MFD_CLOEXEC);
+        /* MFD_EXEC not supported (pre-6.3 kernel), try with no flags */
+        memFd = syscall(__NR_memfd_create, "node_bin", 0);
     }
     if (memFd < 0) {
         char errBuf[256];
@@ -790,10 +819,6 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     /* Make memfd executable */
     fchmod(memFd, 0700);
 
-    /* Verify memfd permissions */
-    struct stat memStat;
-    fstat(memFd, &memStat);
-
     /* --- Read arguments array --- */
     bool isArray = false;
     napi_is_array(env, args[1], &isArray);
@@ -806,31 +831,50 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     uint32_t argCount = 0;
     napi_get_array_length(env, args[1], &argCount);
 
-    /* Construct /proc/self/fd/<memfd> path (for posix_spawn fallback) */
+    /* Construct /proc/self/fd/<memfd> path */
     char procFdPath[64];
     snprintf(procFdPath, sizeof(procFdPath), "/proc/self/fd/%d", memFd);
 
-    /* Build argv */
-    std::vector<std::string> argStrings;
-    std::vector<char *> argv;
-
-    argStrings.push_back(procFdPath);
-    argv.push_back(&argStrings.back()[0]);
-
+    /* --- Build user args (from JavaScript) --- */
+    std::vector<std::string> userArgs;
     for (uint32_t i = 0; i < argCount; i++) {
         napi_value elem;
         napi_get_element(env, args[1], i, &elem);
-
         size_t elemLen = 0;
         napi_get_value_string_utf8(env, elem, nullptr, 0, &elemLen);
         std::string argStr(elemLen + 1, '\0');
         napi_get_value_string_utf8(env, elem, &argStr[0], elemLen + 1, &elemLen);
         argStr.resize(elemLen);
-
-        argStrings.push_back(std::move(argStr));
-        argv.push_back(&argStrings.back()[0]);
+        userArgs.push_back(std::move(argStr));
     }
-    argv.push_back(nullptr);
+
+    /* --- Build argv for Method 1: dynamic linker --- */
+    /* ld-musl-aarch64.so.1 /proc/self/fd/<memfd> <userArgs...> */
+    std::vector<std::string> linkerArgStrings;
+    std::vector<char *> linkerArgv;
+    if (interpreter[0]) {
+        linkerArgStrings.push_back(interpreter);
+        linkerArgv.push_back(&linkerArgStrings.back()[0]);
+        linkerArgStrings.push_back(procFdPath);
+        linkerArgv.push_back(&linkerArgStrings.back()[0]);
+        for (const auto &a : userArgs) {
+            linkerArgStrings.push_back(a);
+            linkerArgv.push_back(&linkerArgStrings.back()[0]);
+        }
+    }
+    linkerArgv.push_back(nullptr);
+
+    /* --- Build argv for Method 2 & 3: direct exec --- */
+    /* /proc/self/fd/<memfd> <userArgs...> */
+    std::vector<std::string> directArgStrings;
+    std::vector<char *> directArgv;
+    directArgStrings.push_back(procFdPath);
+    directArgv.push_back(&directArgStrings.back()[0]);
+    for (const auto &a : userArgs) {
+        directArgStrings.push_back(a);
+        directArgv.push_back(&directArgStrings.back()[0]);
+    }
+    directArgv.push_back(nullptr);
 
     /* --- Read optional env object --- */
     std::vector<std::string> extraEnv;
@@ -842,14 +886,11 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
         if (envType == napi_object) {
             napi_value keys;
             napi_get_property_names(env, args[2], &keys);
-
             uint32_t keyCount = 0;
             napi_get_array_length(env, keys, &keyCount);
-
             for (uint32_t i = 0; i < keyCount; i++) {
                 napi_value key;
                 napi_get_element(env, keys, i, &key);
-
                 size_t keyLen = 0;
                 napi_get_value_string_utf8(env, key, nullptr, 0, &keyLen);
                 std::string keyStr(keyLen + 1, '\0');
@@ -858,7 +899,6 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
 
                 napi_value val;
                 napi_get_property(env, args[2], key, &val);
-
                 size_t valLen = 0;
                 napi_get_value_string_utf8(env, val, nullptr, 0, &valLen);
                 std::string valStr(valLen + 1, '\0');
@@ -873,16 +913,22 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     /* --- Build envp --- */
     std::vector<char *> envp = buildEnvp(extraEnv, envStorage);
 
-    /* --- Execution: fork()+execveat() with pipe error reporting --- */
     /*
-     * execveat(fd, "", argv, envp, AT_EMPTY_PATH) directly execs from
-     * the fd without path resolution. This may bypass noexec checks
-     * that posix_spawn/execve applies to /proc/self/fd/<fd> symlinks.
+     * --- Execution: fork() + three exec methods ---
      *
-     * We use a pipe to communicate exec failure errno from child to
-     * parent: if exec succeeds, the pipe write end (CLOEXEC) is closed
-     * automatically and parent reads EOF. If exec fails, child writes
-     * errno values to the pipe before exiting.
+     * Method 1 (PRIMARY): execve(interpreter, [interpreter, /proc/self/fd/<memfd>, ...args], envp)
+     *   The dynamic linker (ld-musl) is a system binary in /lib/ which IS
+     *   executable. It loads the node binary via mmap(PROT_EXEC) — a
+     *   different kernel code path than execve, potentially bypassing
+     *   the noexec restriction on sandbox files.
+     *   The memfd is NOT CLOEXEC so it survives execve and the linker
+     *   can open it via /proc/self/fd/<memfd>.
+     *
+     * Method 2 (fallback): execveat(memFd, "", ..., AT_EMPTY_PATH)
+     *   Direct exec from fd without path resolution.
+     *
+     * Method 3 (fallback): execve("/proc/self/fd/<memfd>", ..., ...)
+     *   Exec from /proc/self/fd path.
      */
     int errPipe[2];
     if (pipe(errPipe) != 0) {
@@ -893,69 +939,88 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
         napi_throw_error(env, "SPAWN_ERROR", errBuf);
         return nullptr;
     }
-    /* Write end: close-on-exec so it auto-closes on successful exec */
     fcntl(errPipe[1], F_SETFD, FD_CLOEXEC);
 
     pid_t pid = fork();
 
     if (pid == 0) {
         /* === CHILD PROCESS === */
-        /* Only call async-signal-safe functions here */
-        close(errPipe[0]);  /* close read end */
+        close(errPipe[0]);
 
-        /* Try execveat with AT_EMPTY_PATH — directly exec from memfd */
+        int err;
+
+        /* Method 1: Dynamic linker */
+        if (interpreter[0]) {
+            syscall(__NR_execve, interpreter,
+                    linkerArgv.data(), envp.data());
+            err = errno;
+            write(errPipe[1], &err, sizeof(err));
+        } else {
+            err = ENOENT;
+            write(errPipe[1], &err, sizeof(err));
+        }
+
+        /* Method 2: execveat with AT_EMPTY_PATH */
         syscall(__NR_execveat, memFd, "",
-                argv.data(), envp.data(), AT_EMPTY_PATH);
+                directArgv.data(), envp.data(), AT_EMPTY_PATH);
+        err = errno;
+        write(errPipe[1], &err, sizeof(err));
 
-        /* execveat failed — write errno, try execve fallback */
-        int execErrno = errno;
-        write(errPipe[1], &execErrno, sizeof(execErrno));
-
-        syscall(__NR_execve, procFdPath, argv.data(), envp.data());
-
-        /* execve also failed — write errno and exit */
-        execErrno = errno;
-        write(errPipe[1], &execErrno, sizeof(execErrno));
+        /* Method 3: execve /proc/self/fd/<memfd> */
+        syscall(__NR_execve, procFdPath,
+                directArgv.data(), envp.data());
+        err = errno;
+        write(errPipe[1], &err, sizeof(err));
 
         _exit(127);
     }
 
     /* === PARENT PROCESS === */
-    close(errPipe[1]);  /* close write end */
-    close(memFd);       /* child has its own copy */
+    close(errPipe[1]);
+    close(memFd);
 
     if (pid < 0) {
-        /* fork() failed */
         close(errPipe[0]);
         char errBuf[512];
         snprintf(errBuf, sizeof(errBuf),
-                 "fork() failed: %s (errno=%d, memfd_noexec=%d, "
-                 "memStat: mode=%o size=%lld)",
-                 strerror(errno), errno, memfdNoexecVal,
-                 memStat.st_mode, (long long)memStat.st_size);
+                 "fork() failed: %s (errno=%d)",
+                 strerror(errno), errno);
         napi_throw_error(env, "SPAWN_ERROR", errBuf);
         return nullptr;
     }
 
-    /* Read exec error from child */
-    int execErrno1 = 0, execErrno2 = 0;
-    ssize_t n1 = read(errPipe[0], &execErrno1, sizeof(execErrno1));
-    ssize_t n2 = (n1 > 0) ? read(errPipe[0], &execErrno2, sizeof(execErrno2)) : 0;
+    /* Read exec errors from child (3 possible, one per method) */
+    int errs[3] = {0, 0, 0};
+    ssize_t totalRead = 0;
+    while (totalRead < (ssize_t)sizeof(errs)) {
+        ssize_t n = read(errPipe[0], (char *)errs + totalRead,
+                         sizeof(errs) - totalRead);
+        if (n <= 0) break;  /* EOF or error */
+        totalRead += n;
+    }
     close(errPipe[0]);
 
-    if (n1 == 0) {
-        /* EOF = exec succeeded (pipe was closed by CLOEXEC) */
-    } else if (n2 == 0) {
-        /* First execveat failed, but second execve succeeded */
+    int numErrs = (int)(totalRead / sizeof(int));
+
+    if (numErrs == 0) {
+        /* EOF immediately = Method 1 (dynamic linker) succeeded */
+    } else if (numErrs == 1) {
+        /* Method 1 failed, Method 2 (execveat) succeeded */
+    } else if (numErrs == 2) {
+        /* Methods 1 & 2 failed, Method 3 (execve) succeeded */
     } else {
-        /* Both exec attempts failed */
-        char errBuf[512];
+        /* All 3 methods failed */
+        char errBuf[768];
         snprintf(errBuf, sizeof(errBuf),
-                 "exec failed: execveat errno=%d (%s), execve errno=%d (%s) "
-                 "[memfd_noexec=%d, memStat mode=%o, MFD_EXEC tried]",
-                 execErrno1, strerror(execErrno1),
-                 execErrno2, strerror(execErrno2),
-                 memfdNoexecVal, memStat.st_mode);
+                 "All exec methods failed [memfd_noexec=%d, interpreter=%s]:\n"
+                 "  1. linker execve errno=%d (%s)\n"
+                 "  2. execveat errno=%d (%s)\n"
+                 "  3. execve(/proc/self/fd) errno=%d (%s)",
+                 memfdNoexecVal,
+                 interpreter[0] ? interpreter : "(none)",
+                 errs[0], strerror(errs[0]),
+                 errs[1], strerror(errs[1]),
+                 errs[2], strerror(errs[2]));
         napi_throw_error(env, "SPAWN_ERROR", errBuf);
         return nullptr;
     }
