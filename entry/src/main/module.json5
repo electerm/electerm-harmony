@@ -20,30 +20,6 @@
         "name": "ohos.permission.GET_NETWORK_INFO"
       },
       {
-        "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.READ_WRITE_DESKTOP_DIRECTORY",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
         "name": "ohos.permission.LOCATION",
         "reason": "$string:reason",
         "usedScene": {
@@ -80,14 +56,6 @@
       },
       {
         "name": "ohos.permission.PRINT"
-      },
-      {
-        "name": "ohos.permission.READ_PASTEBOARD",
-        "reason": "$string:access_pasteboard",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
       },
       {
         "name": "ohos.permission.ACCESS_BLUETOOTH",
