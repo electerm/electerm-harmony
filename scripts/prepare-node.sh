@@ -56,6 +56,10 @@ tar -zxf "${DOWNLOAD_DIR}/${TARBALL_NAME}" \
 # Remove lib/ (npm, corepack) — not needed, app.bundle.mjs has all deps inlined
 rm -rf "${RAWFILE_NODE_DIR}/lib"
 
+# bin/npm, bin/npx, bin/corepack are symlinks to ../lib/node_modules/...
+# After removing lib/, they become broken symlinks — delete them.
+rm -f "${RAWFILE_NODE_DIR}/bin/npm" "${RAWFILE_NODE_DIR}/bin/npx" "${RAWFILE_NODE_DIR}/bin/corepack"
+
 # Verify the node binary exists
 NODE_BIN="${RAWFILE_NODE_DIR}/bin/node"
 if [ -f "${NODE_BIN}" ]; then
