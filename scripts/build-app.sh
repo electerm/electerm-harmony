@@ -121,6 +121,23 @@ if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
 fi
 echo "    ✓ Found: web_engine/Index.ets"
 
+# --- Fix web_engine permissions for API 13 compatibility ---------------------
+
+echo "==> Fixing web_engine permissions for API compatibility ..."
+
+WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
+if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
+  for perm in SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE; do
+    if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
+      echo "    Removing unsupported permission: ohos.permission.${perm}"
+      sed -i "/ohos.permission.${perm}/d" "${WEB_ENGINE_MODULE_JSON}"
+    fi
+  done
+  echo "    web_engine permissions cleaned"
+else
+  echo "    (web_engine module.json5 not found, skipping)"
+fi
+
 # --- Check signing materials ------------------------------------------------
 
 echo "==> Checking signing materials ..."
