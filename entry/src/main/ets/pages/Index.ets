@@ -360,7 +360,6 @@ struct Index {
       JSON.parse(decoder.decodeToString(manifestBytes)) as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
-    const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB — node binary is ~127MB
     const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks for streaming copy
 
     hilog.info(DOMAIN, TAG, `Manifest contains ${files.length} files to extract`);
@@ -380,19 +379,19 @@ struct Index {
       }
 
       try {
-        // Use getRawFileDescriptor to get file size before deciding extraction method.
-        // For large files (e.g. node binary ~127MB), use chunked streaming copy
-        // to avoid OOM from loading entire file into memory via getRawFileContent.
-        const rawFd = await resourceMgr.getRawFileDescriptor(filePath);
-        const isLargeFile = rawFd.length > LARGE_FILE_THRESHOLD;
-
         const destFile = fs.openSync(destPath,
           fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
 
-        if (isLargeFile) {
-          hilog.info(DOMAIN, TAG, `Large file: ${filePath} (${rawFd.length} bytes), using chunked copy`);
+        // The node binary is ~127MB — getRawFileContent would OOM.
+        // Use getRawFileDescriptor + chunked copy only for this one file.
+        // All other files are small enough for getRawFileContent.
+        // NOTE: getRawFileDescriptor fails on some files (dotfiles like .env,
+        // .npmrc, etc.), so we only use it for the node binary specifically.
+        if (filePath === 'electerm/bin/node') {
+          hilog.info(DOMAIN, TAG, `Large file: ${filePath}, using chunked copy`);
           this.statusMessage = `Extracting ${filePath}...`;
 
+          const rawFd = await resourceMgr.getRawFileDescriptor(filePath);
           let remaining = rawFd.length;
           let fileOffset = rawFd.offset;
           const buffer = new ArrayBuffer(CHUNK_SIZE);
@@ -408,8 +407,13 @@ struct Index {
             fileOffset += bytesRead;
             remaining -= bytesRead;
           }
+
+          try {
+            await resourceMgr.closeRawFileDescriptor(filePath);
+          } catch {
+            // ignore close errors
+          }
         } else {
-          // Small file: use getRawFileContent (loads entire file to memory)
           const content = await resourceMgr.getRawFileContent(filePath);
           fs.writeSync(destFile.fd, content.buffer, {
             offset: content.byteOffset,
@@ -431,13 +435,6 @@ struct Index {
         }
 
         fs.closeSync(destFile);
-
-        // Close rawfile descriptor to avoid fd leak
-        try {
-          await resourceMgr.closeRawFileDescriptor(filePath);
-        } catch {
-          // ignore close errors
-        }
       } catch (extractErr) {
         hilog.error(DOMAIN, TAG, `Failed to extract ${filePath}: ${this.getErrorMessage(extractErr as object)}`);
         failedCount++;
