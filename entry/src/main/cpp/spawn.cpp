@@ -396,7 +396,7 @@ static napi_value KillProcess(napi_env env, napi_callback_info info) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  chmod  (set file permissions)                                      */
+/*  chmod  (set file permissions via path — may not work on sandbox)   */
 /* ------------------------------------------------------------------ */
 
 static napi_value Chmod(napi_env env, napi_callback_info info) {
@@ -416,6 +416,50 @@ static napi_value Chmod(napi_env env, napi_callback_info info) {
     int ret = chmod(path.c_str(), (mode_t)mode);
     napi_value result;
     napi_get_boolean(env, ret == 0, &result);
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  fchmodFd  (set file permissions via fd — works on sandbox files)    */
+/*                                                                    */
+/*  ArkTS opens a file via fs.openSync(), getting a real kernel fd.    */
+/*  fchmod(fd, mode) works on the fd directly, bypassing path          */
+/*  resolution — so it works even for HarmonyOS sandbox virtual paths. */
+/* ------------------------------------------------------------------ */
+
+static napi_value FchmodFd(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_type_error(env, nullptr,
+            "Expected 2 arguments: fd (number), mode (number)");
+        return nullptr;
+    }
+
+    int32_t fd = -1;
+    napi_get_value_int32(env, args[0], &fd);
+    if (fd < 0) {
+        napi_throw_type_error(env, nullptr, "fd must be a non-negative integer");
+        return nullptr;
+    }
+
+    int32_t mode = 0;
+    napi_get_value_int32(env, args[1], &mode);
+
+    int ret = fchmod(fd, (mode_t)mode);
+    if (ret != 0) {
+        char errBuf[256];
+        snprintf(errBuf, sizeof(errBuf),
+                 "fchmod(fd=%d, mode=%o) failed: %s (errno=%d)",
+                 fd, mode, strerror(errno), errno);
+        napi_throw_error(env, "FCHMOD_ERROR", errBuf);
+        return nullptr;
+    }
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
     return result;
 }
 
@@ -790,8 +834,10 @@ static napi_value Init(napi_env env, napi_value exports) {
             napi_default, nullptr},
         {"waitProcess",  nullptr, WaitProcess,  nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"chmod",        nullptr, Chmod,        nullptr, nullptr, nullptr,
-            napi_default, nullptr},
+{"chmod",        nullptr, Chmod,        nullptr, nullptr, nullptr,
+napi_default, nullptr},
+{"fchmodFd",     nullptr, FchmodFd,     nullptr, nullptr, nullptr,
+napi_default, nullptr},
         {"diagnose",     nullptr, Diagnose,     nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"resolveFd",    nullptr, ResolveFd,    nullptr, nullptr, nullptr,

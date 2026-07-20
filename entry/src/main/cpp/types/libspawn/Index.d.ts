@@ -35,12 +35,25 @@ export const killProcess: (pid: number, signal?: number) => boolean;
 export const waitProcess: (pid: number) => Promise<number>;
 
 /**
- * Changes file permissions (chmod).
+ * Changes file permissions (chmod) via path.
+ * NOTE: This may NOT work on HarmonyOS sandbox virtual paths.
+ * Use fchmodFd instead for sandbox files.
  * @param path - File path.
  * @param mode - Permission mode (e.g. 0o755 = 493).
  * @returns true if successful.
  */
 export const chmod: (path: string, mode: number) => boolean;
+
+/**
+ * Changes file permissions via file descriptor (fchmod).
+ * Works on HarmonyOS sandbox files because it operates on the fd
+ * directly, bypassing path resolution.
+ * @param fd   - File descriptor from ArkTS fs.openSync().
+ * @param mode - Permission mode (e.g. 0o755 = 493).
+ * @returns true if successful.
+ * @throws Error if fchmod fails.
+ */
+export const fchmodFd: (fd: number, mode: number) => boolean;
 
 /**
  * Diagnoses a binary file — checks ELF magic, interpreter path, etc.

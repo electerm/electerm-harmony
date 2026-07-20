@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess, chmod, diagnose, resolveFd, spawnFromFd, diagnoseFd, checkPaths, Diagnostics, FdDiagnostics, PathInfo } from 'libspawn.so';
+import { spawnProcess, waitProcess, chmod, fchmodFd, diagnose, resolveFd, spawnFromFd, diagnoseFd, checkPaths, Diagnostics, FdDiagnostics, PathInfo } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -360,9 +360,15 @@ struct Index {
       JSON.parse(decoder.decodeToString(manifestBytes)) as Record<string, string[]>;
     const files: string[] = manifest['files'] || [];
 
+    const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB — node binary is ~127MB
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks for streaming copy
+
     hilog.info(DOMAIN, TAG, `Manifest contains ${files.length} files to extract`);
 
     let count = 0;
+    let failedCount = 0;
+    const failedFiles: string[] = [];
+
     for (const filePath of files) {
       const destPath = `${sandboxDir}/${filePath}`;
       const lastSlash = destPath.lastIndexOf('/');
@@ -372,20 +378,85 @@ struct Index {
           fs.mkdirSync(parentDir, true);
         }
       }
-      const content = await resourceMgr.getRawFileContent(filePath);
-      const file = fs.openSync(destPath,
-        fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, content.buffer, {
-        offset: content.byteOffset,
-        length: content.byteLength,
-      });
-      fs.closeSync(file);
+
+      try {
+        // Use getRawFileDescriptor to get file size before deciding extraction method.
+        // For large files (e.g. node binary ~127MB), use chunked streaming copy
+        // to avoid OOM from loading entire file into memory via getRawFileContent.
+        const rawFd = await resourceMgr.getRawFileDescriptor(filePath);
+        const isLargeFile = rawFd.length > LARGE_FILE_THRESHOLD;
+
+        const destFile = fs.openSync(destPath,
+          fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+
+        if (isLargeFile) {
+          hilog.info(DOMAIN, TAG, `Large file: ${filePath} (${rawFd.length} bytes), using chunked copy`);
+          this.statusMessage = `Extracting ${filePath}...`;
+
+          let remaining = rawFd.length;
+          let fileOffset = rawFd.offset;
+          const buffer = new ArrayBuffer(CHUNK_SIZE);
+
+          while (remaining > 0) {
+            const toRead = Math.min(CHUNK_SIZE, remaining);
+            const bytesRead = fs.readSync(rawFd.fd, buffer, {
+              offset: fileOffset,
+              length: toRead,
+            });
+            if (bytesRead <= 0) break;
+            fs.writeSync(destFile.fd, buffer, { length: bytesRead });
+            fileOffset += bytesRead;
+            remaining -= bytesRead;
+          }
+        } else {
+          // Small file: use getRawFileContent (loads entire file to memory)
+          const content = await resourceMgr.getRawFileContent(filePath);
+          fs.writeSync(destFile.fd, content.buffer, {
+            offset: content.byteOffset,
+            length: content.byteLength,
+          });
+        }
+
+        // Set executable permissions (0o755) on bin/ files
+        // This is critical: posix_spawn requires the binary to be executable.
+        // fchmodFd uses fchmod(fd, mode) which works on sandbox files because
+        // it operates on the fd directly, bypassing path resolution.
+        if (filePath.startsWith('electerm/bin/')) {
+          try {
+            fchmodFd(destFile.fd, 0o755);
+            hilog.info(DOMAIN, TAG, `Set 0755 on ${filePath}`);
+          } catch (chmodErr) {
+            hilog.warn(DOMAIN, TAG, `fchmodFd failed for ${filePath}: ${this.getErrorMessage(chmodErr as object)}`);
+          }
+        }
+
+        fs.closeSync(destFile);
+
+        // Close rawfile descriptor to avoid fd leak
+        try {
+          await resourceMgr.closeRawFileDescriptor(filePath);
+        } catch {
+          // ignore close errors
+        }
+      } catch (extractErr) {
+        hilog.error(DOMAIN, TAG, `Failed to extract ${filePath}: ${this.getErrorMessage(extractErr as object)}`);
+        failedCount++;
+        failedFiles.push(filePath);
+      }
+
       count++;
       if (count % 200 === 0) {
         this.statusMessage = `Extracting... (${count}/${files.length})`;
         hilog.info(DOMAIN, TAG, `Extracted ${count}/${files.length} files`);
       }
     }
+
+    if (failedCount > 0) {
+      const detail = failedFiles.slice(0, 10).join(', ');
+      const more = failedCount > 10 ? `... and ${failedCount - 10} more` : '';
+      throw new Error(`Failed to extract ${failedCount} files: ${detail}${more}`);
+    }
+
     hilog.info(DOMAIN, TAG, `Extraction complete: ${count} files`);
   }
 
