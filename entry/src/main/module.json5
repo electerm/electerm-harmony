@@ -90,12 +90,6 @@
         }
       },
       {
-        "name": "ohos.permission.ACCESS_BIOMETRIC"
-      },
-      {
-        "name": "ohos.permission.SYSTEM_FLOAT_WINDOW"
-      },
-      {
         "name": "ohos.permission.ACCESS_BLUETOOTH",
         "reason": "$string:access_bluetooth",
         "usedScene": {
@@ -104,24 +98,10 @@
         }
       },
       {
-        "name": "ohos.permission.FILE_ACCESS_PERSIST"
-      },
-      {
-        "name": "ohos.permission.PREPARE_APP_TERMINATE"
-      },
-      {
         "name": "ohos.permission.GYROSCOPE"
       },
       {
         "name": "ohos.permission.ACCELEROMETER"
-      },
-      {
-        "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
-        "reason": "$string:screenshot",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
       }
     ],
     "definePermissions": [
