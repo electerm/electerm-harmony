@@ -116,21 +116,12 @@
         "name": "ohos.permission.ACCELEROMETER"
       },
       {
-        "name": "ohos.permission.GET_FILE_ICON"
-      },
-      {
-        "name": "ohos.permission.PRIVACY_WINDOW"
-      },
-      {
         "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
         "reason": "$string:screenshot",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"
         }
-      },
-      {
-        "name": "ohos.permission.LOCK_WINDOW_CURSOR"
       }
     ],
     "definePermissions": [
