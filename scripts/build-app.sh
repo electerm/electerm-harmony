@@ -154,13 +154,13 @@ if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
 // Original file uses dataShare (@kit.ArkData) and webNativeMessagingExtensionManager
 // (@kit.ArkWeb) which are not available in the target SDK.
 export class NativeMessagingAdapter {
-  static connectNative(name: string, callback: (err: string, data: string) => void): void {
+  connectNative(name: string, callback: (err: string, data: string) => void): void {
     callback('', '')
   }
-  static disconnectNative(connectionId: number, callback: (err: string) => void): void {
+  disconnectNative(connectionId: number, callback: (err: string) => void): void {
     callback('')
   }
-  static getManifestConfig(name: string, callback: (err: string, config: string) => void): void {
+  getManifestConfig(name: string, callback: (err: string, config: string) => void): void {
     callback('', '')
   }
 }
@@ -177,11 +177,13 @@ echo "==> Patching web_engine AppWindowAdapter for API compatibility ..."
 APP_WINDOW_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/AppWindowAdapter.ets"
 if [ -f "${APP_WINDOW_ADAPTER}" ]; then
   # shiftAppWindowTouchEvent may not exist on window in the target SDK.
-  # Use a cast to ESObject to bypass the type check.
+  # window is a namespace in ArkTS, so casting doesn't work.
+  # Replace the entire call expression with void(0) to avoid type errors.
   if grep -q 'shiftAppWindowTouchEvent' "${APP_WINDOW_ADAPTER}" 2>/dev/null; then
     echo "    Patching: neutralizing 'shiftAppWindowTouchEvent' calls"
-    # Replace window.shiftAppWindowTouchEvent with (window as ESObject).shiftAppWindowTouchEvent
-    perl -i -pe 's/window\.shiftAppWindowTouchEvent/(window as ESObject).shiftAppWindowTouchEvent/g' "${APP_WINDOW_ADAPTER}"
+    # Replace window.shiftAppWindowTouchEvent(...) with void(0)
+    # Handle both single-line and multi-line calls
+    perl -i -0777 -pe 's/window\.shiftAppWindowTouchEvent\s*\([^)]*\)/void(0)/g' "${APP_WINDOW_ADAPTER}"
     echo "    AppWindowAdapter patched"
   else
     echo "    AppWindowAdapter: no patches needed"
