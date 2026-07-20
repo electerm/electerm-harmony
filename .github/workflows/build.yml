@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  # Electron 鸿蒙 runtime tarball URL is set via ELECTRON_RUNTIME_URL secret
+  # Electron harmony OS runtime tarball URL is set via ELECTRON_RUNTIME_URL secret
   # to avoid exposing the private address in the workflow file.
 
 jobs:
