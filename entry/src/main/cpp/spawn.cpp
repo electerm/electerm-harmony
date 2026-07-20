@@ -666,13 +666,34 @@ static napi_value SpawnFromFd(napi_env env, napi_callback_info info) {
 
 /* ------------------------------------------------------------------ */
 /*  spawnFromMemfd(srcFd, args, env?) — copy binary to memfd,          */
-/*  then spawn from /proc/self/fd/<memfd>                              */
+/*  then spawn from /proc/self/fd/<memfd> or execveat                  */
 /*                                                                    */
 /*  HarmonyOS mounts app sandbox dirs with noexec — posix_spawn       */
-/*  returns EPERM. memfd_create allocates in tmpfs (RAM), which is    */
-/*  NOT subject to noexec. By copying the binary into a memfd and     */
-/*  executing via /proc/self/fd/<memfd>, we bypass the restriction.  */
+/*  returns EPERM/EACCES. memfd_create allocates in tmpfs (RAM).      */
+/*  We explicitly request MFD_EXEC (Linux 6.3+) and try both          */
+/*  posix_spawn and fork()+execveat(AT_EMPTY_PATH) to bypass          */
+/*  the noexec restriction.                                           */
 /* ------------------------------------------------------------------ */
+
+/* MFD_EXEC flag — added in Linux 6.3 to explicitly allow exec */
+#ifndef MFD_EXEC
+#define MFD_EXEC 0x0010U
+#endif
+
+/* execveat syscall number on aarch64 */
+#ifndef __NR_execveat
+#define __NR_execveat 281
+#endif
+
+/* AT_EMPTY_PATH for execveat */
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+
+/* __NR_execve on aarch64 */
+#ifndef __NR_execve
+#define __NR_execve 221
+#endif
 
 static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     size_t argc = 3;
@@ -703,15 +724,33 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     }
     size_t fileSize = srcStat.st_size;
 
-    /* --- Create memfd --- */
-    /* MFD_CLOEXEC: close-on-exec (child gets its own copy via posix_spawn) */
-    /* Try with MFD_EXEC flag first (Linux 6.3+), fall back without it */
-    int memFd = syscall(__NR_memfd_create, "node_bin", MFD_CLOEXEC);
+    /* --- Read /proc/sys/vm/memfd_noexec for diagnostics --- */
+    int memfdNoexecVal = -1;
+    {
+        int nfd = open("/proc/sys/vm/memfd_noexec", O_RDONLY);
+        if (nfd >= 0) {
+            char nbuf[16];
+            ssize_t n = read(nfd, nbuf, sizeof(nbuf) - 1);
+            if (n > 0) {
+                nbuf[n] = '\0';
+                memfdNoexecVal = atoi(nbuf);
+            }
+            close(nfd);
+        }
+    }
+
+    /* --- Create memfd with MFD_EXEC flag --- */
+    /* MFD_EXEC explicitly allows execution (needed when vm.memfd_noexec=1) */
+    int memFd = syscall(__NR_memfd_create, "node_bin", MFD_CLOEXEC | MFD_EXEC);
+    if (memFd < 0 && (errno == EINVAL || errno == ENOSYS)) {
+        /* MFD_EXEC not supported (pre-6.3 kernel), fall back to MFD_CLOEXEC */
+        memFd = syscall(__NR_memfd_create, "node_bin", MFD_CLOEXEC);
+    }
     if (memFd < 0) {
-        /* memfd_create syscall not available? Try /dev/shm fallback */
         char errBuf[256];
         snprintf(errBuf, sizeof(errBuf),
-                 "memfd_create failed: %s (errno=%d)", strerror(errno), errno);
+                 "memfd_create failed: %s (errno=%d, memfd_noexec=%d)",
+                 strerror(errno), errno, memfdNoexecVal);
         napi_throw_error(env, "MEMFD_ERROR", errBuf);
         return nullptr;
     }
@@ -748,8 +787,12 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
         remaining -= bytesRead;
     }
 
-    /* Make memfd executable (it should be by default in tmpfs, but be safe) */
+    /* Make memfd executable */
     fchmod(memFd, 0700);
+
+    /* Verify memfd permissions */
+    struct stat memStat;
+    fstat(memFd, &memStat);
 
     /* --- Read arguments array --- */
     bool isArray = false;
@@ -763,7 +806,7 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     uint32_t argCount = 0;
     napi_get_array_length(env, args[1], &argCount);
 
-    /* Construct /proc/self/fd/<memfd> path */
+    /* Construct /proc/self/fd/<memfd> path (for posix_spawn fallback) */
     char procFdPath[64];
     snprintf(procFdPath, sizeof(procFdPath), "/proc/self/fd/%d", memFd);
 
@@ -830,19 +873,89 @@ static napi_value SpawnFromMemfd(napi_env env, napi_callback_info info) {
     /* --- Build envp --- */
     std::vector<char *> envp = buildEnvp(extraEnv, envStorage);
 
-    /* --- Spawn using /proc/self/fd/<memfd> as the path --- */
-    pid_t pid = 0;
-    int ret = posix_spawn(&pid, procFdPath,
-                           nullptr, nullptr, argv.data(), envp.data());
+    /* --- Execution: fork()+execveat() with pipe error reporting --- */
+    /*
+     * execveat(fd, "", argv, envp, AT_EMPTY_PATH) directly execs from
+     * the fd without path resolution. This may bypass noexec checks
+     * that posix_spawn/execve applies to /proc/self/fd/<fd> symlinks.
+     *
+     * We use a pipe to communicate exec failure errno from child to
+     * parent: if exec succeeds, the pipe write end (CLOEXEC) is closed
+     * automatically and parent reads EOF. If exec fails, child writes
+     * errno values to the pipe before exiting.
+     */
+    int errPipe[2];
+    if (pipe(errPipe) != 0) {
+        char errBuf[256];
+        snprintf(errBuf, sizeof(errBuf),
+                 "pipe() failed: %s", strerror(errno));
+        close(memFd);
+        napi_throw_error(env, "SPAWN_ERROR", errBuf);
+        return nullptr;
+    }
+    /* Write end: close-on-exec so it auto-closes on successful exec */
+    fcntl(errPipe[1], F_SETFD, FD_CLOEXEC);
 
-    /* Close memfd in parent — child has its own copy */
-    close(memFd);
+    pid_t pid = fork();
 
-    if (ret != 0) {
+    if (pid == 0) {
+        /* === CHILD PROCESS === */
+        /* Only call async-signal-safe functions here */
+        close(errPipe[0]);  /* close read end */
+
+        /* Try execveat with AT_EMPTY_PATH — directly exec from memfd */
+        syscall(__NR_execveat, memFd, "",
+                argv.data(), envp.data(), AT_EMPTY_PATH);
+
+        /* execveat failed — write errno, try execve fallback */
+        int execErrno = errno;
+        write(errPipe[1], &execErrno, sizeof(execErrno));
+
+        syscall(__NR_execve, procFdPath, argv.data(), envp.data());
+
+        /* execve also failed — write errno and exit */
+        execErrno = errno;
+        write(errPipe[1], &execErrno, sizeof(execErrno));
+
+        _exit(127);
+    }
+
+    /* === PARENT PROCESS === */
+    close(errPipe[1]);  /* close write end */
+    close(memFd);       /* child has its own copy */
+
+    if (pid < 0) {
+        /* fork() failed */
+        close(errPipe[0]);
         char errBuf[512];
         snprintf(errBuf, sizeof(errBuf),
-                 "posix_spawn(memfd) failed: %s (errno=%d, fileSize=%zu)",
-                 strerror(ret), ret, fileSize);
+                 "fork() failed: %s (errno=%d, memfd_noexec=%d, "
+                 "memStat: mode=%o size=%lld)",
+                 strerror(errno), errno, memfdNoexecVal,
+                 memStat.st_mode, (long long)memStat.st_size);
+        napi_throw_error(env, "SPAWN_ERROR", errBuf);
+        return nullptr;
+    }
+
+    /* Read exec error from child */
+    int execErrno1 = 0, execErrno2 = 0;
+    ssize_t n1 = read(errPipe[0], &execErrno1, sizeof(execErrno1));
+    ssize_t n2 = (n1 > 0) ? read(errPipe[0], &execErrno2, sizeof(execErrno2)) : 0;
+    close(errPipe[0]);
+
+    if (n1 == 0) {
+        /* EOF = exec succeeded (pipe was closed by CLOEXEC) */
+    } else if (n2 == 0) {
+        /* First execveat failed, but second execve succeeded */
+    } else {
+        /* Both exec attempts failed */
+        char errBuf[512];
+        snprintf(errBuf, sizeof(errBuf),
+                 "exec failed: execveat errno=%d (%s), execve errno=%d (%s) "
+                 "[memfd_noexec=%d, memStat mode=%o, MFD_EXEC tried]",
+                 execErrno1, strerror(execErrno1),
+                 execErrno2, strerror(execErrno2),
+                 memfdNoexecVal, memStat.st_mode);
         napi_throw_error(env, "SPAWN_ERROR", errBuf);
         return nullptr;
     }
