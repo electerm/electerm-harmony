@@ -212,6 +212,18 @@ jobs:
           echo "--- Find sdk-pkg.json / sdk.json ---"
           find "${OHOS_SDK_HOME}" -maxdepth 4 \( -name "sdk-pkg.json" -o -name "sdk.json" -o -name "oh-uni-package.json" \) 2>/dev/null | head -20
           echo ""
+          echo "--- sdk-pkg.json content ---"
+          cat "${OHOS_SDK_HOME}/default/sdk-pkg.json" 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "--- ets/oh-uni-package.json content ---"
+          cat "${OHOS_SDK_HOME}/default/openharmony/ets/oh-uni-package.json" 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "--- ets directory listing ---"
+          ls -la "${OHOS_SDK_HOME}/default/openharmony/ets/" 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "--- native directory listing ---"
+          ls -la "${OHOS_SDK_HOME}/default/openharmony/native/" 2>/dev/null || echo "(not found)"
+          echo ""
           echo "--- Create local.properties ---"
           {
             echo "sdk.dir=${OHOS_SDK_HOME}/default/openharmony"
