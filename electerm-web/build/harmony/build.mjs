@@ -8,9 +8,8 @@
  *     ├── loading.html            local "loading" page (waits for the Node backend)
  *     ├── index.js                node entry script (sets env, imports app.bundle.mjs)
  *     ├── app.bundle.mjs          the electerm Node.js backend (esbuild bundle)
- *     ├── package.json            { name, version, main, type:module }
- *     ├── .env                    runtime env (optional)
- *     ├── views/
+*     ├── package.json            { name, version, main, type:module }
+*     ├── views/
  *     │   └── index.pug           pug template for the Express index route
  *     └── dist/
  *         └── assets/             vite-built frontend (js, css, images, chunks)
@@ -246,24 +245,12 @@ async function bundleBackend () {
 }
 
 // --------------------------------------------------------------------------
-// 5. Runtime .env
+// 5. Runtime .env — SKIPPED
 // --------------------------------------------------------------------------
-function copyEnv () {
-  const src = path.resolve(ROOT, '.env')
-  if (fs.existsSync(src)) {
-    fs.copyFileSync(src, path.resolve(OUTPUT_DIR, '.env'))
-    console.log('[harmony] copied runtime .env ->', path.resolve(OUTPUT_DIR, '.env'))
-  } else {
-    // Write a minimal .env if none exists
-    const envContent = `HOST=127.0.0.1
-PORT=5577
-NODE_ENV=production
-DISABLE_LOCAL_TERMINAL=1
-`
-    fs.writeFileSync(path.resolve(OUTPUT_DIR, '.env'), envContent)
-    console.log('[harmony] wrote default .env')
-  }
-}
+// All env vars are set directly in index.js via process.env.* assignments.
+// .env is not needed, and HarmonyOS resourceManager cannot handle dotfile
+// names (files starting with ".") — getRawFileContent returns ENOENT.
+// dotenv.config() in app.bundle.mjs will silently skip if .env is absent.
 
 // --------------------------------------------------------------------------
 // 6. Node entry script (index.js)
@@ -375,7 +362,7 @@ async function main () {
 
   await bundleBackend()
   writeNodeEntry()
-  copyEnv()
+  // copyEnv() — skipped, env vars are set in index.js
 
   // Summary
   const size = getDirSize(OUTPUT_DIR)

@@ -87,8 +87,12 @@ rm -rf "${RAWFILE_ELECTERM_DIR}"
 mkdir -p "${RAWFILE_ELECTERM_DIR}"
 
 # Copy the entire electerm/ output (loading.html, index.js, app.bundle.mjs,
-# package.json, .env, views/, dist/) into rawfile/electerm/
+# package.json, views/, dist/) into rawfile/electerm/
 cp -r "${HARMONY_OUTPUT}/." "${RAWFILE_ELECTERM_DIR}/"
+
+# Remove any .env file — HarmonyOS resourceManager cannot handle dotfiles,
+# and all env vars are set directly in index.js via process.env.*
+rm -f "${RAWFILE_ELECTERM_DIR}/.env"
 
 echo "    ✓ Bundled size: $(du -sh "${RAWFILE_ELECTERM_DIR}" | cut -f1)"
 echo "==> electerm-web preparation complete."
