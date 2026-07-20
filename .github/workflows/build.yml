@@ -91,6 +91,7 @@ jobs:
         with:
           path: .cache/commandline-tools
           key: ${{ steps.cmdkey.outputs.key }}
+          save-always: true
 
       - name: Download & extract HarmonyOS Command Line Tools
         if: steps.cmdline_cache.outputs.cache-hit != 'true'
@@ -148,6 +149,7 @@ jobs:
           key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
           restore-keys: |
             ohpm-
+          save-always: true
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
