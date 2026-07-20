@@ -5,7 +5,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
-import { spawnProcess, waitProcess, chmod, fchmodFd, diagnose, resolveFd, spawnFromFd, diagnoseFd, checkPaths, Diagnostics, FdDiagnostics, PathInfo } from 'libspawn.so';
+import { spawnProcess, waitProcess, chmod, fchmodFd, diagnose, resolveFd, spawnFromFd, spawnFromMemfd, diagnoseFd, checkPaths, Diagnostics, FdDiagnostics, PathInfo } from 'libspawn.so';
 import { NodeProcessState } from '../NodeProcessState';
 
 const DOMAIN = 0x0001;
@@ -214,13 +214,14 @@ struct Index {
 
       let pid: number;
       try {
-        // Try fd-based spawn first (most likely to work)
-        hilog.info(DOMAIN, TAG, `Spawning via /proc/self/fd/${nodeFile.fd}...`);
-        pid = spawnFromFd(nodeFile.fd, [entryScript], envVars);
-        hilog.info(DOMAIN, TAG, `Node.js backend spawned (via fd), PID: ${pid}`);
+        // memfd-based spawn: copies binary to anonymous RAM file (tmpfs),
+        // bypassing HarmonyOS W^X / noexec restriction on sandbox dirs.
+        hilog.info(DOMAIN, TAG, `Spawning via memfd (srcFd=${nodeFile.fd})...`);
+        pid = spawnFromMemfd(nodeFile.fd, [entryScript], envVars);
+        hilog.info(DOMAIN, TAG, `Node.js backend spawned (via memfd), PID: ${pid}`);
       } catch (e) {
         const msg = this.getErrorMessage(e as object);
-        hilog.error(DOMAIN, TAG, `spawnFromFd failed: ${msg}`);
+        hilog.error(DOMAIN, TAG, `spawnFromMemfd failed: ${msg}`);
 
         const errorParts: string[] = [];
         errorParts.push(`Failed to spawn Node.js: ${msg}`);

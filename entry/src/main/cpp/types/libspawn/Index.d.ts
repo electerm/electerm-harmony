@@ -106,6 +106,25 @@ export const spawnFromFd: (
 ) => number;
 
 /**
+ * Spawns a child process by copying the binary into a memfd (anonymous RAM
+ * file) and executing from /proc/self/fd/<memfd>.
+ *
+ * This bypasses HarmonyOS W^X / noexec restrictions on sandbox directories.
+ * memfd_create allocates in tmpfs which is not subject to noexec.
+ *
+ * @param srcFd - File descriptor of the source binary (from ArkTS fs.openSync()).
+ * @param args  - Array of string arguments.
+ * @param env   - Optional environment variables.
+ * @returns The child process PID (>0).
+ * @throws Error if memfd_create, copy, or posix_spawn fails.
+ */
+export const spawnFromMemfd: (
+  srcFd: number,
+  args: string[],
+  env?: Record<string, string>
+) => number;
+
+/**
  * Diagnoses a binary via its file descriptor (bypasses path resolution).
  * @param fd - File descriptor of the binary.
  */
