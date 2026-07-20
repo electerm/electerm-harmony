@@ -4,16 +4,6 @@ on:
   push:
     branches:
       - dev
-  workflow_dispatch:
-    inputs:
-      build_mode:
-        description: 'Build mode'
-        required: true
-        default: 'release'
-        type: choice
-        options:
-          - release
-          - debug
 
 # Cancel previous runs on the same branch/tag
 concurrency:
