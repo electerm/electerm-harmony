@@ -85,13 +85,12 @@ jobs:
           HASH="$(echo -n "${OHOS_CMDLINE_TOOLS_URL}" | md5sum | cut -d' ' -f1)"
           echo "key=cmdline-tools-${HASH}" >> "$GITHUB_OUTPUT"
 
-      - name: Cache HarmonyOS Command Line Tools
+      - name: Restore HarmonyOS Command Line Tools cache
         id: cmdline_cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .cache/commandline-tools
           key: ${{ steps.cmdkey.outputs.key }}
-          save-always: true
 
       - name: Download & extract HarmonyOS Command Line Tools
         if: steps.cmdline_cache.outputs.cache-hit != 'true'
@@ -119,6 +118,13 @@ jobs:
           rm -f "$ZIP"
           echo "Downloaded and extracted HarmonyOS Command Line Tools"
 
+      - name: Save HarmonyOS Command Line Tools cache
+        if: steps.cmdline_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
       - name: Configure Command Line Tools environment
         run: |
           set -euo pipefail
@@ -139,8 +145,9 @@ jobs:
           ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
 
-      - name: Cache ohpm modules
-        uses: actions/cache@v4
+      - name: Restore ohpm modules cache
+        id: ohpm_cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             oh_modules
@@ -149,7 +156,6 @@ jobs:
           key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
           restore-keys: |
             ohpm-
-          save-always: true
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
@@ -201,6 +207,16 @@ jobs:
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
+      - name: Save ohpm modules cache
+        if: steps.ohpm_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+
       - name: Find APP file
         id: find_app
         run: |
