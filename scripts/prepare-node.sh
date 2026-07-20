@@ -39,22 +39,22 @@ else
   echo "    Using cached tarball: ${DOWNLOAD_DIR}/${TARBALL_NAME}"
 fi
 
-# Clean previous node binary extraction (only bin/,
+# Clean previous node binary extraction (only bin/ and lib/,
 # NOT the entire electerm/ directory — prepare-web.sh puts web files there too)
-rm -rf "${RAWFILE_NODE_DIR}/bin"
+rm -rf "${RAWFILE_NODE_DIR}/bin" "${RAWFILE_NODE_DIR}/lib"
 
-# Extract only bin/ from the tarball.
+# Extract everything from the tarball, then remove lib/node_modules.
 # We skip lib/node_modules (npm, corepack) because:
 #   1. The app uses app.bundle.mjs (esbuild bundle) — all deps are inlined
 #   2. lib/node_modules adds ~12MB to the HAP unnecessarily
 #   3. Some dotfiles in npm's node_modules cause getRawFileDescriptor failures
-echo "    Extracting bin/ to ${RAWFILE_NODE_DIR}/ ..."
-# The tarball has a top-level directory (e.g. node-v24.2.0-openharmony-arm64/),
-# so we use --wildcards to match '*/bin/' and --strip-components=1 to flatten.
+echo "    Extracting to ${RAWFILE_NODE_DIR}/ ..."
 tar -zxf "${DOWNLOAD_DIR}/${TARBALL_NAME}" \
   --strip-components=1 \
-  -C "${RAWFILE_NODE_DIR}" \
-  --wildcards '*/bin/'
+  -C "${RAWFILE_NODE_DIR}"
+
+# Remove lib/ (npm, corepack) — not needed, app.bundle.mjs has all deps inlined
+rm -rf "${RAWFILE_NODE_DIR}/lib"
 
 # Verify the node binary exists
 NODE_BIN="${RAWFILE_NODE_DIR}/bin/node"
