@@ -291,14 +291,13 @@ try { fs.mkdirSync(sshDir, { recursive: true }) } catch (e) {
 process.env.HOME = userDataDir
 
 // --- Check node:sqlite availability -----------------------------------------
-// electerm-web uses the built-in node:sqlite module (Node.js 22+).
-// If the Electron runtime's Node.js is older, the backend will crash.
+// electerm-web tries node:sqlite (Node.js 22+) first, then falls back to
+// a JSON-based shim (sqlite-shim.js). This check is for logging only.
 try {
   require('node:sqlite')
-  logMsg('node:sqlite: available')
+  logMsg('node:sqlite: available (native)')
 } catch (e) {
-  logMsg('WARNING: node:sqlite is NOT available:', e.message)
-  logMsg('The backend will likely fail to start.')
+  logMsg('node:sqlite: NOT available, using JSON shim fallback')
 }
 
 // --- Start the backend ---

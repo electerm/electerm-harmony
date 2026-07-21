@@ -7,7 +7,14 @@ import { cwd } from '../common/runtime-constants.js'
 import { resolve } from 'path'
 import fs from 'fs'
 import uid from '../common/uid.js'
-import { DatabaseSync } from 'node:sqlite'
+
+// Try node:sqlite (Node.js 22+), fall back to JSON-based shim for HarmonyOS
+let DatabaseSync
+try {
+  DatabaseSync = require('node:sqlite').DatabaseSync
+} catch (e) {
+  DatabaseSync = require('./sqlite-shim.js').DatabaseSync
+}
 
 // Define database folder and paths for two database files
 const dbFolder = process.env.DB_PATH || resolve(cwd, 'data')

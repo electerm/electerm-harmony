@@ -32,7 +32,11 @@ export const minWindowHeight = 400
 export const defaultLang = 'en_us'
 export const tempDir = os.tmpdir()
 export const homeOrTmp = os.homedir() || os.tmpdir()
-export const packInfo = getJson(
-  resolve(cwd, 'package.json')
-)
+export const packInfo = (() => {
+  try {
+    return getJson(resolve(cwd, 'package.json'))
+  } catch (e) {
+    return { name: 'electerm', version: '0.0.0' }
+  }
+})()
 export const isTest = !!NODE_TEST
