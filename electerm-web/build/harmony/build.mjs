@@ -174,8 +174,58 @@ function writeMainJs () {
 const { app, BrowserWindow } = require('electron')
 const path = require('path')
 const http = require('http')
+const fs = require('fs')
+const os = require('os')
 
 const __d = __dirname
+
+// --- File-based error logging (for cloud-test debugging) -------------------
+// On cloud test devices console output is not visible. We write a log file
+// to every writable directory we can find so the user can retrieve it.
+var _logFds = []
+function initLogFds () {
+  var dirs = []
+  try { dirs.push(app.getPath('userData')) } catch {}
+  try { dirs.push(path.join(process.env.HOME || os.homedir(), 'electerm-logs')) } catch {}
+  dirs.push(path.join(os.tmpdir(), 'electerm-logs'))
+  dirs.push('/tmp/electerm-logs')
+  dirs.push('/data/local/tmp/electerm-logs')
+  for (var i = 0; i < dirs.length; i++) {
+    if (!dirs[i]) continue
+    try {
+      fs.mkdirSync(dirs[i], { recursive: true })
+      var fd = fs.openSync(path.join(dirs[i], 'main.log'), 'a')
+      fs.writeSync(fd, '--- Log started ' + new Date().toISOString() + ' ---\n')
+      _logFds.push(fd)
+    } catch {}
+  }
+}
+function logMsg () {
+  var msg = '[' + new Date().toISOString() + '] ' +
+    Array.prototype.slice.call(arguments).map(function (a) {
+      if (typeof a === 'string') return a
+      if (a && a.stack) return a.stack
+      try { return JSON.stringify(a) } catch (e) { return String(a) }
+    }).join(' ') + '\n'
+  console.log(msg)
+  for (var i = 0; i < _logFds.length; i++) {
+    try { fs.writeSync(_logFds[i], msg) } catch {}
+  }
+}
+
+initLogFds()
+logMsg('=== electerm main.js starting ===')
+logMsg('Node.js version:', process.versions.node || 'unknown')
+logMsg('Electron version:', process.versions.electron || 'unknown')
+logMsg('__dirname:', __d)
+
+// Catch all uncaught errors so they appear in the log file
+process.on('uncaughtException', function (err) {
+  logMsg('UNCAUGHT EXCEPTION:', err)
+})
+process.on('unhandledRejection', function (err) {
+  logMsg('UNHANDLED REJECTION:', err)
+})
 
 // --- Runtime configuration for the on-device electerm server ---
 process.env.NODE_ENV = 'production'
@@ -186,40 +236,102 @@ process.env.SERVER_SECRET = 'electerm-harmony-local-dev-secret'
 process.env.DISABLE_LOCAL_TERMINAL = '1'
 process.env.VIEW_FOLDER = path.resolve(__d, 'views')
 
-// --- Stable, app-private user-data directory ---
-const fs = require('fs')
-const userDataDir = path.resolve(__d, '..', '..', '..', 'electerm-data')
-try { fs.mkdirSync(userDataDir, { recursive: true }) } catch {}
+// --- Determine a WRITABLE user-data directory -------------------------------
+// resfile/ (where main.js lives) is read-only on HarmonyOS.
+// We must find a writable directory for the SQLite database and SSH keys.
+function findWritableDir () {
+  var candidates = []
+  // 1. app.getPath('userData') — Electron standard user data path
+  try { var ud = app.getPath('userData'); if (ud) candidates.push(ud) } catch {}
+  // 2. HOME / os.homedir()
+  try { var home = process.env.HOME || os.homedir(); if (home) candidates.push(path.join(home, 'electerm-data')) } catch {}
+  // 3. OS temp directory
+  candidates.push(path.join(os.tmpdir(), 'electerm-data'))
+  // 4. Common HarmonyOS writable paths
+  candidates.push('/data/local/tmp/electerm-data')
+
+  for (var i = 0; i < candidates.length; i++) {
+    var dir = candidates[i]
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      // Verify write permission
+      var testFile = path.join(dir, '.write-test')
+      fs.writeFileSync(testFile, 'ok')
+      fs.unlinkSync(testFile)
+      logMsg('Using data directory:', dir)
+      return dir
+    } catch (e) {
+      logMsg('Directory not writable:', dir, '-', e.message)
+    }
+  }
+  // Last resort — will likely fail but at least we tried
+  logMsg('WARNING: No writable directory found!')
+  return path.resolve(__d, '..', '..', '..', 'electerm-data')
+}
+
+var userDataDir = findWritableDir()
 process.env.DB_PATH = userDataDir
 
 // Create .ssh directory for SSH key storage
-const sshDir = path.resolve(userDataDir, '.ssh')
-try { fs.mkdirSync(sshDir, { recursive: true }) } catch {}
+var sshDir = path.resolve(userDataDir, '.ssh')
+try { fs.mkdirSync(sshDir, { recursive: true }) } catch (e) {
+  logMsg('Failed to create .ssh dir:', e.message)
+}
 process.env.HOME = userDataDir
 
-// --- Start the backend ---
-let backendReady = false
-let mainWindow = null
+// --- Check node:sqlite availability -----------------------------------------
+// electerm-web uses the built-in node:sqlite module (Node.js 22+).
+// If the Electron runtime's Node.js is older, the backend will crash.
+try {
+  require('node:sqlite')
+  logMsg('node:sqlite: available')
+} catch (e) {
+  logMsg('WARNING: node:sqlite is NOT available:', e.message)
+  logMsg('The backend will likely fail to start.')
+}
 
-// The backend bundle starts the Express server on import.
+// --- Start the backend ---
+var backendReady = false
+var mainWindow = null
+var pollCount = 0
+var MAX_POLLS = 30 // 30 attempts x 1s = 30s timeout
+
+logMsg('Requiring backend bundle...')
 try {
   require('./app.bundle.cjs')
+  logMsg('Backend bundle loaded successfully')
 } catch (err) {
-  console.error('Failed to start backend:', err)
+  logMsg('FAILED to start backend:', err)
 }
 
 // --- Poll the backend until it's ready, then create the window ---
 function pollBackend () {
-  const req = http.get('http://127.0.0.1:5577', () => {
+  pollCount++
+  if (pollCount > MAX_POLLS) {
+    logMsg('Backend poll timeout after', MAX_POLLS, 'attempts. Backend did not start.')
+    createErrorWindow(
+      'Backend failed to start within 30 seconds.\n\n' +
+      'Node.js: ' + (process.versions.node || 'unknown') + '\n' +
+      'Electron: ' + (process.versions.electron || 'unknown') + '\n\n' +
+      'Check ~/electerm-logs/main.log for details.'
+    )
+    return
+  }
+
+  var req = http.get('http://127.0.0.1:5577', function (res) {
+    logMsg('Backend responded:', res.statusCode)
     backendReady = true
     createWindow()
   })
-  req.on('error', () => {
+  req.on('error', function (err) {
     if (!backendReady) {
+      if (pollCount <= 3 || pollCount % 10 === 0) {
+        logMsg('Backend not ready (attempt ' + pollCount + '):', err.message)
+      }
       setTimeout(pollBackend, 1000)
     }
   })
-  req.setTimeout(2000, () => {
+  req.setTimeout(2000, function () {
     req.destroy()
     if (!backendReady) {
       setTimeout(pollBackend, 1000)
@@ -229,6 +341,8 @@ function pollBackend () {
 
 function createWindow () {
   if (mainWindow) return
+
+  logMsg('Creating BrowserWindow...')
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -240,24 +354,52 @@ function createWindow () {
   })
 
   mainWindow.loadURL('http://127.0.0.1:5577')
+  logMsg('Loading URL: http://127.0.0.1:5577')
 
-  mainWindow.on('closed', () => {
+  mainWindow.webContents.on('did-fail-load', function (event, errorCode, errorDescription) {
+    logMsg('Window did-fail-load:', errorCode, errorDescription)
+  })
+  mainWindow.webContents.on('did-finish-load', function () {
+    logMsg('Window did-finish-load')
+  })
+
+  mainWindow.on('closed', function () {
     mainWindow = null
   })
 }
 
-app.whenReady().then(() => {
-  console.log('Electron app ready, polling backend...')
+function createErrorWindow (message) {
+  if (mainWindow) return
+
+  mainWindow = new BrowserWindow({
+    width: 800,
+    height: 600,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  })
+
+  var html = '<html><body style="font-family:monospace;padding:40px;background:#1e1e1e;color:#ff6b6b;">' +
+    '<h2>Electerm Failed to Start</h2>' +
+    '<pre style="white-space:pre-wrap;">' + message + '</pre>' +
+    '</body></html>'
+
+  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+}
+
+app.whenReady().then(function () {
+  logMsg('Electron app ready, polling backend...')
   pollBackend()
 
-  app.on('activate', () => {
+  app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
     }
   })
 })
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', function () {
   // On HarmonyOS, quit when all windows are closed.
   app.quit()
 })
