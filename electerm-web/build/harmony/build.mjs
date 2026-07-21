@@ -195,7 +195,7 @@ function initLogFds () {
     try {
       fs.mkdirSync(dirs[i], { recursive: true })
       var fd = fs.openSync(path.join(dirs[i], 'main.log'), 'a')
-      fs.writeSync(fd, '--- Log started ' + new Date().toISOString() + ' ---\n')
+      fs.writeSync(fd, '--- Log started ' + new Date().toISOString() + ' ---\\n')
       _logFds.push(fd)
     } catch {}
   }
@@ -206,7 +206,7 @@ function logMsg () {
       if (typeof a === 'string') return a
       if (a && a.stack) return a.stack
       try { return JSON.stringify(a) } catch (e) { return String(a) }
-    }).join(' ') + '\n'
+    }).join(' ') + '\\n'
   console.log(msg)
   for (var i = 0; i < _logFds.length; i++) {
     try { fs.writeSync(_logFds[i], msg) } catch {}
@@ -310,9 +310,9 @@ function pollBackend () {
   if (pollCount > MAX_POLLS) {
     logMsg('Backend poll timeout after', MAX_POLLS, 'attempts. Backend did not start.')
     createErrorWindow(
-      'Backend failed to start within 30 seconds.\n\n' +
-      'Node.js: ' + (process.versions.node || 'unknown') + '\n' +
-      'Electron: ' + (process.versions.electron || 'unknown') + '\n\n' +
+      'Backend failed to start within 30 seconds.\\n\\n' +
+      'Node.js: ' + (process.versions.node || 'unknown') + '\\n' +
+      'Electron: ' + (process.versions.electron || 'unknown') + '\\n\\n' +
       'Check ~/electerm-logs/main.log for details.'
     )
     return
