@@ -96,6 +96,17 @@ function copyFrontendAssets () {
     path.resolve(ROOT, 'src/app/views/index.pug'),
     path.resolve(OUTPUT_DIR, 'views/index.pug')
   )
+
+  // Copy tray icon — HarmonyOS requires a Tray before BrowserWindow can display
+  const trayIconSrc = path.resolve(
+    ROOT, 'node_modules/@electerm/electerm-resource/res/imgs/electerm-round-128x128.png'
+  )
+  if (fs.existsSync(trayIconSrc)) {
+    fs.copyFileSync(trayIconSrc, path.resolve(OUTPUT_DIR, 'tray-icon.png'))
+    console.log('[harmony] copied tray-icon.png')
+  } else {
+    console.warn('[harmony] tray icon not found at', trayIconSrc)
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -171,7 +182,7 @@ function writeMainJs () {
  * It starts the electerm-web Express backend, then opens a BrowserWindow
  * that loads the frontend from the backend's HTTP server.
  */
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, Tray, nativeImage } = require('electron')
 const path = require('path')
 const http = require('http')
 const fs = require('fs')
@@ -339,8 +350,25 @@ function pollBackend () {
   })
 }
 
+var tray = null
+
 function createWindow () {
   if (mainWindow) return
+
+  logMsg('Creating Tray...')
+  // HarmonyOS requires a Tray before any BrowserWindow can be displayed.
+  // Without a Tray, windows may not show or may show as blank.
+  try {
+    var iconPath = path.resolve(__d, 'tray-icon.png')
+    if (fs.existsSync(iconPath)) {
+      tray = new Tray(nativeImage.createFromPath(iconPath))
+    } else {
+      tray = new Tray(nativeImage.createEmpty())
+    }
+    logMsg('Tray created')
+  } catch (e) {
+    logMsg('Tray creation failed:', e.message)
+  }
 
   logMsg('Creating BrowserWindow...')
 
@@ -371,6 +399,11 @@ function createWindow () {
 function createErrorWindow (message) {
   if (mainWindow) return
 
+  // Ensure tray exists before creating error window
+  if (!tray) {
+    try { tray = new Tray(nativeImage.createEmpty()) } catch (e) {}
+  }
+
   mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
@@ -391,12 +424,6 @@ function createErrorWindow (message) {
 app.whenReady().then(function () {
   logMsg('Electron app ready, polling backend...')
   pollBackend()
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
-  })
 })
 
 app.on('window-all-closed', function () {
