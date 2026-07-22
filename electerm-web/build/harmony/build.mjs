@@ -151,7 +151,11 @@ async function bundleBackend () {
     // In CJS, __dirname and __filename are already defined by Node.js.
     // We only need to provide `require` for modules that check for it.
     banner: {
-      js: '// electerm-web backend bundle (CJS) for Electron 鸿蒙\n'
+      js: '// electerm-web backend bundle (CJS) for Electron 鸿蒙\n' +
+          'var __import_meta_url = (typeof require !== "undefined" && require("url").pathToFileURL(__filename).href) || "";\n'
+    },
+    define: {
+      'import.meta.url': '__import_meta_url'
     },
     plugins: [nativeNodePlugin],
     // keep node built-ins external; everything else is bundled
