@@ -1,5 +1,5 @@
 {
-  "name": "electerm-web",
+  "name": "electerm-harmony",
   "version": "4.15.159",
   "description": "electerm — a free and open-source ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS, built on the electerm-web codebase.",
   "main": "src/app/app.js",

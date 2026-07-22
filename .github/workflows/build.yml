@@ -132,6 +132,12 @@ jobs:
           if [ ! -d "$COMMANDLINE_TOOLS" ]; then
             COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
           fi
+          # Fix: Project root package.json has "type": "module", which makes
+          # Node.js treat hvigorw.js as an ES module (breaks with "require is
+          # not defined"). Adding a CommonJS package.json to the tools dirs
+          # prevents Node from traversing up to the project root.
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/hvigor/package.json" 2>/dev/null || true
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/package.json"
           echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
           echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
           echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"

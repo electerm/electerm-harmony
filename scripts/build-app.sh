@@ -257,6 +257,23 @@ fi
 
 echo "    Command Line Tools: ${COMMANDLINE_TOOLS}"
 
+# Fix: The project root package.json has "type": "module", which causes
+# Node.js to treat hvigorw.js (and other .js files in the Command Line Tools)
+# as ES modules. Since hvigorw.js uses CommonJS require(), this breaks with
+# "ReferenceError: require is not defined in ES module scope".
+# Adding a package.json with "type": "commonjs" in the Command Line Tools
+# directory prevents Node.js from traversing up to the project root.
+HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor"
+if [ -d "${HVIGOR_DIR}" ] && [ ! -f "${HVIGOR_DIR}/package.json" ]; then
+  echo '{"type":"commonjs"}' > "${HVIGOR_DIR}/package.json"
+  echo "    ✓ Added CommonJS package.json to hvigor/ dir (fixes ESM conflict)"
+fi
+# Also add to the top-level Command Line Tools dir to cover ohpm and other tools
+if [ ! -f "${COMMANDLINE_TOOLS}/package.json" ]; then
+  echo '{"type":"commonjs"}' > "${COMMANDLINE_TOOLS}/package.json"
+  echo "    ✓ Added CommonJS package.json to Command Line Tools root"
+fi
+
 OHPM="${COMMANDLINE_TOOLS}/bin/ohpm"
 HVIGORW="${COMMANDLINE_TOOLS}/bin/hvigorw"
 
