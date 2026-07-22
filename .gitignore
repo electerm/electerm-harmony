@@ -1,5 +1,8 @@
 # --- HarmonyOS build outputs ---
-/build/
+# Note: /build/ contains committed source (build scripts, vite config).
+# Only ignore HarmonyOS build outputs and electerm-web build artifacts.
+/build/outputs/
+/build/intermediates/
 /oh_modules/
 /entry/build/
 /web_engine/build/
@@ -25,10 +28,9 @@
 /build-profile.json5
 
 # --- electerm-web build output ---
-/electerm-web/build/harmony/resfile/
-/electerm-web/node_modules/
-/electerm-web/.env
-/electerm-web/dist/
+/build/harmony/resfile/
+/.env
+/dist/
 
 # --- Node.js ---
 node_modules/
@@ -46,4 +48,5 @@ Thumbs.db
 /temp/
 # Build download cache
 /build-download/
-electerm-web/build/harmony/rawfile
+build/harmony/rawfile
+src/client/electerm-react/

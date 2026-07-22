@@ -103,7 +103,7 @@ PROFILE_B64=$(base64 -i signing/electermRelease.p7b | tr -d '\n')
   echo "# 9. OHOS_CMDLINE_TOOLS_URL"
   echo "OHOS_CMDLINE_TOOLS_URL=${CMDLINE_TOOLS_URL}"
   echo ""
-  echo "# 10. OHOS_SERVER_SECRET (electerm-web server secret)"
+  echo "# 10. OHOS_SERVER_SECRET (web app server secret)"
   echo "OHOS_SERVER_SECRET=${SERVER_SECRET}"
 } > "${OUT}"
 

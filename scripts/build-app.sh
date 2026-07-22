@@ -51,21 +51,20 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 APP_ARCH="${APP_ARCH:-arm64}"
 
-# --- Read version from electerm-web -----------------------------------------
+# --- Read version from package.json -----------------------------------------
 
-echo "==> Reading version from electerm-web ..."
+echo "==> Reading version from package.json ..."
 
-ELECTERM_WEB_DIR="${PROJECT_ROOT}/electerm-web"
-ELECTERM_WEB_PKG="${ELECTERM_WEB_DIR}/package.json"
+ELECTERM_WEB_PKG="${PROJECT_ROOT}/package.json"
 
 if [ ! -f "${ELECTERM_WEB_PKG}" ]; then
-  echo "    ✗ electerm-web package.json not found at ${ELECTERM_WEB_PKG}"
+  echo "    ✗ package.json not found at ${ELECTERM_WEB_PKG}"
   echo "    Run ./scripts/prepare-web.sh first."
   exit 1
 fi
 
 APP_VERSION=$(python3 -c "import json; print(json.load(open('${ELECTERM_WEB_PKG}'))['version'])")
-echo "    ✓ electerm-web version: ${APP_VERSION}"
+echo "    ✓ version: ${APP_VERSION}"
 
 # Compute versionCode from semver: major * 10000000 + minor * 100000 + patch
 VERSION_CODE=$(python3 -c "
@@ -121,6 +120,97 @@ if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
 fi
 echo "    ✓ Found: web_engine/Index.ets"
 
+# --- Fix permissions for SDK compatibility ------------------------------------
+
+echo "==> Fixing permissions for SDK compatibility ..."
+
+# Permissions unsupported by the target SDK — must be removed from both
+# entry and web_engine module.json5 at build time.
+# NOTE: Restricted ACL permissions (READ_WRITE_DOWNLOAD_DIRECTORY,
+# READ_WRITE_DOCUMENTS_DIRECTORY, READ_WRITE_DESKTOP_DIRECTORY, READ_PASTEBOARD)
+# are NOT removed here — they must be granted in the Profile (.p7b) file
+# via AppGallery Connect. See docs/ENV_SETUP.md §2.6 for details.
+UNSUPPORTED_PERMS="SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE"
+
+# Fix entry module.json5
+ENTRY_MODULE_JSON="${PROJECT_ROOT}/entry/src/main/module.json5"
+if [ -f "${ENTRY_MODULE_JSON}" ]; then
+  for perm in ${UNSUPPORTED_PERMS}; do
+    if grep -q "ohos.permission.${perm}" "${ENTRY_MODULE_JSON}" 2>/dev/null; then
+      echo "    entry: removing unsupported permission ohos.permission.${perm}"
+      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${ENTRY_MODULE_JSON}"
+    fi
+  done
+  echo "    entry permissions cleaned"
+else
+  echo "    (entry module.json5 not found, skipping)"
+fi
+
+# Fix web_engine module.json5
+WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
+if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
+  for perm in ${UNSUPPORTED_PERMS}; do
+    if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
+      echo "    web_engine: removing unsupported permission ohos.permission.${perm}"
+      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${WEB_ENGINE_MODULE_JSON}"
+    fi
+  done
+  echo "    web_engine permissions cleaned"
+else
+  echo "    (web_engine module.json5 not found, skipping)"
+fi
+
+# --- Patch NativeMessagingAdapter.ets for API compatibility ------------------
+
+echo "==> Patching web_engine NativeMessagingAdapter for API compatibility ..."
+
+NATIVE_MSG_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/NativeMessagingAdapter.ets"
+if [ -f "${NATIVE_MSG_ADAPTER}" ]; then
+  # The Electron runtime imports APIs (dataShare from @kit.ArkData,
+  # webNativeMessagingExtensionManager from @kit.ArkWeb) that don't exist
+  # in the target SDK. Replacing the entire file with a minimal stub is
+  # the safest approach — line-by-line patching breaks code structure.
+  echo "    Replacing NativeMessagingAdapter.ets with minimal stub"
+  cat > "${NATIVE_MSG_ADAPTER}" <<'NMASTUB'
+// NativeMessagingAdapter.ets — Stubbed for API compatibility
+// Original file uses dataShare (@kit.ArkData) and webNativeMessagingExtensionManager
+// (@kit.ArkWeb) which are not available in the target SDK.
+export class NativeMessagingAdapter {
+  connectNative(name: Object, commands: Object, callback: Object): void {
+  }
+  disconnectNative(connectionId: number): void {
+  }
+  getManifestConfig(name: string, callback: Object): void {
+  }
+}
+NMASTUB
+  echo "    NativeMessagingAdapter replaced with stub"
+else
+  echo "    (NativeMessagingAdapter.ets not found, skipping)"
+fi
+
+# --- Patch AppWindowAdapter.ets for API compatibility ------------------------
+
+echo "==> Patching web_engine AppWindowAdapter for API compatibility ..."
+
+APP_WINDOW_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/AppWindowAdapter.ets"
+if [ -f "${APP_WINDOW_ADAPTER}" ]; then
+  # shiftAppWindowTouchEvent may not exist on window in the target SDK.
+  # window is a namespace in ArkTS, so casting doesn't work.
+  # Replace the entire call expression with void(0) to avoid type errors.
+  if grep -q 'shiftAppWindowTouchEvent' "${APP_WINDOW_ADAPTER}" 2>/dev/null; then
+    echo "    Patching: neutralizing 'shiftAppWindowTouchEvent' calls"
+    # Replace window.shiftAppWindowTouchEvent(...) with Promise.resolve()
+    # so that any .then() chained calls still work
+    perl -i -0777 -pe 's/window\.shiftAppWindowTouchEvent\s*\([^)]*\)/Promise.resolve()/g' "${APP_WINDOW_ADAPTER}"
+    echo "    AppWindowAdapter patched"
+  else
+    echo "    AppWindowAdapter: no patches needed"
+  fi
+else
+  echo "    (AppWindowAdapter.ets not found, skipping)"
+fi
+
 # --- Check signing materials ------------------------------------------------
 
 echo "==> Checking signing materials ..."
@@ -167,6 +257,23 @@ fi
 
 echo "    Command Line Tools: ${COMMANDLINE_TOOLS}"
 
+# Fix: The project root package.json has "type": "module", which causes
+# Node.js to treat hvigorw.js (and other .js files in the Command Line Tools)
+# as ES modules. Since hvigorw.js uses CommonJS require(), this breaks with
+# "ReferenceError: require is not defined in ES module scope".
+# Adding a package.json with "type": "commonjs" in the Command Line Tools
+# directory prevents Node.js from traversing up to the project root.
+HVIGOR_DIR="${COMMANDLINE_TOOLS}/hvigor"
+if [ -d "${HVIGOR_DIR}" ] && [ ! -f "${HVIGOR_DIR}/package.json" ]; then
+  echo '{"type":"commonjs"}' > "${HVIGOR_DIR}/package.json"
+  echo "    ✓ Added CommonJS package.json to hvigor/ dir (fixes ESM conflict)"
+fi
+# Also add to the top-level Command Line Tools dir to cover ohpm and other tools
+if [ ! -f "${COMMANDLINE_TOOLS}/package.json" ]; then
+  echo '{"type":"commonjs"}' > "${COMMANDLINE_TOOLS}/package.json"
+  echo "    ✓ Added CommonJS package.json to Command Line Tools root"
+fi
+
 OHPM="${COMMANDLINE_TOOLS}/bin/ohpm"
 HVIGORW="${COMMANDLINE_TOOLS}/bin/hvigorw"
 
@@ -198,6 +305,31 @@ echo "==> Configuring build-profile.json5 ..."
 
 BUILD_PROFILE="${PROJECT_ROOT}/build-profile.json5"
 
+# --- Detect SDK version from sdk-pkg.json ---
+SDK_PKG_JSON="${OHOS_SDK_HOME}/default/sdk-pkg.json"
+if [ -f "${SDK_PKG_JSON}" ]; then
+  SDK_API_VERSION=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['apiVersion'])" 2>/dev/null || echo "")
+  SDK_DISPLAY_NAME=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['displayName'])" 2>/dev/null || echo "")
+  SDK_VERSION=$(echo "${SDK_DISPLAY_NAME}" | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+  if [ -n "${SDK_API_VERSION}" ] && [ -n "${SDK_VERSION}" ]; then
+    COMPILE_SDK_VERSION="${SDK_VERSION}(${SDK_API_VERSION})"
+    echo "    Detected SDK: ${SDK_DISPLAY_NAME} (API ${SDK_API_VERSION})"
+  else
+    COMPILE_SDK_VERSION="5.0.1(13)"
+    echo "    Warning: Could not parse SDK version, using default 5.0.1(13)"
+  fi
+else
+  COMPILE_SDK_VERSION="5.0.1(13)"
+  echo "    Warning: sdk-pkg.json not found, using default 5.0.1(13)"
+fi
+
+# --- Create local.properties for hvigor ---
+cat > "${PROJECT_ROOT}/local.properties" <<LOCPROP
+sdk.dir=${OHOS_SDK_HOME}/default/openharmony
+ohos.sdk.dir=${OHOS_SDK_HOME}
+LOCPROP
+echo "    Created local.properties"
+
 cat > "${BUILD_PROFILE}" <<EOF
 {
   "app": {
@@ -205,8 +337,8 @@ cat > "${BUILD_PROFILE}" <<EOF
     "products": [
       {
         "name": "default",
-        "compatibleSdkVersion": "5.0.5(17)",
-        "compileSdkVersion": "5.0.5(17)",
+        "compatibleSdkVersion": "${COMPILE_SDK_VERSION}",
+        "compileSdkVersion": "${COMPILE_SDK_VERSION}",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "nativeLib": {
@@ -235,9 +367,9 @@ cat > "${BUILD_PROFILE}" <<EOF
 }
 EOF
 
-echo "    ✓ build-profile.json5 generated (unsigned build)"
+echo "    build-profile.json5 generated (unsigned build, SDK ${COMPILE_SDK_VERSION})"
 
-# --- Update app version from electerm-web -----------------------------------
+# --- Update app version from package.json -----------------------------------
 
 echo "==> Updating app version to ${APP_VERSION} ..."
 

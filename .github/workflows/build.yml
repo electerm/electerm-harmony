@@ -13,9 +13,9 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Electron 鸿蒙 runtime tarball URL is set via ELECTRON_RUNTIME_URL secret
-  # to avoid exposing the private address in the workflow file.
+# Note: The Electron harmony OS runtime tarball URL is set via the
+# ELECTRON_RUNTIME_URL secret in the "Prepare Electron runtime" step below,
+# to avoid exposing the private address in the workflow file.
 
 jobs:
   build:
@@ -28,7 +28,7 @@ jobs:
       - name: Checkout electerm-harmony
         uses: actions/checkout@v4
 
-      # ── Setup Node.js (for building electerm-web) ────────────────────────
+      # ── Setup Node.js (for building the web app) ─────────────────────────
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
@@ -64,25 +64,43 @@ jobs:
           ELECTRON_RUNTIME_URL: ${{ secrets.ELECTRON_RUNTIME_URL }}
         run: ./scripts/prepare-electron-runtime.sh
 
-      # ── Step 2: Build electerm-web (frontend + backend bundle) ───────────
-      - name: Prepare electerm-web
+      # ── Step 2: Build web app (frontend + backend bundle) ───────────
+      - name: Prepare web app
         run: ./scripts/prepare-web.sh
         env:
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
-      # ── Step 3: Download & extract HarmonyOS Command Line Tools ──────────
-      - name: Download & extract HarmonyOS Command Line Tools
+      # ── Step 3: Cache / download HarmonyOS Command Line Tools (~2 GB) ────
+      - name: Compute Command Line Tools cache key
+        id: cmdkey
         env:
           OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
         run: |
-          set -euo pipefail
           if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
             echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
             exit 1
           fi
+          # Hash the URL so the cache invalidates automatically when the
+          # secret points to a new version of the tools.
+          HASH="$(echo -n "${OHOS_CMDLINE_TOOLS_URL}" | md5sum | cut -d' ' -f1)"
+          echo "key=cmdline-tools-${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore HarmonyOS Command Line Tools cache
+        id: cmdline_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Download & extract HarmonyOS Command Line Tools
+        if: steps.cmdline_cache.outputs.cache-hit != 'true'
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          set -euo pipefail
           mkdir -p .cache
           ZIP=".cache/commandline-tools.zip"
-          echo "Downloading HarmonyOS Command Line Tools (~2 GB) from secret URL ..."
+          echo "Cache miss — downloading HarmonyOS Command Line Tools (~2 GB) ..."
           curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
             -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
             -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
@@ -97,22 +115,53 @@ jobs:
           rm -rf .cache/commandline-tools
           mkdir -p .cache/commandline-tools
           unzip -o -q "$ZIP" -d .cache/commandline-tools
+          rm -f "$ZIP"
+          echo "Downloaded and extracted HarmonyOS Command Line Tools"
+
+      - name: Save HarmonyOS Command Line Tools cache
+        if: steps.cmdline_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Configure Command Line Tools environment
+        run: |
+          set -euo pipefail
           COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
           if [ ! -d "$COMMANDLINE_TOOLS" ]; then
             COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
           fi
+          # Fix: Project root package.json has "type": "module", which makes
+          # Node.js treat hvigorw.js as an ES module (breaks with "require is
+          # not defined"). Adding a CommonJS package.json to the tools dirs
+          # prevents Node from traversing up to the project root.
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/hvigor/package.json" 2>/dev/null || true
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/package.json"
           echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
           echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
           echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
           echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
           echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
           echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
-          echo "Extracted HarmonyOS Command Line Tools at $COMMANDLINE_TOOLS"
+          echo "HarmonyOS Command Line Tools ready at $COMMANDLINE_TOOLS"
 
       - name: Configure ohpm registry
         run: |
           ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
           ohpm --version || true
+
+      - name: Restore ohpm modules cache
+        id: ohpm_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+          restore-keys: |
+            ohpm-
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
@@ -164,6 +213,16 @@ jobs:
           KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
 
       # ── Step 7: Upload artifact ──────────────────────────────────────────
+      - name: Save ohpm modules cache
+        if: steps.ohpm_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+
       - name: Find APP file
         id: find_app
         run: |
@@ -197,7 +256,7 @@ jobs:
           echo "| Branch/Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Runtime | \`Electron 鸿蒙 (libelectron.so)\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| electerm-web | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web app | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
           echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then

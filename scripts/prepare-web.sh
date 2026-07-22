@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# prepare-web.sh — Install, build, and bundle electerm-web
-# from the local electerm-web/ directory into the HarmonyOS app's resfile resources.
+# prepare-web.sh — Install, build, and bundle the web app
+# from the project root into the HarmonyOS app's resfile resources.
 #
 # This script:
-#   1. Installs npm dependencies in electerm-web/
+#   1. Installs npm dependencies in the project root
 #   2. Runs build/harmony/build.mjs which:
 #      - Vite-builds the React frontend → dist/assets/
 #      - esbuild-bundles the Node.js backend → app.bundle.cjs (CJS format)
@@ -24,18 +24,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# electerm-web source (in the repo)
-WEB_SRC_DIR="${PROJECT_ROOT}/electerm-web"
+# Web app source (project root)
+WEB_SRC_DIR="${PROJECT_ROOT}"
 # Output: web_engine/src/main/resources/resfile/resources/app/
 # (Electron app directory in the web_engine HAR module's resfile)
 RESFILE_APP_DIR="${PROJECT_ROOT}/web_engine/src/main/resources/resfile/resources/app"
 
 # --- Main -------------------------------------------------------------------
 
-echo "==> Preparing electerm-web (from local source: ${WEB_SRC_DIR})"
+echo "==> Preparing web app (from project root: ${WEB_SRC_DIR})"
 
 if [ ! -f "${WEB_SRC_DIR}/package.json" ]; then
-  echo "    ✗ electerm-web source not found at ${WEB_SRC_DIR}/package.json"
+  echo "    ✗ package.json not found at ${WEB_SRC_DIR}/package.json"
   exit 1
 fi
 
@@ -95,4 +95,4 @@ cp -r "${HARMONY_OUTPUT}/." "${RESFILE_APP_DIR}/"
 rm -f "${RESFILE_APP_DIR}/.env"
 
 echo "    ✓ Bundled size: $(du -sh "${RESFILE_APP_DIR}" | cut -f1)"
-echo "==> electerm-web preparation complete."
+echo "==> Web app preparation complete."
