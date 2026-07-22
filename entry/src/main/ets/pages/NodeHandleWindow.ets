@@ -15,24 +15,30 @@ import { WebNodeHandleWindow } from 'web_engine';
 import { NativeContext } from 'web_engine/src/main/ets/interface/CommonInterface';
 import JsBindingUtils from 'web_engine/src/main/ets/utils/JsBindingUtils';
 import { ContextType } from 'web_engine/src/main/ets/common/Constants';
+import { uiObserver } from '@kit.ArkUI';
 
-@Entry
+let storage = LocalStorage.getShared();
+@Entry(storage)
 @Component
 struct NodeHandleWindow {
   @LocalStorageLink('xcomponentId') xComponentId: string = '';
   @LocalStorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @State density: number = 0;
   private nativeContext: NativeContext =
     JsBindingUtils.getNativeContext(ContextType.kMainProcess);
 
   aboutToAppear(): void {
-    // WebNodeHandleWindow and the native context are managed by web_engine.
-    // No manual initialization needed here.
+    uiObserver.on('densityUpdate', this.getUIContext(), (info: uiObserver.DensityInfo) => {
+      this.density = info.density;
+    });
+  }
+
+  aboutToDisappear(): void {
+    uiObserver.off('densityUpdate', this.getUIContext());
   }
 
   onBackPress(): boolean {
-    if (this.nativeContext) {
-      this.nativeContext.OnBackToLastPage(this.xComponentId);
-    }
+    this.nativeContext.OnBackToLastPage(this.xComponentId);
     return true;
   }
 
@@ -42,5 +48,12 @@ struct NodeHandleWindow {
     }
     .width('100%')
     .height('100%')
+    .padding({
+      top: this.getStatusBarHeight(),
+    })
+  }
+
+  getStatusBarHeight(): number {
+    return this.getUIContext().px2vp(this.statusBarHeight);
   }
 }
