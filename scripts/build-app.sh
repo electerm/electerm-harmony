@@ -51,21 +51,20 @@ KEY_ALIAS="${KEY_ALIAS:-electerm_key}"
 
 APP_ARCH="${APP_ARCH:-arm64}"
 
-# --- Read version from electerm-web -----------------------------------------
+# --- Read version from package.json -----------------------------------------
 
-echo "==> Reading version from electerm-web ..."
+echo "==> Reading version from package.json ..."
 
-ELECTERM_WEB_DIR="${PROJECT_ROOT}/electerm-web"
-ELECTERM_WEB_PKG="${ELECTERM_WEB_DIR}/package.json"
+ELECTERM_WEB_PKG="${PROJECT_ROOT}/package.json"
 
 if [ ! -f "${ELECTERM_WEB_PKG}" ]; then
-  echo "    ✗ electerm-web package.json not found at ${ELECTERM_WEB_PKG}"
+  echo "    ✗ package.json not found at ${ELECTERM_WEB_PKG}"
   echo "    Run ./scripts/prepare-web.sh first."
   exit 1
 fi
 
 APP_VERSION=$(python3 -c "import json; print(json.load(open('${ELECTERM_WEB_PKG}'))['version'])")
-echo "    ✓ electerm-web version: ${APP_VERSION}"
+echo "    ✓ version: ${APP_VERSION}"
 
 # Compute versionCode from semver: major * 10000000 + minor * 100000 + patch
 VERSION_CODE=$(python3 -c "
@@ -353,7 +352,7 @@ EOF
 
 echo "    build-profile.json5 generated (unsigned build, SDK ${COMPILE_SDK_VERSION})"
 
-# --- Update app version from electerm-web -----------------------------------
+# --- Update app version from package.json -----------------------------------
 
 echo "==> Updating app version to ${APP_VERSION} ..."
 

@@ -28,7 +28,7 @@ jobs:
       - name: Checkout electerm-harmony
         uses: actions/checkout@v4
 
-      # ── Setup Node.js (for building electerm-web) ────────────────────────
+      # ── Setup Node.js (for building the web app) ─────────────────────────
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
@@ -64,8 +64,8 @@ jobs:
           ELECTRON_RUNTIME_URL: ${{ secrets.ELECTRON_RUNTIME_URL }}
         run: ./scripts/prepare-electron-runtime.sh
 
-      # ── Step 2: Build electerm-web (frontend + backend bundle) ───────────
-      - name: Prepare electerm-web
+      # ── Step 2: Build web app (frontend + backend bundle) ───────────
+      - name: Prepare web app
         run: ./scripts/prepare-web.sh
         env:
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
@@ -250,7 +250,7 @@ jobs:
           echo "| Branch/Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Runtime | \`Electron 鸿蒙 (libelectron.so)\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| electerm-web | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web app | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
           echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then

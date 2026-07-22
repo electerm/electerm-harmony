@@ -22,14 +22,15 @@
 - [electerm online](https://cloud.electerm.org): Public free online electerm app
 - [electerm demo](https://demo.electerm.org): Online demo of electerm
 - [electerm AI](https://ai.electerm.org): Free AI for electerm users
+- [electerm Android](https://github.com/electerm/electerm-android): electerm for Android
 - [electerm deb repo](https://repos.electerm.org/deb): Debian repo of electerm
 - [electerm rpm repo](https://repos.electerm.org/rpm): RPM repo of electerm
 
 ---
 
-**electerm** is a free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client (linux, mac, win, HarmonyOS).
+**electerm** is a free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client (linux, mac, win, HarmonyOS, Android).
 
-This project brings electerm to **HarmonyOS** using the [Electron 鸿蒙 runtime](https://gitcode.com/openharmony-sig/electron) (Chromium + Node.js).
+This project brings electerm to **HarmonyOS** using the [Electron Harmony OS runtime](https://gitcode.com/openharmony-sig/electron) (Chromium + Node.js).
 
 ---
 
@@ -39,11 +40,11 @@ This project is a **work in progress**. The current goal is to make electerm wor
 
 ## TODO
 
-- [x] Basic project structure with Electron 鸿蒙 runtime integration
+- [x] Basic project structure with Electron Harmony OS runtime integration
 - [x] Build pipeline (CI + local) that downloads pre-built runtime tarball
 - [x] ArkTS layer using web_engine HAR module (WebAbility, WebWindow)
 - [ ] **Get the app to build and run successfully on HarmonyOS**
-- [ ] Test electerm-web frontend + backend in the Electron 鸿蒙 runtime
+- [ ] Test electerm-web frontend + backend in the Electron Harmony OS runtime
 - [ ] Fix any runtime issues (API compatibility, file paths, permissions)
 - [ ] Add more Electron-specific features (or evaluate using electerm's original Electron code)
 - [ ] Obtain software copyright certificate (软件著作权登记) — required for AppGallery publishing

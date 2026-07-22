@@ -279,7 +279,7 @@ Or use the helper script (reads from `temp/.env` and `signing/`):
 | Secret Name | Value | Description |
 |-------------|-------|-------------|
 | `OHOS_CMDLINE_TOOLS_URL` | download URL | HarmonyOS Command Line Tools download link (see section 5 below) |
-| `OHOS_SERVER_SECRET` | random string | Secret key for electerm-web server (generate with `openssl rand -base64 32`) |
+| `OHOS_SERVER_SECRET` | random string | Secret key for web app server (generate with `openssl rand -base64 32`) |
 
 ### 4.4 Electron 鸿蒙 Runtime
 
