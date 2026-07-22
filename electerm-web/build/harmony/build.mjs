@@ -231,11 +231,14 @@ logMsg('Electron version:', process.versions.electron || 'unknown')
 logMsg('__dirname:', __d)
 
 // Catch all uncaught errors so they appear in the log file
+var backendError = null
 process.on('uncaughtException', function (err) {
   logMsg('UNCAUGHT EXCEPTION:', err)
+  if (!backendError) backendError = err
 })
 process.on('unhandledRejection', function (err) {
   logMsg('UNHANDLED REJECTION:', err)
+  if (!backendError) backendError = err
 })
 
 // --- Runtime configuration for the on-device electerm server ---
@@ -246,6 +249,11 @@ process.env.SERVER_SECRET = 'electerm-harmony-local-dev-secret'
 // No local shell on HarmonyOS without HNP — disable local terminal.
 process.env.DISABLE_LOCAL_TERMINAL = '1'
 process.env.VIEW_FOLDER = path.resolve(__d, 'views')
+
+// Set cwd to the app directory so all relative paths in the backend resolve correctly.
+// On HarmonyOS, process.cwd() may point to an unexpected location (e.g. /).
+try { process.chdir(__d) } catch (e) { logMsg('chdir failed:', e.message) }
+logMsg('cwd:', process.cwd())
 
 // --- Determine a WRITABLE user-data directory -------------------------------
 // resfile/ (where main.js lives) is read-only on HarmonyOS.
@@ -311,6 +319,7 @@ try {
   require('./app.bundle.cjs')
   logMsg('Backend bundle loaded successfully')
 } catch (err) {
+  backendError = err
   logMsg('FAILED to start backend:', err)
 }
 
@@ -319,10 +328,16 @@ function pollBackend () {
   pollCount++
   if (pollCount > MAX_POLLS) {
     logMsg('Backend poll timeout after', MAX_POLLS, 'attempts. Backend did not start.')
+    var errInfo = backendError
+      ? ('Backend error: ' + (backendError.stack || backendError.message || String(backendError))).substring(0, 2000)
+      : 'No error captured — backend loaded but never responded on port 5577.'
     createErrorWindow(
       'Backend failed to start within 30 seconds.\\n\\n' +
       'Node.js: ' + (process.versions.node || 'unknown') + '\\n' +
-      'Electron: ' + (process.versions.electron || 'unknown') + '\\n\\n' +
+      'Electron: ' + (process.versions.electron || 'unknown') + '\\n' +
+      'cwd: ' + process.cwd() + '\\n' +
+      '__dirname: ' + __d + '\\n\\n' +
+      errInfo + '\\n\\n' +
       'Check ~/electerm-logs/main.log for details.'
     )
     return
