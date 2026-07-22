@@ -49,4 +49,4 @@ Thumbs.db
 # Build download cache
 /build-download/
 build/harmony/rawfile
-src\client\electerm-react
+src/client/electerm-react/
