@@ -273,8 +273,9 @@ new_setpaths = '''        this.nativeThemeAdapter = Inject.get(NativeThemeAdapte
 content = content.replace(old_setpaths, new_setpaths)
 
 if content == original:
-    print('    WARNING: WebAbilityStage.ets pattern not found — file may already be patched or structure changed')
-    sys.exit(0)
+    print('    ERROR: WebAbilityStage.ets pattern not found — file may already be patched or structure changed')
+    print('    The SetContextPaths timing fix was NOT applied. app.getPath("appData") will fail at runtime.')
+    sys.exit(1)
 
 with open('${WEB_ABILITY_STAGE}', 'w') as f:
     f.write(content)

@@ -225,7 +225,7 @@ function createPackageJson () {
     name: pack.name,
     version: pack.version,
     description: pack.description,
-    main: 'app.js',
+    main: 'bootstrap.js',
     license: pack.license,
     author: pack.author,
     dependencies: { ...pack.dependencies }
@@ -360,8 +360,14 @@ function copyToResfile () {
   copyDir(WORK_APP, OUTPUT_DIR)
 
   // Verify critical files
-  const mainJs = path.resolve(OUTPUT_DIR, 'app.js')
-  if (!fs.existsSync(mainJs)) {
+  const bootstrapJs = path.resolve(OUTPUT_DIR, 'bootstrap.js')
+  if (!fs.existsSync(bootstrapJs)) {
+    throw new Error('bootstrap.js not found in output directory')
+  }
+  console.log('  ✓ bootstrap.js found')
+
+  const appJs = path.resolve(OUTPUT_DIR, 'app.js')
+  if (!fs.existsSync(appJs)) {
     throw new Error('app.js not found in output directory')
   }
   console.log('  ✓ app.js found')

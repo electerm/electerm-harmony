@@ -79,7 +79,14 @@ if [ ! -d "${RESFILE_APP_DIR}" ]; then
   exit 1
 fi
 
-# Verify app.js (Electron main process entry)
+# Verify bootstrap.js (HarmonyOS Electron main process entry)
+if [ ! -f "${RESFILE_APP_DIR}/bootstrap.js" ]; then
+  echo "    ✗ Missing: ${RESFILE_APP_DIR}/bootstrap.js"
+  exit 1
+fi
+echo "    ✓ Found: bootstrap.js"
+
+# Verify app.js (loaded by bootstrap.js after paths are ready)
 if [ ! -f "${RESFILE_APP_DIR}/app.js" ]; then
   echo "    ✗ Missing: ${RESFILE_APP_DIR}/app.js"
   exit 1
