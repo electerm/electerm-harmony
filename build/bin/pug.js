@@ -32,6 +32,7 @@ const data = {
   version: pack.version,
   siteName: pack.name,
   isDev: false,
+  disableUpgradeCheck: true,
   defaultAIPreset
 }
 const htmlContent = pug.render(pugContent, {
