@@ -1,0 +1,48 @@
+@require './includes'
+@require './includes/theme'
+
+body
+  overflow hidden
+  background var(--main)
+  font-size 12px
+  line-height 1.5715
+  font-family -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'
+  font-variant: tabular-nums
+  color var(--text)
+
+::-webkit-scrollbar
+  background transparent
+  width 7px
+
+.term-wrap:hover
+  ::-webkit-scrollbar
+    width 12px
+
+::-webkit-scrollbar-track
+  -webkit-box-shadow none
+
+::-webkit-scrollbar-thumb
+  background-color var(--primary)
+  outline none
+
+::-webkit-scrollbar-corner
+  background-color transparent
+
+.common-err
+  max-height 100px
+  overflow-y scroll
+  overflow-x hidden
+  word-break break-all
+
+a
+  color var(--text)
+  &:hover
+    color var(--text-dark)
+
+.cap
+  text-transform capitalize
+
+.sync-data-compare
+  .sync-suggest-action
+    color var(--success)
+    font-weight 500

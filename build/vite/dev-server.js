@@ -1,34 +1,17 @@
 import logger from 'morgan'
-import {
-  viewPath,
-  env,
-  staticPaths,
-  pack,
-  isProd,
-  cwd,
-  isWin,
-  isMac
-} from './common.js'
+import { viewPath, env, staticPaths, pack, isProd, cwd } from './common.js'
 import express from 'express'
 import { createServer as createViteServer } from 'vite'
 import conf from './conf.js'
-import os from 'os'
 import copy from 'json-deep-copy'
-import proxy from 'express-http-proxy'
-import fsFunctions from '../../src/app/common/fs-functions.js'
-import { createToken } from '../../src/app/lib/jwt.js'
-import { logDir } from '../../src/app/server/session-log.js'
-import { resolve } from 'path'
 import fs from 'fs'
-import { defaultUserName } from '../../src/app/common/runtime-constants.js'
-import { migrationNotice } from '../../src/app/lib/fancy-console.js'
+import path from 'path'
+import { spawn } from 'child_process'
+import multer from 'multer'
 
 const devPort = env.DEV_PORT || 5570
-const devHost = env.DEV_HOST || '127.0.0.1'
-const port = env.PORT || 5572
-const host = env.HOST || '127.0.0.1'
-const h = ''
-const tar = `http://${host}:${port}`
+const host = env.DEV_HOST || '127.0.0.1'
+const h = `http://${host}:${devPort}`
 const defaultAIPreset = {
   baseURLAI: 'https://ai.electerm.org/api/ai',
   apiPathAI: '/chat/completions',
@@ -37,73 +20,21 @@ const defaultAIPreset = {
   id: 'ai.electerm.org',
   nameAI: 'ai.electerm.org(default free)'
 }
+
+// const AIDisclamer = 'AI-generated terminal commands can be inaccurate or unsafe, be careful'
+
 const base = {
   version: pack.version,
   isDev: !isProd,
   siteName: pack.name,
-  defaultAIPreset,
-  isWin,
-  isMac,
-  fsFunctions,
-  packInfo: pack,
-  home: os.homedir(),
-  versionFile: 'version-android.html',
-  server: h,
-  cdn: h,
-  isWebApp: true,
-  sessionLogPath: logDir,
-  tokenElecterm: process.env.ENABLE_AUTH ? '' : createToken()
-}
-let needMigrate
-function checkNeedMigrate () {
-  if (needMigrate !== undefined) {
-    return needMigrate
-  }
-
-  const nedbPath = process.env.DB_PATH || resolve(cwd, 'data/nedb-database')
-  const nedbUserPath = resolve(nedbPath, 'users', defaultUserName)
-
-  // Check if nedb directory exists and has .nedb files
-  if (fs.existsSync(nedbUserPath)) {
-    const nedbFiles = fs.readdirSync(nedbUserPath).filter(file => file.endsWith('.nedb'))
-
-    if (nedbFiles.length > 0) {
-      needMigrate = true
-      return needMigrate
-    }
-  }
-
-  needMigrate = false
-  return needMigrate
+  defaultAIPreset
 }
 
-async function checkNodePty () {
-  return import('node-pty')
-    .then(() => true)
-    .catch(() => false)
-}
-
-async function handleIndex (req, res) {
-  const hasNodePty = await checkNodePty()
-  const needMigrate = checkNeedMigrate()
-  if (needMigrate) {
-    migrationNotice(
-      'electerm-web v3',
-      'nedb',
-      'sqlite',
-      'electerm-data-tool --data-path "/path/to/data/nedb-database" export data.json'
-    )
-  }
-  const data = {
-    ...base,
-    query: req.query,
-    hasNodePty,
-    needMigrate
-  }
+function handleIndex (req, res) {
   const view = 'index'
   res.render(view, {
-    ...data,
-    _global: copy(data)
+    ...base,
+    _global: copy(base)
   })
 }
 
@@ -112,8 +43,8 @@ function redirect (req, res) {
     name
   } = req.params
   const mapper = {
-    electerm: '/src/client/entry-web/electerm.jsx',
-    worker: '/src/client/entry-web/worker.js'
+    electerm: '/src/client/entry/electerm.jsx',
+    worker: '/src/client/entry/worker.js'
   }
   res.redirect(mapper[name])
 }
@@ -129,12 +60,13 @@ async function createServer () {
     server: {
       middlewareMode: true,
       hmr: {
-        overlay: true,
-        port: env.DEV_HMR_PORT || 23589
+        port: 30085,
+        overlay: true
       }
     },
     appType: 'custom'
   })
+
   app.use(
     logger('dev')
   )
@@ -149,6 +81,60 @@ async function createServer () {
     )
   })
 
+  const upload = multer({ dest: 'uploads/' })
+
+  app.get('/api/download', (req, res) => {
+    const filePath = req.query.path
+    if (!filePath) {
+      return res.status(400).json({ error: 'path is required' })
+    }
+    try {
+      const stat = fs.statSync(filePath)
+      if (stat.isFile()) {
+        const fileName = path.basename(filePath)
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`)
+        res.setHeader('Content-Type', 'application/octet-stream')
+        fs.createReadStream(filePath).pipe(res)
+      } else if (stat.isDirectory()) {
+        const dirName = path.basename(filePath)
+        const parentDir = path.dirname(filePath)
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(dirName)}.tar.gz"`)
+        res.setHeader('Content-Type', 'application/gzip')
+        const tar = spawn('tar', ['czf', '-', '-C', parentDir, dirName])
+        tar.stdout.pipe(res)
+        tar.stderr.on('data', (data) => {
+          console.error('tar stderr:', data.toString())
+        })
+        tar.on('error', (err) => {
+          console.error('tar error:', err)
+          if (!res.headersSent) {
+            res.status(500).json({ error: err.message })
+          }
+        })
+      } else {
+        res.status(400).json({ error: 'path is not a file or directory' })
+      }
+    } catch (err) {
+      console.error('download error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  })
+
+  app.post('/api/upload', upload.single('file'), (req, res) => {
+    const targetDir = req.body.path
+    if (!targetDir || !req.file) {
+      return res.status(400).json({ error: 'path and file are required' })
+    }
+    try {
+      const destPath = path.join(targetDir, req.file.originalname)
+      fs.renameSync(req.file.path, destPath)
+      res.json({ success: true, path: destPath })
+    } catch (err) {
+      console.error('upload error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  })
+
   app.set('views', viewPath)
   app.set('view engine', 'pug')
 
@@ -157,42 +143,10 @@ async function createServer () {
   app.use(vite.middlewares)
   app.get(['/', '/index.html'], handleIndex)
   app.get('/:dir/:name.:ext', redirect)
-  app.listen(devPort, devHost, () => {
+  app.listen(devPort, host, () => {
     console.log('cwd:', cwd)
-    console.log(`server started at ${h || `http://${devHost}:${devPort}`}`)
+    console.log(`server started at ${h}`)
   })
-  app.use(
-    '/api/login',
-    proxy(tar, {
-      proxyReqPathResolver: function (req) {
-        return req.originalUrl
-      }
-    })
-  )
-  app.use(
-    '/api/get-constants',
-    proxy(tar, {
-      proxyReqPathResolver: function (req) {
-        return req.originalUrl
-      }
-    })
-  )
-  app.use(
-    '/api/download',
-    proxy(tar, {
-      proxyReqPathResolver: function (req) {
-        return req.originalUrl
-      }
-    })
-  )
-  app.use(
-    '/api/upload',
-    proxy(tar, {
-      proxyReqPathResolver: function (req) {
-        return '/api/upload'
-      }
-    })
-  )
 }
 
 createServer()

@@ -1,6 +1,6 @@
-import fs from 'fs'
-import globalState from './global-state.js'
-import _ from 'lodash'
+const fs = require('original-fs')
+const globalState = require('./glob-state')
+const _ = require('./lodash.js')
 
 const onWatch = _.debounce(() => {
   try {
@@ -18,17 +18,17 @@ const onWatch = _.debounce(() => {
   }
 }, 300, { leading: false, trailing: true })
 
-export const watchFile = (path) => {
+exports.watchFile = (path) => {
   globalState.set('watchFilePath', path)
   fs.watchFile(path, onWatch)
 }
 
-export const unwatchFile = (path) => {
+exports.unwatchFile = (path) => {
   globalState.set('watchFilePath', '')
   fs.unwatchFile(path, onWatch)
 }
 
-const cleanWatchFile = () => {
+exports.cleanWatchFile = () => {
   globalState.set('watchFilePath', '')
   const filePath = globalState.get('watchFilePath')
   if (!filePath) {
@@ -37,4 +37,4 @@ const cleanWatchFile = () => {
   fs.unwatchFile(filePath, onWatch)
 }
 
-process.on('exit', cleanWatchFile)
+process.on('exit', exports.cleanWatchFile)

@@ -1,0 +1,135 @@
+
+.animate-fast
+  animation-duration .2s
+.sidebar-panel
+  position absolute
+  left 0
+  top 0
+  bottom 0
+  z-index 200
+  width 0
+  overflow-y scroll
+  background var(--main)
+  .item-list-unit:hover
+    .list-item-remove
+      display none !important
+.sidebar-panel
+  top 36px
+.sidebar
+  position absolute
+  left 0
+  top 0
+  width 36px
+  z-index 100
+  bottom 0
+  background var(--main-dark)
+
+  .item-list
+    padding-right 0
+.sidebar-pin-top
+  position absolute
+  left 0
+  right 0
+  top 0
+  height 112px
+.sidebar-panel-bookmarks
+.sidebar-panel-history
+  position absolute
+  left 0
+  right 0
+  top 112px
+  bottom 0
+  overflow hidden
+  display flex
+  flex-direction column
+  .sidebar-inner
+    flex 1
+    display flex
+    flex-direction column
+    overflow hidden
+    min-height 0
+  .history-header
+    flex-shrink 0
+    display flex
+    align-items center
+    border-bottom 1px solid var(--border)
+    position sticky
+    top 0
+    z-index 10
+    background var(--main)
+    .history-clear-icon
+      margin-left auto
+      margin-right 0
+      color var(--text-dark)
+      &:hover
+        color var(--error)
+  .history-body
+    flex 1
+    overflow-y auto
+    overflow-x hidden
+.not-system-ui.is-mac
+  .sidebar-bar
+    margin-top 20px
+.type-bookmarks
+  .bookmarks-panel
+    width 100%
+.type-history
+  .history-panel
+    width 100%
+.control-icon-text
+  color var(--text)
+  &:hover
+    color var(--success)
+.control-icon-wrap
+  padding 14px 0
+  text-align center
+  &.active
+    .control-icon
+      color var(--text-light)
+  .control-icon
+    color var(--text-dark)
+    cursor pointer
+    &:hover
+      color var(--text-light)
+.sidebar-list
+  position absolute
+  left 43px
+  top 0
+  bottom 0
+  z-index 200
+  width 0
+
+.pinned
+  .sidebar-list
+    top 0
+    .sidebar-panel
+      top 0
+      padding-top 36px
+  .drag-handle
+    display block
+  .sidebar-panel
+    .pinned
+      color var(--success)
+//btns
+.btns
+  background var(--main-dark)
+  border-color var(--primary)
+  .open-about-icon
+    color var(--text-dark)
+    &:hover
+      color var(--text-light)
+  .zoom-reset-icon
+    color var(--primary)
+    &:hover
+      color var(--text-light)
+
+.btns .upgrade-icon
+  color var(--success)
+.close-info-modal
+  cursor pointer
+  &:hover
+    color var(--text-light)
+.logo-filter
+  filter invert(80%)
+.sidebar-inner
+  padding-right 8px

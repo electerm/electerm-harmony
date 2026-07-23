@@ -1,7 +1,5 @@
-import pkg from 'shelljs'
-
-const { rm } = pkg
+const { rm } = require('shelljs')
 
 rm('-rf', [
-  'dist'
+  'work'
 ])

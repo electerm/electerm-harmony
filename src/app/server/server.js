@@ -1,52 +1,49 @@
-import express from 'express'
-import pug from 'pug'
-import { wsRoutes } from '../routes/ws.js'
-import { httpRoutes } from '../routes/http.js'
-import { applyExtensions } from '../lib/extensions.js'
-import morgan from 'morgan'
-import {
-  isDev,
-  cwd
-} from '../common/runtime-constants.js'
-import { resolve } from 'path'
-import log from '../common/log.js'
-import { applySystemCAsToGlobalAgent } from '../lib/system-ca.js'
+const express = require('express')
+const globalState = require('./global-state')
+const app = express()
+const log = require('../common/log')
+const { initWs } = require('./dispatch-center')
+const {
+  isDev
+} = require('../common/runtime-constants')
+const initFileServer = require('../lib/file-server')
+const appDec = require('./app-wrap')
 
-export async function createApp () {
-  const loadedCount = applySystemCAsToGlobalAgent()
-  if (loadedCount > 0) {
-    log.info(`[TLS] loaded ${loadedCount} system CA certificate(s) into main process`)
+appDec(app)
+
+app.get('/run', function (req, res) {
+  res.send('ok')
+})
+app.post('/auth', function (req, res) {
+  const { token } = req.body
+  if (token === process.env.requireAuth) {
+    globalState.authed = true
   }
-
-  const app = express()
-  // parse application/x-www-form-urlencoded
-  app.use(express.urlencoded({ extended: true }))
-
-  // parse application/json
-  app.use(express.json())
-
-  app.use(morgan(
-    ':method :url :status :res[content-length] - :response-time ms'
-  ))
-  app.set('view engine', 'pug')
-  // Register the pug engine explicitly so Express uses the bundled pug
-  // directly instead of lazily `require('pug')` at render time. The lazy
-  // require breaks bundled builds (esbuild can't see the dynamic string
-  // require, so "pug" is missing at runtime -> GET / hangs forever).
-  app.engine('pug', pug.__express)
-  app.set(
-    'views',
-    process.env.VIEW_FOLDER ||
-    (
-      !isDev
-        ? resolve(cwd, 'dist/views')
-        : resolve(cwd, 'src/app/views')
-    )
-  )
-  app.set('x-powered-by', false)
-
-  httpRoutes(app)
-  wsRoutes(app)
-  await applyExtensions(app)
-  return app
+  res.send('ok')
+})
+if (!isDev) {
+  initFileServer(app)
 }
+initWs(app)
+
+const runServer = function () {
+  const { electermPort, electermHost } = process.env
+  app.listen(electermPort, electermHost, () => {
+    log.info('server', 'runs on', electermHost, electermPort)
+    process.send({ serverInited: true })
+  })
+}
+
+// start
+runServer()
+
+process.on('uncaughtException', (err) => {
+  log.error('uncaughtException', err)
+})
+process.on('unhandledRejection', (err) => {
+  log.error('unhandledRejection', err)
+})
+
+process.on('SIGTERM', () => {
+  process.exit(0)
+})

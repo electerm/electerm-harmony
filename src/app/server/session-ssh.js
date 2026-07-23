@@ -2,26 +2,21 @@
  * terminal/sftp/serial class
  */
 
-import { Client } from '@electerm/ssh2'
-import proxySock from './socks.js'
-import _ from 'lodash'
-import generate from '../common/uid.js'
-import { resolve as pathResolve } from 'path'
-import net from 'net'
-import { exec } from 'child_process'
-import log from '../common/log.js'
-import fs from 'fs'
-import { algDefault, algAlt } from './ssh2-alg.js'
-import * as sshTunnelFuncs from './ssh-tunnel.js'
-import deepCopy from 'json-deep-copy'
-import { TerminalBase } from './session-base.js'
-import { commonExtends } from './session-common.js'
-import globalState from './global-state.js'
-import {
-  sshKeysPath
-} from '../common/runtime-constants.js'
-import { createHostVerifier } from './ssh-known-hosts.js'
-import iconv from 'iconv-lite'
+const proxySock = require('./socks')
+const _ = require('../lib/lodash.js')
+const generate = require('../common/uid')
+const { resolve: pathResolve } = require('path')
+const net = require('net')
+const { exec } = require('child_process')
+const log = require('../common/log')
+const { algDefault, algAlt } = require('./ssh2-alg')
+const { createHostVerifier } = require('./ssh-known-hosts')
+const sshTunnelFuncs = require('./ssh-tunnel')
+const deepCopy = require('json-deep-copy')
+const { TerminalBase } = require('./session-base')
+const { commonExtends } = require('./session-common')
+const globalState = require('./global-state')
+const iconv = require('iconv-lite')
 
 // Encodings that are equivalent to UTF-8 (no conversion needed)
 const utf8Aliases = new Set(['utf-8', 'utf8', 'utf-8-strict'])
@@ -390,6 +385,7 @@ class TerminalSshBase extends TerminalBase {
       sock,
       ...hopping
     }
+    const { Client } = require('@electerm/ssh2')
     this.nextConn = new Client()
     // If we have an agent and no explicit privateKey/password, try agent first
     // by skipping reading private keys from jump server
@@ -499,7 +495,7 @@ class TerminalSshBase extends TerminalBase {
             return reject(err)
           }
           this.channel = channel
-          this.conn.setNoDelay(true)
+          this.setNoDelay(true)
           globalState.setSession(this.pid, this)
           resolve(this)
         }
@@ -523,8 +519,10 @@ class TerminalSshBase extends TerminalBase {
   }
 
   getSSHKeys () {
+    const { sshKeysPath } = process.env
     try {
-      return fs.readdirSync(sshKeysPath)
+      return require('fs')
+        .readdirSync(sshKeysPath)
         .filter(file => file.endsWith('.pub'))
         .map(file => pathResolve(sshKeysPath, file.replace('.pub', '')))
     } catch (e) {
@@ -538,7 +536,7 @@ class TerminalSshBase extends TerminalBase {
       if (this.sshKeys.length > 0) {
         const p = this.sshKeys.shift()
         this.privateKeyPath = p
-        connectOptions.privateKey = fs.readFileSync(p, 'utf8')
+        connectOptions.privateKey = require('fs').readFileSync(p, 'utf8')
       } else if (this.sshKeys.length === 0) {
         this.connectOptions.passphrase = this.initOptions.passphrase
         delete this.connectOptions.privateKey
@@ -550,7 +548,7 @@ class TerminalSshBase extends TerminalBase {
     if (list.length) {
       const p = list.shift()
       this.privateKeyPath = p
-      connectOptions.privateKey = fs.readFileSync(p, 'utf8')
+      connectOptions.privateKey = require('fs').readFileSync(p, 'utf8')
       this.sshKeys = list
     }
   }
@@ -691,7 +689,10 @@ class TerminalSshBase extends TerminalBase {
 
   getHostVerificationTarget (connectOptions = this.connectOptions) {
     if (connectOptions === this.hoppingOptions && this.initHoppingOptions) {
-      return { host: this.initHoppingOptions.host, port: this.initHoppingOptions.port }
+      return {
+        host: this.initHoppingOptions.host,
+        port: this.initHoppingOptions.port
+      }
     }
     return {
       host: connectOptions.host || this.initOptions.host,
@@ -770,6 +771,7 @@ class TerminalSshBase extends TerminalBase {
 
   async sshConnect () {
     const { initOptions } = this
+    const { Client } = require('@electerm/ssh2')
     this.conn = new Client()
     this.connectOptions = this.connectOptions || this.buildConnectOptions()
     const {
@@ -1001,7 +1003,7 @@ class TerminalSshBase extends TerminalBase {
 
 const TerminalSsh = commonExtends(TerminalSshBase)
 
-export const terminalSsh = function (initOptions, ws) {
+exports.session = function (initOptions, ws) {
   return (new TerminalSsh(initOptions, ws)).init()
 }
 
@@ -1009,15 +1011,12 @@ export const terminalSsh = function (initOptions, ws) {
  * test ssh connection
  * @param {object} options
  */
-export const testConnectionSsh = (options, ws) => {
+exports.test = (options, ws) => {
   return (new TerminalSsh(options, ws, true))
     .init()
     .then(() => true)
     .catch((err) => {
-      console.log('test ssh error', err)
+      log.error('test ssh error', err)
       return false
     })
 }
-
-export const terminal = terminalSsh
-export const testConnection = testConnectionSsh

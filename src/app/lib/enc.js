@@ -1,14 +1,12 @@
 /**
  * data encrypt/decrypt
  *
- * New format (GCM): 'gcm:<iv_hex>:<salt_hex>:<authtag_hex>:<ciphertext_hex>'
- * Legacy format: '<ciphertext_hex>' (pure hex, no colons — aes-192-cbc)
+ * New format (GCM):  'gcm:<iv_hex>:<salt_hex>:<authtag_hex>:<ciphertext_hex>'
+ * Legacy format:     '<ciphertext_hex>'  (pure hex, no colons — aes-192-cbc)
  *
  * decrypt/decryptAsync detect the format automatically via the 'gcm:' prefix,
  * so old data encrypted with the static IV/salt continues to work without migration.
  */
-
-import crypto from 'crypto'
 
 const algorithmDefault = 'aes-256-gcm'
 
@@ -21,9 +19,8 @@ const IV_LENGTH = 12 // 12 bytes is recommended for GCM
 const SALT_LENGTH = 16
 const KEY_LENGTH = 32 // aes-256 requires a 32-byte key
 
-const funcs = {}
-
 function scryptAsync (...args) {
+  const crypto = require('crypto')
   return new Promise((resolve, reject) =>
     crypto.scrypt(...args, (err, result) => {
       if (err) {
@@ -34,11 +31,12 @@ function scryptAsync (...args) {
   )
 }
 
-funcs.encrypt = function (
+exports.encrypt = function (
   str = '',
   password,
   algorithm = algorithmDefault
 ) {
+  const crypto = require('crypto')
   const iv = crypto.randomBytes(IV_LENGTH)
   const salt = crypto.randomBytes(SALT_LENGTH)
   const key = crypto.scryptSync(password, salt, KEY_LENGTH)
@@ -49,11 +47,12 @@ funcs.encrypt = function (
   return 'gcm:' + iv.toString('hex') + ':' + salt.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted
 }
 
-funcs.decrypt = function (
+exports.decrypt = function (
   encrypted = '',
   password,
   algorithm = algorithmDefault
 ) {
+  const crypto = require('crypto')
   if (encrypted.startsWith('gcm:')) {
     // New format: gcm:iv_hex:salt_hex:authtag_hex:ciphertext_hex
     const parts = encrypted.split(':')
@@ -76,11 +75,12 @@ funcs.decrypt = function (
   return decrypted
 }
 
-export const encryptAsync = async function (
+exports.encryptAsync = async function (
   str = '',
   password,
   algorithm = algorithmDefault
 ) {
+  const crypto = require('crypto')
   const iv = crypto.randomBytes(IV_LENGTH)
   const salt = crypto.randomBytes(SALT_LENGTH)
   const key = await scryptAsync(password, salt, KEY_LENGTH)
@@ -91,11 +91,12 @@ export const encryptAsync = async function (
   return 'gcm:' + iv.toString('hex') + ':' + salt.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted
 }
 
-export const decryptAsync = async function (
+exports.decryptAsync = async function (
   encrypted = '',
   password,
   algorithm = algorithmDefault
 ) {
+  const crypto = require('crypto')
   if (encrypted.startsWith('gcm:')) {
     // New format: gcm:iv_hex:salt_hex:authtag_hex:ciphertext_hex
     const parts = encrypted.split(':')

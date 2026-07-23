@@ -1,15 +1,13 @@
 /**
  * all supported ssh2 algorithms config
  */
-
-import nodeCrypto from 'crypto'
-import browserDH from 'diffie-hellman/browser.js'
+const nodeCrypto = require('crypto')
+const browserDH = require('diffie-hellman/browser')
 
 nodeCrypto.createDiffieHellmanGroup = browserDH.createDiffieHellmanGroup
 nodeCrypto.createDiffieHellman = browserDH.createDiffieHellman
-nodeCrypto.ddd = 1
 
-export const algDefault = () => ({
+exports.algDefault = () => ({
   kex: [
     'curve25519-sha256', // (node v13.9.0 or newer)
     'curve25519-sha256@libssh.org', // (node v13.9.0 or newer)
@@ -47,7 +45,7 @@ export const algDefault = () => ({
   ]
 })
 
-export const algAlt = () => ({
+exports.algAlt = () => ({
   ...exports.algDefault(),
   cipher: [
     // 'chacha20-poly1305@openssh.com',

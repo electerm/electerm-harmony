@@ -1,18 +1,34 @@
-/**
- * AI integration with DeepSeek API
- */
-import axios from 'axios'
-import {
-  StringDecoder
-} from 'string_decoder'
-import log from '../common/log.js'
-import defaultSettings from '../common/config-default.js'
-import { createProxyAgent } from './proxy-agent.js'
+const axios = require('axios')
+const { StringDecoder } = require('string_decoder')
+const log = require('../common/log')
+const defaultSettings = require('../common/config-default')
+const { createProxyAgent } = require('./proxy-agent')
 
 // Store for ongoing streaming sessions
 const streamingSessions = new Map()
 
-// Initialize OpenAI with DeepSeek configuration
+// Stop an ongoing streaming session
+exports.stopStream = (sessionId) => {
+  const session = streamingSessions.get(sessionId)
+  if (!session) {
+    return { error: 'Session not found' }
+  }
+
+  // Destroy the stream to stop receiving data
+  if (session.stream && !session.stream.destroyed) {
+    session.stream.destroy()
+  }
+
+  // Mark as completed (not an error, just stopped by user)
+  session.completed = true
+  session.stopped = true
+
+  // Clean up
+  streamingSessions.delete(sessionId)
+
+  return { stopped: true }
+}
+
 const createAIClient = (baseURL, apiKey, proxy, authHeaderName) => {
   const headerStr = authHeaderName || 'Authorization: Bearer'
   const parts = headerStr.split(': ')
@@ -39,7 +55,7 @@ const createAIClient = (baseURL, apiKey, proxy, authHeaderName) => {
   return axios.create(config)
 }
 
-export const AIchatWithTools = async (messages, model, baseURL, path, apiKey, proxy, tools, authHeaderName) => {
+exports.AIchatWithTools = async (messages, model, baseURL, path, apiKey, proxy, tools, authHeaderName) => {
   try {
     const client = createAIClient(baseURL, apiKey, proxy, authHeaderName)
     const requestData = {
@@ -47,7 +63,7 @@ export const AIchatWithTools = async (messages, model, baseURL, path, apiKey, pr
       messages,
       stream: false
     }
-    if (tools?.length) {
+    if (tools && tools.length) {
       requestData.tools = tools
     }
     const response = await client.post(path, requestData)
@@ -61,7 +77,7 @@ export const AIchatWithTools = async (messages, model, baseURL, path, apiKey, pr
   }
 }
 
-export const AIchat = async (
+exports.AIchat = async (
   prompt,
   model = defaultSettings.modelAI,
   role = defaultSettings.roleAI,
@@ -144,7 +160,7 @@ export const AIchat = async (
 }
 
 // Function to get the current state of a streaming session
-export const getStreamContent = async (sessionId) => {
+exports.getStreamContent = (sessionId) => {
   const session = streamingSessions.get(sessionId)
   if (!session) {
     return {
@@ -215,26 +231,4 @@ function processStream (sessionId, sessionData) {
     sessionData.error = error.message
     sessionData.completed = true
   })
-}
-
-// Stop an ongoing streaming session
-export const stopStream = (sessionId) => {
-  const session = streamingSessions.get(sessionId)
-  if (!session) {
-    return { error: 'Session not found' }
-  }
-
-  // Destroy the stream to stop receiving data
-  if (session.stream && !session.stream.destroyed) {
-    session.stream.destroy()
-  }
-
-  // Mark as completed (not an error, just stopped by user)
-  session.completed = true
-  session.stopped = true
-
-  // Clean up
-  streamingSessions.delete(sessionId)
-
-  return { stopped: true }
 }

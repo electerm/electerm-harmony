@@ -1,27 +1,24 @@
-// Static imports so bundlers (esbuild) can discover and include all session
-// modules. Dynamic import() with a computed path (e.g. `./session-${type}.js`)
-// is opaque to bundlers — the files are never included in the bundle and the
-// import fails at runtime. A plain dispatch table is the standard fix.
-import * as sessionSsh from './session-ssh.js'
-import * as sessionTelnet from './session-telnet.js'
-import * as sessionSerial from './session-serial.js'
-import * as sessionLocal from './session-local.js'
-import * as sessionRdp from './session-rdp.js'
-import * as sessionVnc from './session-vnc.js'
-import * as sessionSpice from './session-spice.js'
+/**
+ * terminal/sftp/serial class
+ */
 
-const sessionModules = {
-  ssh: sessionSsh,
-  telnet: sessionTelnet,
-  serial: sessionSerial,
-  local: sessionLocal,
-  rdp: sessionRdp,
-  vnc: sessionVnc,
-  spice: sessionSpice
+/**
+ * Dynamically load a module based on terminal type
+ * @param {string} type - Terminal type
+ * @returns {Object} The loaded module
+ */
+function loadModule (type) {
+  return require(`./session-${type}`)
 }
 
-function getType (initOptions) {
-  const type = initOptions.termType || initOptions.type
+/**
+ * Create a terminal session
+ * @param {object} initOptions - Terminal initialization options
+ * @param {object} ws - WebSocket connection
+ * @returns {Promise} Terminal session
+ */
+exports.startSession = async function (initOptions, ws, func = 'session') {
+  const type = initOptions.termType || initOptions.type || 'ssh'
   const tail = [
     'telnet',
     'serial',
@@ -32,18 +29,6 @@ function getType (initOptions) {
   ].includes(type)
     ? type
     : 'ssh'
-  return tail
-}
-
-export const terminal = async function (initOptions, ws) {
-  const type = getType(initOptions)
-  console.log('type', type)
-  const { terminal } = sessionModules[type]
-  return terminal(initOptions, ws)
-}
-
-export const testConnection = async (initOptions, ws) => {
-  const type = getType(initOptions)
-  const { testConnection } = sessionModules[type]
-  return testConnection(initOptions, ws)
+  const module = loadModule(tail)
+  return module[func](initOptions, ws)
 }

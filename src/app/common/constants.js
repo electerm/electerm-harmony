@@ -2,8 +2,9 @@
  * contants shared in app/client
  */
 
-export const userConfigId = 'userConfig'
-export const instSftpKeys = [
+exports.userConfigId = 'userConfig'
+exports.userNoEncryptConfigId = 'userConfigNoEncrypt'
+exports.instSftpKeys = [
   'connect',
   'list',
   'download',

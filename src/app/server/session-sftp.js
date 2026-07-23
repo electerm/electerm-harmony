@@ -1,18 +1,19 @@
 /**
  * terminal/sftp/serial class
  */
-import {
+const {
   readRemoteFile,
   writeRemoteFile
-} from './sftp-file.js'
-import { commonExtends } from './session-common.js'
-import { TerminalBase } from './session-base.js'
-import { getSizeCount, getSizeCountWin } from '../common/count-folder-data.js'
-import globalState from './global-state.js'
-import { SshFs } from 'ssh2-scp'
-import iconv from 'iconv-lite'
+} = require('./sftp-file')
+const { commonExtends } = require('./session-common.js')
+const { TerminalBase } = require('./session-base.js')
+const {
+  getSizeCount,
+  getSizeCountWin
+} = require('../common/get-folder-size-and-file-count.js')
+const globalState = require('./global-state')
 
-class SftpBase extends TerminalBase {
+class Sftp extends TerminalBase {
   connect (initOptions) {
     return this.remoteInitSftp(initOptions)
   }
@@ -34,11 +35,12 @@ class SftpBase extends TerminalBase {
   }
 
   initSshFsFallback = (conn) => {
+    const { SshFs } = require('ssh2-scp')
     const opts = {}
     const encode = this.initOptions?.encode || 'utf8'
     if (encode !== 'utf8') {
       opts.encoding = encode
-      opts.iconv = iconv
+      opts.iconv = require('iconv-lite')
     }
     const sshFs = new SshFs(conn, opts)
     this.applySshFsOverride(sshFs)
@@ -629,4 +631,4 @@ class SftpBase extends TerminalBase {
   // end
 }
 
-export const Sftp = commonExtends(SftpBase)
+exports.Sftp = commonExtends(Sftp)

@@ -1,12 +1,11 @@
 // load-widget.js
 
-import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
-// import log from '../common/log.js'
+const fs = require('fs')
+const path = require('path')
+// const log = require('../common/log')
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// Store running widget instances
+const runningInstances = new Map()
 const widgetIdPattern = /^[a-z0-9-]+$/
 
 function resolveWidgetPath (widgetId, widgetDirectory = __dirname) {
@@ -24,16 +23,12 @@ function resolveWidgetPath (widgetId, widgetDirectory = __dirname) {
   return widgetPath
 }
 
-// Store running widget instances
-const runningInstances = new Map()
-
-async function listWidgetsFromFolder (widgetDirectory = __dirname) {
+function listWidgetsFromFolder (widgetDirectory = __dirname) {
   const widgetFiles = fs.readdirSync(widgetDirectory).filter(file => file.startsWith('widget-') && file.endsWith('.js'))
   const res = []
   for (const file of widgetFiles) {
     try {
-      const widgetPath = path.join(widgetDirectory, file)
-      const widgetModule = await import(`file://${widgetPath}`)
+      const widgetModule = require(path.join(widgetDirectory, file))
       res.push({
         id: file.slice(7, -3),
         info: widgetModule.widgetInfo
@@ -46,8 +41,8 @@ async function listWidgetsFromFolder (widgetDirectory = __dirname) {
   return res
 }
 
-async function listWidgets () {
-  const widgets1 = await listWidgetsFromFolder()
+function listWidgets () {
+  const widgets1 = listWidgetsFromFolder()
   return widgets1
   // if (process.versions.electron === undefined) {
   //   return widgets1
@@ -84,9 +79,8 @@ function hasRunningInstance (widgetId) {
   return false
 }
 
-async function runWidget (widgetId, config) {
-  const widgetPath = resolveWidgetPath(widgetId)
-  const widget = await import(`file://${widgetPath}`)
+function runWidget (widgetId, config) {
+  const widget = require(resolveWidgetPath(widgetId))
 
   const { type, singleInstance } = widget.widgetInfo
   if (type !== 'instance') {
@@ -193,7 +187,7 @@ function registerCleanupHandlers () {
 // Initialize cleanup handlers
 registerCleanupHandlers()
 
-export {
+module.exports = {
   listWidgets,
   runWidget,
   stopWidget,

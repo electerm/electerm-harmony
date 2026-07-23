@@ -2,13 +2,13 @@
  * handle sync with github/gitee
  */
 
-import {
+const log = require('../common/log')
+const rp = require('axios')
+const { createProxyAgent } = require('../lib/proxy-agent')
+const {
   electermSync
-} from 'electerm-sync'
-import log from '../common/log.js'
-import rp from 'axios'
-import { createProxyAgent } from '../lib/proxy-agent.js'
-import { doWebdavSync } from './webdav-sync.js'
+} = require('electerm-sync')
+const doWebdavSync = require('./webdav-sync')
 
 rp.defaults.proxy = false
 
@@ -17,6 +17,7 @@ async function doSync (type, func, args, token, proxy) {
   if (type === 'webdav') {
     return doWebdavSync(func, args, token, proxy)
   }
+
   const agent = createProxyAgent(proxy)
   const conf = agent
     ? {
@@ -42,13 +43,13 @@ async function doSync (type, func, args, token, proxy) {
     })
 }
 
-export default async function wsSyncHandler (ws, msg) {
+async function wsSyncHandler (ws, msg) {
   const { id, type, args, func, token, proxy } = msg
   const res = await doSync(type, func, args, token, proxy)
   if (res.error) {
     ws.s({
       error: {
-        message: 'sync error: ' + res.error.message
+        message: 'Sync data error: ' + res.error.message
       },
       id
     })
@@ -59,3 +60,5 @@ export default async function wsSyncHandler (ws, msg) {
     })
   }
 }
+
+module.exports = wsSyncHandler

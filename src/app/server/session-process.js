@@ -1,0 +1,272 @@
+const { fork } = require('child_process')
+const path = require('path')
+
+// Map to store active terminal processes (pid -> {child, port, ws})
+const activeTerminals = new Map()
+
+// Track the last port assigned
+let lastPort = 30975
+const MIN_PORT = 30975
+const MAX_PORT = 65534
+// Add a set to track ports that are currently being assigned
+const pendingPorts = new Set()
+
+function getPort (fromPort = MIN_PORT) {
+  // Use the last port + 1 or start over if we've reached MAX_PORT
+  let startPort = lastPort >= MAX_PORT ? MIN_PORT : lastPort + 1
+
+  // Skip ports that are currently being assigned
+  while (pendingPorts.has(startPort)) {
+    startPort = startPort >= MAX_PORT ? MIN_PORT : startPort + 1
+  }
+
+  // Mark this port as pending
+  pendingPorts.add(startPort)
+
+  return new Promise((resolve, reject) => {
+    require('find-free-port')(startPort, '127.0.0.1', function (err, freePort) {
+      if (err) {
+        // Remove from pending set on error
+        pendingPorts.delete(startPort)
+        reject(err)
+      } else {
+        // Remember this port for next time
+        lastPort = freePort
+        // Remove from pending set when done
+        pendingPorts.delete(startPort)
+        resolve(freePort)
+      }
+    })
+  })
+}
+
+async function runSessionServer (type, port) {
+  return new Promise((resolve) => {
+    const cleanEnv = Object.assign({}, process.env)
+    delete cleanEnv.ELECTRON_RUN_AS_NODE
+    const child = fork(path.resolve(__dirname, './session-server.js'), {
+      env: Object.assign(
+        {
+          wsPort: port,
+          type
+        },
+        cleanEnv
+      ),
+      cwd: process.cwd()
+    }, (error, stdout, stderr) => {
+      if (error || stderr) {
+        console.error('Error in session server:', error || stderr)
+        throw error || stderr
+      }
+    })
+    child.on('message', (m) => {
+      if (m && m.serverInited) {
+        resolve(child)
+      }
+    })
+  })
+}
+
+async function sendMsgToChildProcess (pid, msg) {
+  const child = typeof pid === 'object' ? pid : activeTerminals.get(pid)?.child
+  if (!child) {
+    throw new Error(`Terminal with PID ${pid} not found`)
+  }
+
+  return new Promise((resolve, reject) => {
+    const responseHandler = (response) => {
+      if (response.id === msg.id) {
+        child.removeListener('message', responseHandler)
+        if (response.error) {
+          reject(response.error)
+        } else {
+          resolve(response.data)
+        }
+      }
+    }
+
+    child.on('message', responseHandler)
+    child.send({
+      type: 'common',
+      data: msg
+    })
+  })
+}
+
+exports.terminal = async function (initOptions, ws, uid) {
+  const type = initOptions.termType || initOptions.type || 'terminal'
+  const port = await getPort()
+  const child = await runSessionServer(type, port)
+  const pid = initOptions.uid
+  const isSsh = ![
+    'telnet',
+    'serial',
+    'local',
+    'rdp',
+    'vnc',
+    'spice',
+    'ftp'
+  ].includes(type)
+  if (isSsh) {
+    child.on('message', (m) => {
+      const { type, data } = m
+      if (type === 'common') {
+        ws.s(data)
+        ws.once((data) => {
+          child.send(data)
+        }, data.id)
+      }
+    })
+  }
+  child.on('exit', () => {
+    // Remove all pending message listeners to prevent memory leaks
+    // if the child exits before responding to sendMsgToChildProcess calls
+    child.removeAllListeners('message')
+    activeTerminals.delete(pid)
+  })
+  if (type !== 'ftp') {
+    try {
+      await sendMsgToChildProcess(child, {
+        id: uid,
+        action: 'create-terminal',
+        body: initOptions
+      })
+    } catch (err) {
+      child.kill()
+      throw err
+    }
+  }
+
+  // Kill any existing child process for this pid before overwriting.
+  // This can happen on reconnects where a new process is spawned for the same tab id.
+  const existingEntry = activeTerminals.get(pid)
+  if (existingEntry) {
+    existingEntry.child.kill()
+    activeTerminals.delete(pid)
+  }
+
+  // Store the terminal process in the map
+  activeTerminals.set(pid, {
+    child,
+    port,
+    ws
+  })
+
+  return {
+    pid,
+    port
+  }
+}
+
+exports.testConnection = async function (initOptions, ws, uid) {
+  const type = initOptions.termType || initOptions.type || 'terminal'
+  const port = await getPort()
+  const child = await runSessionServer(type, port)
+
+  const isSsh = ![
+    'telnet',
+    'serial',
+    'local',
+    'rdp',
+    'vnc',
+    'spice',
+    'ftp'
+  ].includes(type)
+  if (isSsh && ws) {
+    child.on('message', (m) => {
+      const { type: msgType, data } = m
+      if (msgType === 'common') {
+        ws.s(data)
+        ws.once((respData) => {
+          child.send(respData)
+        }, data.id)
+      }
+    })
+  }
+
+  const res = await sendMsgToChildProcess(child, {
+    id: uid,
+    action: 'test-terminal',
+    body: initOptions
+  })
+
+  child.kill()
+  return res
+}
+
+/**
+ * Get terminal instance by pid
+ * @param {string} pid - Process ID of the terminal
+ * @returns {object|null} Terminal instance or null if not found
+ */
+exports.terminals = function (pid) {
+  const terminal = activeTerminals.get(pid)
+  if (!terminal) {
+    return null
+  }
+
+  return {
+    runCmd: async (cmd, id) => {
+      return sendMsgToChildProcess(pid, {
+        id,
+        action: 'run-cmd',
+        body: { cmd, pid }
+      })
+    },
+    resize: (cols, rows, id) => {
+      sendMsgToChildProcess(pid, {
+        id,
+        action: 'resize-terminal',
+        body: { cols, rows, pid }
+      })// Ignore errors for resize
+    },
+    toggleTerminalLog: (id) => {
+      sendMsgToChildProcess(pid, {
+        id,
+        action: 'toggle-terminal-log',
+        body: { pid }
+      })
+    },
+    toggleTerminalLogTimestamp: (id) => {
+      sendMsgToChildProcess(pid, {
+        id,
+        action: 'toggle-terminal-log-timestamp',
+        body: { pid }
+      })
+    },
+    setTerminalLogPath: (id, logPath) => {
+      sendMsgToChildProcess(pid, {
+        id,
+        action: 'set-terminal-log-path',
+        body: { pid, logPath }
+      })
+    },
+    startTerminalLogFile: (id, logFilePath, addTimeStampToTermLog) => {
+      sendMsgToChildProcess(pid, {
+        id,
+        action: 'start-terminal-log-file',
+        body: { pid, logFilePath, addTimeStampToTermLog }
+      })
+    }
+  }
+}
+
+/**
+ * Clean up all active terminals
+ */
+exports.cleanupTerminals = function () {
+  for (const [pid, terminal] of activeTerminals) {
+    terminal.child.kill()
+    activeTerminals.delete(pid)
+  }
+}
+
+// Clean up on process exit
+process.on('SIGINT', () => {
+  exports.cleanupTerminals()
+  process.exit()
+})
+process.on('SIGTERM', () => {
+  exports.cleanupTerminals()
+  process.exit()
+})

@@ -1,8 +1,8 @@
 /**
  * socks proxy wrapper
  */
-import { SocksClient } from 'socks'
-import { request } from 'http'
+
+const { request } = require('http')
 
 function isValidIP (input) {
   // Check IPv4 format
@@ -29,7 +29,7 @@ function parseUrl (str) {
   }
 }
 
-export default (initOptions) => {
+module.exports = (initOptions) => {
   const {
     readyTimeout,
     host,
@@ -102,5 +102,6 @@ export default (initOptions) => {
   }
 
   // use socks proxy
+  const { SocksClient } = require('socks')
   return SocksClient.createConnection(options)
 }

@@ -18,4 +18,4 @@ class McpServer {
   }
 }
 
-export { McpServer }
+module.exports = { McpServer }

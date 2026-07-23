@@ -1,27 +1,20 @@
 // build html
 /**
  * build common files with react module in it
- *
- * Generates a static dist/index.html from the pug template, injecting the
- * same data the runtime server (src/app/lib/view.js) provides to the client.
- * Mirrors upstream electerm's build/bin/pug.js, ported to ESM for this project.
  */
-import fs from 'fs'
-import pug from 'pug'
-import { resolve } from 'path'
-import deepCopy from 'json-deep-copy'
-
-const pack = JSON.parse(
-  fs.readFileSync(resolve(__dirname, '../../package.json'), 'utf8')
-)
+const fs = require('fs')
+const pug = require('pug')
+const { resolve } = require('path')
+const pack = require('../../package.json')
+const deepCopy = require('json-deep-copy')
 
 const entryPug = resolve(
   __dirname,
-  '../../src/app/views/index.pug'
+  '../../src/client/views/index.pug'
 )
 const targetFilePath = resolve(
   __dirname,
-  '../../dist/index.html'
+  '../../work/app/assets/index.html'
 )
 const pugContent = fs.readFileSync(entryPug, 'utf-8')
 const defaultAIPreset = {
@@ -33,12 +26,12 @@ const defaultAIPreset = {
   nameAI: 'ai.electerm.org(default free)'
 }
 
+// const AIDisclamer = 'AI-generated terminal commands can be inaccurate or unsafe, be careful'
+
 const data = {
   version: pack.version,
   siteName: pack.name,
   isDev: false,
-  cdn: '',
-  tokenElecterm: '',
   defaultAIPreset
 }
 const htmlContent = pug.render(pugContent, {

@@ -256,7 +256,7 @@ jobs:
           echo "| Branch/Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Runtime | \`Electron 鸿蒙 (libelectron.so)\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Web app | \`local source (bundled)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web app | \`electerm source (direct run)\` |" >> $GITHUB_STEP_SUMMARY
           echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then

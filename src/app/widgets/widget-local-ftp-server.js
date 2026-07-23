@@ -1,6 +1,6 @@
-import os from 'os'
-import uid from '../common/uid.js'
-import FtpSrv from '@electerm/ftp-srv'
+const os = require('os')
+const uid = require('../common/uid')
+const FtpSrv = require('@electerm/ftp-srv')
 
 const widgetInfo = {
   name: 'Local FTP Server',
@@ -137,7 +137,7 @@ function widgetRun (instanceConfig) {
   }
 }
 
-export {
+module.exports = {
   widgetInfo,
   widgetRun
 }

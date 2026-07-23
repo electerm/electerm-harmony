@@ -1,9 +1,8 @@
-import crypto from 'crypto'
-import fs from 'fs'
-import os from 'os'
-import { dirname, join } from 'path'
-import keyParserModule from '@electerm/ssh2/lib/protocol/keyParser.js'
-const { parseKey } = keyParserModule
+const crypto = require('crypto')
+const fs = require('fs')
+const os = require('os')
+const { dirname, join } = require('path')
+const { parseKey } = require('@electerm/ssh2/lib/protocol/keyParser.js')
 
 function normalizeHost (host = '') {
   if (typeof host !== 'string') {
@@ -433,7 +432,7 @@ function createHostVerifier (options) {
   }
 }
 
-export {
+module.exports = {
   appendKnownHost,
   buildHostMismatchError,
   buildHostMismatchPrompt,

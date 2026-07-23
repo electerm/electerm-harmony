@@ -1,29 +1,15 @@
 /**
  * terminal/sftp/serial class
  */
-import { TerminalBase } from './session-base.js'
-import log from '../common/log.js'
-import globalState from './global-state.js'
-
-// `serialport` is a native module that is not built for HarmonyOS yet. Load it
-// lazily and tolerate its absence so the server can still start.
-let serialPortPromise = null
-function loadSerialPort () {
-  if (!serialPortPromise) {
-    serialPortPromise = import('serialport')
-      .then(m => m.SerialPort)
-      .catch(err => {
-        log.warn('serialport is not available, serial terminals disabled:', err.message)
-        return null
-      })
-  }
-  return serialPortPromise
-}
+const { TerminalBase } = require('./session-base')
+const log = require('../common/log')
+const globalState = require('./global-state')
 // const { MockBinding } = require('@serialport/binding-mock')
 // MockBinding.createPort('/dev/ROBOT', { echo: true, record: true })
 
 class TerminalSerial extends TerminalBase {
   async init () {
+    const { SerialPort } = require('serialport')
     // https://serialport.io/docs/api-stream
     const {
       autoOpen = true,
@@ -40,10 +26,6 @@ class TerminalSerial extends TerminalBase {
       rxLineEnding = 'none',
       path
     } = this.initOptions
-    const SerialPort = await loadSerialPort()
-    if (!SerialPort) {
-      return Promise.reject(new Error('Serial port support is not available on this platform'))
-    }
     this.txLineEnding = txLineEnding
     this.rxLineEnding = rxLineEnding
     await new Promise((resolve, reject) => {
@@ -73,6 +55,7 @@ class TerminalSerial extends TerminalBase {
       return true
     }
     globalState.setSession(this.pid, this)
+    return Promise.resolve(this)
   }
 
   resize () {
@@ -106,9 +89,6 @@ class TerminalSerial extends TerminalBase {
         out = str.replace(/\r\n|\r|\n/g, this.txLineEnding)
       }
       this.port.write(Buffer.isBuffer(data) ? Buffer.from(out, 'latin1') : out)
-      if (this.sessionLogger) {
-        this.sessionLogger.write(data)
-      }
     } catch (e) {
       log.error(e)
     }
@@ -136,7 +116,7 @@ class TerminalSerial extends TerminalBase {
   }
 }
 
-export async function terminalSerial (initOptions, ws) {
+exports.session = async function (initOptions, ws) {
   const term = new TerminalSerial(initOptions, ws)
   await term.init()
   return term
@@ -146,7 +126,7 @@ export async function terminalSerial (initOptions, ws) {
  * test ssh connection
  * @param {object} options
  */
-export function testConnectionSerial (initOptions) {
+exports.test = (initOptions) => {
   return (new TerminalSerial(initOptions, undefined, true))
     .init()
     .then(() => true)
@@ -154,6 +134,3 @@ export function testConnectionSerial (initOptions) {
       return false
     })
 }
-
-export const terminal = terminalSerial
-export const testConnection = testConnectionSerial

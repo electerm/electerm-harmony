@@ -5,18 +5,19 @@
  * Uses a simple local MCP implementation
  */
 
-import { McpServer } from '../mcp/server/mcp.js'
-import { StreamableHTTPServerTransport } from '../mcp/server/streamableHttp.js'
-import { z } from '../lib/zod.js'
-import express from 'express'
-import uid from '../common/uid.js'
-import globalState from '../server/global-state.js'
-import {
+const { ipcMain } = require('electron')
+const { McpServer } = require('../mcp/server/mcp.js')
+const { StreamableHTTPServerTransport } = require('../mcp/server/streamableHttp.js')
+const { z } = require('../lib/zod')
+const express = require('express')
+const uid = require('../common/uid')
+const globalState = require('../lib/glob-state')
+const {
   sshBookmarkSchema,
   telnetBookmarkSchema,
   serialBookmarkSchema,
   localBookmarkSchema
-} from '../common/bookmark-zod-schemas.js'
+} = require('../common/bookmark-zod-schemas')
 
 const widgetInfo = {
   name: 'MCP Server',
@@ -64,6 +65,7 @@ const widgetInfo = {
       default: true,
       description: 'Enable bookmark group APIs'
     },
+
     {
       name: 'enableSftp',
       type: 'boolean',
@@ -107,7 +109,7 @@ function getDefaultConfig () {
 class ElectermMCPServer {
   constructor (config) {
     this.config = config
-    // API key is optional; when empty, authentication is skipped.
+    // API key is optional - skip auth if not provided
     this.instanceId = uid()
     this.httpServer = null
     this.mcpServer = null
@@ -116,42 +118,71 @@ class ElectermMCPServer {
     this.transports = {}
   }
 
+  // Built-in blacklist: patterns that are always blocked regardless of user config.
+  // These cover the most common destructive / privilege-escalation shell idioms.
   static get BUILTIN_BLACKLIST () {
     return [
-      /rm\s+-[^\s]*[rR][^\s]*\s+\//,
-      /rm\s+-[^\s]*[rR][^\s]*\s+~/,
-      /rm\s+--recursive/,
-      /:\s*\(\s*\)\s*\{.*\|.*:.*&.*\}\s*;.*:/,
-      /\bdd\b.*\bof\s*=\s*\/dev\//,
-      /\bmkfs\b/,
-      />\s*\/dev\/[sh]d[a-z]/,
-      /\bsudo\s+rm\b/,
-      /curl\s+.*\|\s*sh/,
-      /wget\s+.*\|\s*sh/,
-      /curl\s+.*\|\s*bash/,
-      /wget\s+.*\|\s*bash/
+      /rm\s+-[^\s]*[rR][^\s]*\s+\//, // rm -rf / or rm -Rf / (recursive delete from root)
+      /rm\s+-[^\s]*[rR][^\s]*\s+~/, // rm -rf ~ or rm -Rf ~ (recursive delete home)
+      /rm\s+--recursive/, // rm --recursive (long-form flag)
+      /:\s*\(\s*\)\s*\{.*\|.*:.*&.*\}\s*;.*:/, // fork bomb  :(){:|:&};:
+      /\bdd\b.*\bof\s*=\s*\/dev\//, // dd of=/dev/...
+      /\bmkfs\b/, // mkfs (format filesystem)
+      />\s*\/dev\/[sh]d[a-z]/, // redirect to raw disk
+      /\bsudo\s+rm\b/, // sudo rm
+      /curl\s+.*\|\s*sh/, // curl | sh  (remote code execution)
+      /wget\s+.*\|\s*sh/, // wget | sh
+      /curl\s+.*\|\s*bash/, // curl | bash
+      /wget\s+.*\|\s*bash/ // wget | bash
     ]
   }
 
+  // Validate a command against whitelist/blacklist rules.
+  // Returns { allowed: true } or { allowed: false, reason: string }
   validateCommand (command) {
+    // 1. Always-on built-in blacklist
     for (const pattern of ElectermMCPServer.BUILTIN_BLACKLIST) {
       if (pattern.test(command)) {
         return { allowed: false, reason: `Command blocked by built-in safety rule: ${pattern}` }
       }
     }
-    const userBlacklist = (this.config.commandBlacklist || '').split('\n').map(s => s.trim()).filter(Boolean)
+
+    // 2. User-defined blacklist (newline-separated regex strings)
+    const userBlacklist = (this.config.commandBlacklist || '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+
     for (const raw of userBlacklist) {
       try {
         if (new RegExp(raw).test(command)) {
           return { allowed: false, reason: `Command blocked by blacklist pattern: ${raw}` }
         }
-      } catch (_) {}
+      } catch (_) {
+        // ignore invalid regex in config
+      }
     }
-    const userWhitelist = (this.config.commandWhitelist || '').split('\n').map(s => s.trim()).filter(Boolean)
+
+    // 3. User-defined whitelist (newline-separated regex strings)
+    //    Only enforced when at least one pattern is configured.
+    const userWhitelist = (this.config.commandWhitelist || '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+
     if (userWhitelist.length > 0) {
-      const allowed = userWhitelist.some(raw => { try { return new RegExp(raw).test(command) } catch (_) { return false } })
-      if (!allowed) { return { allowed: false, reason: 'Command not in whitelist' } }
+      const allowed = userWhitelist.some(raw => {
+        try {
+          return new RegExp(raw).test(command)
+        } catch (_) {
+          return false
+        }
+      })
+      if (!allowed) {
+        return { allowed: false, reason: 'Command not in whitelist' }
+      }
     }
+
     return { allowed: true }
   }
 
@@ -159,10 +190,10 @@ class ElectermMCPServer {
   sendToRenderer (action, data, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
       const requestId = uid()
-      const commonWs = globalState.getCommonWs()
+      const win = globalState.get('win')
 
-      if (!commonWs) {
-        reject(new Error('No commonWs connection available'))
+      if (!win) {
+        reject(new Error('No active window'))
         return
       }
 
@@ -175,8 +206,7 @@ class ElectermMCPServer {
       this.pendingRequests.set(requestId, { resolve, reject, timeout })
 
       // Send to renderer
-      commonWs.s({
-        type: 'mcp-request',
+      win.webContents.send('mcp-request', {
         requestId,
         action,
         data
@@ -694,6 +724,7 @@ class ElectermMCPServer {
         }
       )
     }
+
     // ==================== SFTP APIs ====================
     if (this.config.enableSftp) {
       server.registerTool(
@@ -847,6 +878,7 @@ class ElectermMCPServer {
         }
       )
     }
+
     // ==================== Settings APIs ====================
     if (this.config.enableSettings) {
       server.registerTool(
@@ -868,12 +900,8 @@ class ElectermMCPServer {
     const { host, port } = this.config
 
     // Set up IPC response handler
-    this.ipcHandler = (message) => {
-      const msg = JSON.parse(message)
-      const { requestId, result, error, type } = msg
-      if (type !== 'mcp-response-back') {
-        return
-      }
+    this.ipcHandler = (event, response) => {
+      const { requestId, result, error } = response
       const pending = this.pendingRequests.get(requestId)
       if (pending) {
         clearTimeout(pending.timeout)
@@ -885,8 +913,7 @@ class ElectermMCPServer {
         }
       }
     }
-    const commonWs = globalState.getCommonWs()
-    commonWs.on('message', this.ipcHandler)
+    ipcMain.on('mcp-response', this.ipcHandler)
 
     // Create MCP server
     this.mcpServer = new McpServer({
@@ -901,12 +928,14 @@ class ElectermMCPServer {
     const app = express()
     app.use(express.json())
 
-    // Handle CORS, defaulting to same-origin only.
+    // Handle CORS — restrict to same-origin only (no wildcard)
     app.use((req, res, next) => {
       const allowedOrigin = this.config.allowedOrigin || ''
       if (allowedOrigin) {
         res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
       }
+      // Do NOT set Access-Control-Allow-Origin when no origin is configured
+      // This blocks cross-origin browser requests by default
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id, Authorization')
       if (req.method === 'OPTIONS') {
@@ -916,7 +945,7 @@ class ElectermMCPServer {
       next()
     })
 
-    // Authenticate requests with API key when configured.
+    // Authenticate requests with API key (only if apiKey is configured)
     if (this.config.apiKey) {
       app.use((req, res, next) => {
         const authHeader = req.headers.authorization || ''
@@ -1038,8 +1067,7 @@ class ElectermMCPServer {
   async stop () {
     // Remove IPC handler
     if (this.ipcHandler) {
-      const commonWs = globalState.getCommonWs()
-      commonWs.removeListener('message', this.ipcHandler)
+      ipcMain.removeListener('mcp-response', this.ipcHandler)
       this.ipcHandler = null
     }
 
@@ -1096,8 +1124,8 @@ function widgetRun (instanceConfig) {
   }
 }
 
-export {
+module.exports = {
   widgetInfo,
   widgetRun,
-  ElectermMCPServer
+  _ElectermMCPServer: ElectermMCPServer
 }

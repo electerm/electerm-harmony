@@ -2,15 +2,14 @@
  * transfer class
  */
 
-import fs from 'fs'
-import _ from 'lodash'
-import log from '../common/log.js'
-import * as tar from 'tar'
-import { Transfer as Ssh2ScpTransfer } from 'ssh2-scp/transfer'
-import { FolderTransfer } from 'ssh2-scp/folder-transfer'
-import iconv from 'iconv-lite'
+const fs = require('original-fs')
+const tar = require('tar')
+const _ = require('../lib/lodash.js')
+const log = require('../common/log')
 
-export class Transfer {
+const { FolderTransfer } = require('ssh2-scp/folder-transfer')
+
+class Transfer {
   constructor ({
     remotePath,
     localPath,
@@ -31,20 +30,20 @@ export class Transfer {
     this.sftpId = sftpId
     this.srcPath = isd ? remotePath : localPath
     this.dstPath = !isd ? remotePath : localPath
+    this.conn = conn
     this.pausing = false
     this.hadError = false
     this.isUpload = isd
-    this.options = options
-    this.conn = conn
     this.isDirectory = isDirectory
+    this.options = options
     this.concurrency = options.concurrency || 64
     this.chunkSize = options.chunkSize || 32768
     this.mode = options.mode
     this.encode = encode
-    this.onData = _.throttle((count) => {
+    this.onData = _.throttle((data) => {
       ws.s({
         id: 'transfer:data:' + id,
-        data: count
+        data
       })
     }, 3000)
     this.timers = {}
@@ -92,7 +91,7 @@ export class Transfer {
         }
       }
       if (this.encode !== 'utf8') {
-        folderOpts.iconv = iconv
+        folderOpts.iconv = require('iconv-lite')
         folderOpts.encoding = this.encode
       }
       this.scpTransfer = new FolderTransfer(this.conn, tar, folderOpts)
@@ -114,7 +113,7 @@ export class Transfer {
       const sshFs = type === 'download' ? this.src : this.dst
       const remotePath = type === 'download' ? this.srcPath : this.dstPath
       const localPath = type === 'download' ? this.dstPath : this.srcPath
-
+      const { Transfer: Ssh2ScpTransfer } = require('ssh2-scp/transfer')
       this.scpTransfer = new Ssh2ScpTransfer(sshFs, {
         type,
         remotePath,
@@ -434,8 +433,11 @@ export class Transfer {
   // end
 }
 
-export const transferKeys = [
-  'pause',
-  'resume',
-  'destroy'
-]
+module.exports = {
+  Transfer,
+  transferKeys: [
+    'pause',
+    'resume',
+    'destroy'
+  ]
+}

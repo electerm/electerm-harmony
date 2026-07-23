@@ -104,13 +104,13 @@ for lib in libelectron.so libadapter.so libffmpeg.so; do
   echo "    ✓ Found: ${lib}"
 done
 
-# Check app code
-if [ ! -f "${APP_DIR}/main.js" ]; then
-  echo "    ✗ Missing: ${APP_DIR}/main.js"
+# Check app code (electerm uses app.js as Electron main process entry, not main.js)
+if [ ! -f "${APP_DIR}/app.js" ]; then
+  echo "    ✗ Missing: ${APP_DIR}/app.js"
   echo "    Run ./scripts/prepare-electron-runtime.sh then ./scripts/prepare-web.sh first."
   exit 1
 fi
-echo "    ✓ Found: main.js"
+echo "    ✓ Found: app.js"
 
 # Check web_engine module
 if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then

@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid'
-export default function uid () {
+const { nanoid } = require('nanoid')
+module.exports = () => {
   return nanoid(7)
 }
