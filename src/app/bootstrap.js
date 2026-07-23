@@ -1,52 +1,73 @@
 /**
  * bootstrap.js — HarmonyOS entry point.
  *
- * On HarmonyOS, the Electron 鸿蒙 runtime starts the Node.js process before
- * the ArkTS layer has finished calling JsBindingUtils.SetContextPaths().
- * If app.js (which transitively loads app-props.js) is loaded too early,
- * app.getPath('appData') throws "Failed to get 'appData' path" and crashes
- * the main process.
+ * On HarmonyOS, app.getPath('appData') does not work in the Electron runtime
+ * due to a C++ binding issue (SetContextPaths is not effective). Instead,
+ * AbilityStage.ets writes the sandbox filesDir to a marker file before the
+ * Electron runtime starts. This file reads that marker and sets
+ * process.env.DATA_PATH so all downstream modules (app-props.js, db.js, etc.)
+ * use the correct sandbox path.
  *
- * This bootstrap polls app.getPath('appData') until it succeeds, then loads
- * app.js. This guarantees that all downstream modules (db.js, ipc.js, etc.)
- * can safely call app.getPath() at module load time.
- *
- * On non-HarmonyOS platforms, app.getPath('appData') works immediately and
- * app.js is loaded without delay.
+ * Path derivation:
+ *   __dirname = /data/storage/el1/bundle/entry/resources/resfile/resources/app
+ *   filesDir  = /data/storage/el2/base/haps/entry/files
+ *   Transform: replace "/el1/bundle/" with "/el2/base/haps/", strip the
+ *   resources/resfile/... suffix, append "/files".
  */
-const { app } = require('electron')
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
 
-const POLL_INTERVAL = 50 // ms
-const MAX_WAIT = 10000 // 10 seconds
-
-function isPathReady () {
-  try {
-    app.getPath('appData')
-    return true
-  } catch {
-    return false
+function deriveSandboxFilesDir () {
+  // __dirname is like: /data/storage/el1/bundle/entry/resources/resfile/resources/app
+  // sandbox filesDir is like: /data/storage/el2/base/haps/entry/files
+  const m = __dirname.match(/^(.+?)\/el1\/bundle\/([^/]+)/)
+  if (m) {
+    return `${m[1]}/el2/base/haps/${m[2]}/files`
   }
+  return null
 }
 
-function startApp () {
-  require('./app.js')
-}
+function getDataPath () {
+  const derivedDir = deriveSandboxFilesDir()
 
-if (isPathReady()) {
-  startApp()
-} else {
-  console.log('[bootstrap] waiting for app.getPath("appData") to become available...')
-  const startTime = Date.now()
-  const timer = setInterval(() => {
-    if (isPathReady()) {
-      clearInterval(timer)
-      console.log(`[bootstrap] app.getPath("appData") ready after ${Date.now() - startTime}ms`)
-      startApp()
-    } else if (Date.now() - startTime > MAX_WAIT) {
-      clearInterval(timer)
-      console.error(`[bootstrap] timed out after ${MAX_WAIT}ms waiting for app.getPath("appData")`)
-      // Start anyway — app-props.js has a try/catch fallback
-      startApp()
+  if (derivedDir) {
+    // 1. Try reading the marker file written by AbilityStage.ets
+    const markerPath = path.join(derivedDir, '.electerm-data-path')
+    try {
+      const data = fs.readFileSync(markerPath, 'utf8').trim()
+      if (data) {
+        console.log('[bootstrap] got data path from marker file:', data)
+        return data
+      }
+    } catch (e) {
+      console.log('[bootstrap] marker file not found at', markerPath)
     }
-  }, POLL_INTERVAL)
+
+    // 2. Marker not found — try the derived path directly
+    try {
+      fs.mkdirSync(derivedDir, { recursive: true })
+      console.log('[bootstrap] using derived sandbox path:', derivedDir)
+      return derivedDir
+    } catch (e) {
+      console.warn('[bootstrap] derived path not writable:', derivedDir, e.message)
+    }
+  }
+
+  // 3. Last resort: try app.getPath('appData')
+  try {
+    const { app } = require('electron')
+    const p = app.getPath('appData')
+    console.log('[bootstrap] using app.getPath("appData"):', p)
+    return p
+  } catch (e) {
+    console.warn('[bootstrap] app.getPath("appData") failed:', e.message)
+  }
+
+  // 4. Final fallback
+  console.warn('[bootstrap] falling back to os.tmpdir():', os.tmpdir())
+  return os.tmpdir()
 }
+
+process.env.DATA_PATH = getDataPath()
+require('./app.js')

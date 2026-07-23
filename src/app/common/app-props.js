@@ -3,12 +3,13 @@
  *
  * On HarmonyOS, appData (filesDir) serves as both the app data directory
  * and the home directory. There is no separate home concept or portable mode.
+ *
+ * bootstrap.js sets process.env.DATA_PATH before loading app.js.
  */
-const { app } = require('electron')
 const { resolve } = require('path')
 const constants = require('./runtime-constants')
 
-const appDataPath = app.getPath('appData')
+const appDataPath = process.env.DATA_PATH
 
 module.exports = {
   appPath: appDataPath,
