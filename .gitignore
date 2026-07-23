@@ -50,3 +50,4 @@ Thumbs.db
 /build-download/
 build/harmony/rawfile
 src/client/electerm-react/
+entry/src/main/resources/rawfile
