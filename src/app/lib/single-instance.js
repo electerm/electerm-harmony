@@ -1,30 +1,19 @@
 /**
- * Single instance lock with socket-based IPC fallback
- * for Electron versions where additionalData doesn't work (e.g., Electron 22)
+ * Single instance lock with socket-based IPC
  */
 
 const net = require('net')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 const { app } = require('electron')
 const globalState = require('./glob-state')
 
-// Get socket path based on platform
-function getSocketPath () {
-  const appName = app.getName()
-  if (process.platform === 'win32') {
-    return `\\\\.\\pipe\\${appName}-instance-lock`
-  }
-  // Unix socket
-  const tmpDir = app.getPath('temp')
-  return path.join(tmpDir, `${appName}-instance.sock`)
-}
+const socketPath = path.join(os.tmpdir(), `${app.getName()}-instance.sock`)
 
-const socketPath = getSocketPath()
-
-// Clean up stale socket file on Unix
+// Clean up stale socket file
 function cleanupSocket () {
-  if (process.platform !== 'win32' && fs.existsSync(socketPath)) {
+  if (fs.existsSync(socketPath)) {
     try {
       fs.unlinkSync(socketPath)
     } catch (e) {
@@ -94,7 +83,7 @@ function sendToFirstInstance (data) {
 }
 
 /**
- * Handle second instance connection with socket fallback
+ * Handle second instance connection
  * @param {Object} progs - Parsed command line options
  * @returns {Promise<boolean>} - True if this is the primary instance
  */

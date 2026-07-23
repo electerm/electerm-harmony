@@ -211,6 +211,80 @@ else
   echo "    (AppWindowAdapter.ets not found, skipping)"
 fi
 
+# --- Patch WebAbilityStage.ets for startup timing fix ------------------------
+
+echo "==> Patching web_engine WebAbilityStage for SetContextPaths timing ..."
+
+WEB_ABILITY_STAGE="${WEB_ENGINE_DIR}/src/main/ets/application/WebAbilityStage.ets"
+if [ -f "${WEB_ABILITY_STAGE}" ]; then
+  python3 -c "
+import sys
+
+with open('${WEB_ABILITY_STAGE}', 'r') as f:
+    content = f.read()
+
+original = content
+
+# 1. Add synchronous DI init + SetContextPaths to onCreate(), before
+#    runTaskAsync() is called. This ensures the native module has the
+#    HarmonyOS directory paths BEFORE the Electron runtime starts and
+#    tries to call app.getPath('appData').
+old_oncreate = '''  onCreate(): void {
+    LogUtil.info(TAG, '[ohoswindow] in WebAbilityStage onCreate.');
+    this.runTaskAsync();
+  }'''
+
+new_oncreate = '''  onCreate(): void {
+    LogUtil.info(TAG, '[ohoswindow] in WebAbilityStage onCreate.');
+    // Initialize DI container and set context paths synchronously,
+    // before the Electron runtime starts. This ensures app.getPath()
+    // works when the Electron main process loads app-props.js.
+    // (Moved from runTaskAsync to fix race condition on slower devices.)
+    if (!GlobalThisHelper.isLaunched()) {
+      let appContext = this.context.getApplicationContext();
+      GlobalThisHelper.appInit(new CommonDependencyProvider(appContext));
+    }
+    JsBindingUtils.SetContextPaths();
+    this.runTaskAsync();
+  }'''
+
+content = content.replace(old_oncreate, new_oncreate)
+
+# 2. Remove the appInit block from runTaskAsync() (now done in onCreate)
+old_appinit = '''      if (!GlobalThisHelper.isLaunched()) {
+        let appContext = this.context.getApplicationContext();
+        GlobalThisHelper.appInit(new CommonDependencyProvider(appContext));
+      }
+      import'''
+
+new_appinit = '''      import'''
+
+content = content.replace(old_appinit, new_appinit)
+
+# 3. Remove SetContextPaths from the async import().then() callback
+#    (now done synchronously in onCreate)
+old_setpaths = '''        this.nativeThemeAdapter = Inject.get(NativeThemeAdapter);
+        JsBindingUtils.SetContextPaths();
+      }).catch'''
+
+new_setpaths = '''        this.nativeThemeAdapter = Inject.get(NativeThemeAdapter);
+      }).catch'''
+
+content = content.replace(old_setpaths, new_setpaths)
+
+if content == original:
+    print('    WARNING: WebAbilityStage.ets pattern not found — file may already be patched or structure changed')
+    sys.exit(0)
+
+with open('${WEB_ABILITY_STAGE}', 'w') as f:
+    f.write(content)
+
+print('    WebAbilityStage patched: SetContextPaths moved to synchronous onCreate()')
+"
+else
+  echo "    (WebAbilityStage.ets not found, skipping)"
+fi
+
 # --- Check signing materials ------------------------------------------------
 
 echo "==> Checking signing materials ..."

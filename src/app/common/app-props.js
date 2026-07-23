@@ -1,44 +1,20 @@
 /**
- * app path
+ * app path — HarmonyOS only.
+ *
+ * On HarmonyOS, appData (filesDir) serves as both the app data directory
+ * and the home directory. There is no separate home concept or portable mode.
  */
 const { app } = require('electron')
 const { resolve } = require('path')
 const constants = require('./runtime-constants')
-const installSrc = require('../lib/install-src')
 
-function getDataPath () {
-  const defaultValue = {
-    appPath: app.getPath('appData'),
-    isPortable: false
-  }
-  if (!constants.isWin) {
-    return defaultValue
-  }
-  const exePath = app.getPath('exe').replace('\\electerm.exe', '')
-  const p = exePath + '\\' + 'electerm'
-  if (
-    installSrc === 'win-x64-portable.tar.gz' ||
-    require('fs').existsSync(
-      p
-    )
-  ) {
-    return {
-      appPath: exePath,
-      exePath,
-      isPortable: true
-    }
-  }
-  return {
-    ...defaultValue,
-    exePath
-  }
-}
+const appDataPath = app.getPath('appData')
 
 module.exports = {
-  ...getDataPath(),
-  sshKeysPath: resolve(
-    app.getPath('home'),
-    '.ssh'
-  ),
+  appPath: appDataPath,
+  isPortable: false,
+  exePath: '',
+  sshKeysPath: resolve(appDataPath, '.ssh'),
+  homeOrTmp: appDataPath,
   ...constants
 }
