@@ -4,11 +4,15 @@ const getPort = require('./get-port')
 const { userConfigId, userNoEncryptConfigId } = require('../common/constants')
 const generate = require('../common/uid')
 const globalState = require('./glob-state')
+const dlog = require('../common/debug-logger')
 
 exports.getConfig = async (inited) => {
+  dlog('get-config: getConfig START, inited:', inited)
+  dlog('get-config: calling dbAction findOne userConfig...')
   const userConfig = await dbAction('data', 'findOne', {
     _id: userConfigId
   }) || {}
+  dlog('get-config: dbAction findOne done, keys:', Object.keys(userConfig).length)
   const requireAuth = userConfig.hashedPassword
   delete userConfig._id
   delete userConfig.host
@@ -19,6 +23,7 @@ exports.getConfig = async (inited) => {
   const port = inited
     ? globalState.get('config').port
     : await getPort()
+  dlog('get-config: port resolved:', port)
   const config = {
     ...defaultSetting,
     ...userConfig,

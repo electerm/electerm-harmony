@@ -70,6 +70,7 @@ const { initCommandLine } = require('./command-line')
 const { watchFile, unwatchFile } = require('./watch-file')
 const lookup = require('../common/lookup')
 const { AIchat, AIchatWithTools, getStreamContent, stopStream } = require('./ai')
+const dlog = require('../common/debug-logger')
 
 // Security: whitelist of safe environment variables for Linux/Mac/Windows
 const SAFE_ENV_KEYS = [
@@ -95,23 +96,30 @@ const SAFE_ENV_KEYS = [
 ]
 
 async function initAppServer () {
+  dlog('initAppServer: START, serverInited:', globalState.get('serverInited'))
+  dlog('initAppServer: calling getConfig...')
   const {
     config
   } = await getConfig(globalState.get('serverInited'))
+  dlog('initAppServer: getConfig done, port:', config.port)
+  dlog('initAppServer: calling loadLocales...')
   const {
     langs,
     langMap,
     sysLocale
   } = await loadLocales()
+  dlog('initAppServer: loadLocales done, sysLocale:', sysLocale, 'langs count:', langs?.length)
   const language = getLang(config, sysLocale, langs)
   config.language = language
   globalState.set('langMap', langMap)
   if (!globalState.get('serverInited')) {
+    dlog('initAppServer: calling initServer (fork child)...')
     const child = await initServer(config, {
       ...process.env,
       appPath,
       sshKeysPath
     }, sysLocale)
+    dlog('initAppServer: initServer resolved, child pid:', child?.pid)
     child.on('message', (m) => {
       if (m && m.showFileInFolder) {
         if (!isMac) {
@@ -120,8 +128,12 @@ async function initAppServer () {
       }
     })
     globalState.set('serverInited', true)
+    dlog('initAppServer: serverInited set to true')
+  } else {
+    dlog('initAppServer: server already inited, skipping fork')
   }
   globalState.set('config', config)
+  dlog('initAppServer: DONE')
 }
 
 function initIpc () {

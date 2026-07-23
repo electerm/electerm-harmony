@@ -13,6 +13,7 @@ const {
 } = require('./deep-link')
 const { handleSingleInstance } = require('./single-instance')
 const log = require('../common/log')
+const dlog = require('../common/debug-logger')
 
 let conf = {}
 
@@ -57,6 +58,8 @@ app.on('render-process-gone', (event, webContents, details) => {
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
+  dlog('!!! uncaughtException:', error?.message || error, error?.stack || '')
+  log.error('uncaughtException:', error?.message || error, error?.stack || '')
   const errorMsg = error?.message || ''
   // Check if it's GPU related
   if (
@@ -70,7 +73,14 @@ process.on('uncaughtException', (error) => {
   }
 })
 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  dlog('!!! unhandledRejection:', reason?.message || reason, reason?.stack || '')
+  log.error('unhandledRejection:', reason?.message || reason, reason?.stack || '')
+})
+
 exports.createApp = async function () {
+  dlog('createApp: start')
   app.setName(packInfo.name)
   // Set desktop name so Linux taskbars (e.g. UOS/Deepin dde-dock) can match
   // the window to the .desktop file embedded in the AppImage.
@@ -124,18 +134,25 @@ exports.createApp = async function () {
   const progs = initCommandLine()
   const opts = progs?.options
   globalState.set('serverPort', opts?.serverPort)
+  dlog('createApp: initCommandLine done, serverPort:', opts?.serverPort)
 
+  dlog('createApp: calling getUserConfigNoEnc...')
   const { allowMultiInstance = false } = await getUserConfigNoEnc()
+  dlog('createApp: getUserConfigNoEnc done, allowMultiInstance:', allowMultiInstance)
 
   // Setup deep link handlers (open-url for macOS, etc.)
   setupDeepLinkHandlers()
+  dlog('createApp: setupDeepLinkHandlers done')
   // Only request single instance lock if multi-instance is not allowed
   if (!allowMultiInstance) {
     // Use socket-based single instance lock for compatibility with Electron 22
     // where additionalData doesn't work in the second-instance event
+    dlog('createApp: calling handleSingleInstance...')
     const isPrimaryInstance = await handleSingleInstance(progs)
+    dlog('createApp: handleSingleInstance done, isPrimaryInstance:', isPrimaryInstance)
 
     if (!isPrimaryInstance) {
+      dlog('createApp: not primary instance, quitting')
       app.quit()
       return app
     }
@@ -143,6 +160,7 @@ exports.createApp = async function () {
     // Also use Electron's built-in lock as a fallback
     app.requestSingleInstanceLock()
   }
+  dlog('createApp: setting up event handlers...')
 
   app.on('second-instance', (event, commandLine) => {
     const newWindowFlag = commandLine.includes('--new-window')
@@ -159,8 +177,17 @@ exports.createApp = async function () {
     }
   })
   app.whenReady().then(async () => {
-    conf = await getDbConfig()
-    createWindow(conf)
+    dlog('createApp: app.whenReady() fired')
+    try {
+      dlog('createApp: calling getDbConfig...')
+      conf = await getDbConfig()
+      dlog('createApp: getDbConfig done, calling createWindow...')
+      await createWindow(conf)
+      dlog('createApp: createWindow done')
+    } catch (e) {
+      dlog('createApp: ERROR in whenReady:', e?.message || e, e?.stack || '')
+      log.error('Failed to create window:', e?.message || e, e?.stack || '')
+    }
   })
   app.on('activate', () => {
     // On macOS it's common to re-create a window in the app when the
