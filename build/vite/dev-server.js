@@ -27,7 +27,9 @@ const base = {
   version: pack.version,
   isDev: !isProd,
   siteName: pack.name,
-  defaultAIPreset
+  defaultAIPreset,
+  disableUpgradeCheck: true,
+  hideLocalTerminal: true
 }
 
 function handleIndex (req, res) {

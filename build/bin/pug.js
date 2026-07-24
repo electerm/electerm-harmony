@@ -33,6 +33,7 @@ const data = {
   siteName: pack.name,
   isDev: false,
   disableUpgradeCheck: true,
+  hideLocalTerminal: true,
   defaultAIPreset
 }
 const htmlContent = pug.render(pugContent, {
