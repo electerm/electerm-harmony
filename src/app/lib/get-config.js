@@ -5,7 +5,6 @@ const { userConfigId, userNoEncryptConfigId } = require('../common/constants')
 const generate = require('../common/uid')
 const globalState = require('./glob-state')
 const dlog = require('../common/debug-logger')
-const { isHarmony } = require('../common/runtime-constants')
 
 exports.getConfig = async (inited) => {
   dlog('get-config: getConfig START, inited:', inited)
@@ -32,12 +31,8 @@ exports.getConfig = async (inited) => {
     port,
     tokenElecterm: inited ? globalState.get('config').tokenElecterm : generate()
   }
-  // On HarmonyOS, always use the system title bar to avoid:
-  // 1. Double title bar (HarmonyOS system title bar + web app custom title bar)
-  // 2. SIGSEGV crash from transparent window (not supported by HarmonyOS compositor)
-  if (isHarmony) {
-    config.useSystemTitleBar = true
-  }
+  // HarmonyOS: always use system title bar to avoid double title bar
+  config.useSystemTitleBar = true
   return {
     userConfig,
     config

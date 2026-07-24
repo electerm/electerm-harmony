@@ -3,7 +3,7 @@ const {
 } = require('electron')
 const { createWindow } = require('./create-window')
 const {
-  packInfo, isHarmony
+  packInfo
 } = require('../common/runtime-constants')
 const { initCommandLine } = require('./command-line')
 const globalState = require('./glob-state')
@@ -82,36 +82,13 @@ process.on('unhandledRejection', (reason, promise) => {
 exports.createApp = async function () {
   dlog('createApp: start')
   app.setName(packInfo.name)
-  // Set desktop name so Linux taskbars (e.g. UOS/Deepin dde-dock) can match
-  // the window to the .desktop file embedded in the AppImage.
-  if (process.platform === 'linux' && app.setDesktopName) {
-    app.setDesktopName(packInfo.name)
-  }
-  // Handle GPU issues on Linux
-  // On Linux, disable GPU for compatibility (many systems lack proper EGL/GL
-  // drivers — servers, containers, VMs, minimal desktops, etc.).
-  // Set ENABLE_GPU=1 to opt out and use hardware GPU acceleration on Linux.
-  if (process.env.ENABLE_GPU !== '1' && (process.platform === 'linux' || process.env.DISABLE_GPU)) {
-    app.commandLine.appendSwitch('disable-gpu')
-    app.commandLine.appendSwitch('disable-gpu-compositing')
-    app.commandLine.appendSwitch('disable-gpu-rasterization')
-    // Use SwiftShader (software GL) to bypass EGL/DRM initialisation entirely.
-    // Without this, the GPU process still tries EGL and spams errors like:
-    //   "Unsupported flags 0x0", "fourcc format invalid",
-    //   "Couldn't allocate DRM buffer", "Invalid format", etc.
-    app.commandLine.appendSwitch('use-gl', 'swiftshader')
-  }
-  // On HarmonyOS, do NOT set enable-transparent-visuals or in-process-gpu:
-  // - enable-transparent-visuals triggers compositor code paths that cause SIGSEGV
-  // - in-process-gpu causes instability on HarmonyOS
-  if (process.platform === 'linux' && !isHarmony) {
-    app.commandLine.appendSwitch('enable-transparent-visuals')
-    app.commandLine.appendSwitch('in-process-gpu')
-  }
-  // On HarmonyOS, always disable hardware acceleration for stability
-  if (process.platform === 'linux' || process.env.DISABLE_HARDWARE_ACCELERATION || isHarmony) {
-    app.disableHardwareAcceleration()
-  }
+  // Disable GPU for stability — the HarmonyOS Electron runtime does not
+  // support hardware-accelerated rendering reliably.
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+  app.commandLine.appendSwitch('disable-gpu-rasterization')
+  app.commandLine.appendSwitch('use-gl', 'swiftshader')
+  app.disableHardwareAcceleration()
   if (process.env.DISABLE_GPU_SANDBOX) {
     app.disableHardwareAcceleration()
     app.commandLine.appendSwitch('disable-gpu')

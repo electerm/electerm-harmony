@@ -11,9 +11,6 @@ const isWin = platform === 'win32'
 const isMac = platform === 'darwin'
 const isLinux = platform === 'linux'
 const isArm = arch.includes('arm')
-// HarmonyOS detection: bootstrap.js (HarmonyOS entry point) sets process.env.DATA_PATH
-// before requiring app.js. This env var is only set on HarmonyOS.
-const isHarmony = !!process.env.DATA_PATH && process.platform === 'linux'
 
 const { NODE_ENV, NODE_TEST } = process.env
 const isDev = NODE_ENV === 'development'
@@ -46,7 +43,6 @@ module.exports = {
   isMac,
   isArm,
   isLinux,
-  isHarmony,
   iconPath,
   trayIconPath,
   extIconPath,

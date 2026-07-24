@@ -3,7 +3,7 @@ const {
 } = require('electron')
 const { resolve } = require('path')
 const {
-  isDev, packInfo, iconPath, isMac, isHarmony,
+  isDev, packInfo, iconPath, isMac,
   minWindowWidth, minWindowHeight
 } = require('../common/runtime-constants')
 const defaults = require('../common/default-setting')
@@ -27,11 +27,9 @@ exports.createWindow = async function (userConfig) {
   globalState.set('closeAction', 'closeApp')
   globalState.set('requireAuth', !!userConfig.hashedPassword)
   const { width, height, x, y } = await getWindowSize()
-  // On HarmonyOS, always use the system title bar to avoid:
-  // 1. Double title bar (system + custom web title bar)
-  // 2. SIGSEGV crash from transparent window (not supported by HarmonyOS compositor)
+  // HarmonyOS: always use system title bar (frame:true, transparent:false).
+  // transparent:true causes SIGSEGV in the HarmonyOS compositor.
   const { useSystemTitleBar = defaults.useSystemTitleBar } = userConfig
-  const useSystemTitle = isHarmony || useSystemTitleBar
   const win = new BrowserWindow({
     width,
     height,
@@ -41,10 +39,8 @@ exports.createWindow = async function (userConfig) {
     minWidth: minWindowWidth,
     minHeight: minWindowHeight,
     title: packInfo.name,
-    frame: useSystemTitle,
-    // transparent: true causes SIGSEGV on HarmonyOS — the compositor cannot
-    // handle transparent surfaces. Force false on HarmonyOS.
-    transparent: !useSystemTitle && !isHarmony,
+    frame: useSystemTitleBar,
+    transparent: false,
     backgroundColor: '#333333',
     webPreferences: {
       contextIsolation: true,
@@ -55,7 +51,7 @@ exports.createWindow = async function (userConfig) {
       devTools: !userConfig.disableDeveloperTool,
       spellcheck: false
     },
-    titleBarStyle: useSystemTitle ? 'default' : 'hidden',
+    titleBarStyle: useSystemTitleBar ? 'default' : 'hidden',
     icon: iconPath
   })
   // hides the traffic lights
