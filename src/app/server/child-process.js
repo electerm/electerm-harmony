@@ -1,10 +1,12 @@
 /**
- * run server in child process
+ * Start the main Express server in-process.
  *
+ * No child process — everything runs in the same Node.js/Electron process.
+ * Returns a mock "child" object with EventEmitter interface for compatibility
+ * with init-server.js.
  */
 
-const { fork } = require('child_process')
-const { resolve } = require('path')
+const EventEmitter = require('events')
 const { writeFileSync, unlinkSync } = require('fs')
 const { tmpdir } = require('os')
 const { join } = require('path')
@@ -19,13 +21,23 @@ function supportsSystemCa () {
 }
 
 module.exports = (config, env, sysLocale) => {
-  dlog('child-process: START')
+  dlog('child-process: START, port:', config.port, 'host:', config.host)
+
+  // Set environment variables that server.js reads
+  process.env.electermPort = String(config.port)
+  process.env.electermHost = config.host || '127.0.0.1'
+  process.env.requireAuth = config.requireAuth || ''
+  process.env.tokenElecterm = config.tokenElecterm
+  process.env.sshKeysPath = env.sshKeysPath
+  process.env.LANG = `${sysLocale.replace(/-/, '_')}.UTF-8`
+
+  // Handle system CAs
   const nodeOpts = [env.NODE_OPTIONS, supportsSystemCa() ? '--use-system-ca' : '']
     .filter(Boolean).join(' ').trim()
-  dlog('child-process: nodeOpts:', nodeOpts)
+  if (nodeOpts) {
+    process.env.NODE_OPTIONS = nodeOpts
+  }
 
-  // Load system-trusted CA certificates and pass to child process
-  // via NODE_EXTRA_CA_CERTS so Node.js extends its trust store natively.
   let extraCaFile
   const systemCAs = getSystemCAs()
   if (systemCAs) {
@@ -34,46 +46,40 @@ module.exports = (config, env, sysLocale) => {
     dlog('child-process: wrote system CA file:', extraCaFile)
   }
 
-  // Clean Electron-specific env vars from child process environment
-  const cleanEnv = Object.assign({}, env)
-  delete cleanEnv.ELECTRON_RUN_AS_NODE
+  // Create a mock child object for init-server.js compatibility
+  const child = new EventEmitter()
+  child.pid = process.pid
+  child.killed = false
+  child.stdout = { on: () => {} }
+  child.stderr = { on: () => {} }
+  child.kill = () => {
+    child.killed = true
+    dlog('child-process: kill() called')
+    child.emit('exit', 0, 'SIGTERM')
+    return true
+  }
+  child.send = (msg) => {
+    child.emit('message', msg)
+    return true
+  }
 
-  const serverPath = resolve(__dirname, './server.js')
-  dlog('child-process: forking server:', serverPath, 'port:', config.port)
-  log.info('Forking server:', serverPath, 'port:', config.port)
-
-  // start server — fork() takes (modulePath, args, options), NOT a callback
-  const child = fork(serverPath, [], {
-    env: Object.assign(
-      {
-        LANG: `${sysLocale.replace(/-/, '_')}.UTF-8`,
-        electermPort: config.port,
-        electermHost: config.host || '127.0.0.1',
-        requireAuth: config.requireAuth || '',
-        tokenElecterm: config.tokenElecterm,
-        sshKeysPath: env.sshKeysPath,
-        NODE_OPTIONS: nodeOpts || undefined,
-        NODE_EXTRA_CA_CERTS: extraCaFile || undefined
-      },
-      cleanEnv
-    ),
-    cwd: process.cwd(),
-    stdio: ['pipe', 'pipe', 'pipe', 'ipc']
-  })
-
-  // Log child process output for debugging
-  child.stdout.on('data', (data) => {
-    const text = data.toString().trim()
-    dlog('[server stdout]', text)
-    log.info('[server]', text)
-  })
-  child.stderr.on('data', (data) => {
-    const text = data.toString().trim()
-    dlog('[server stderr]', text)
-    log.error('[server stderr]', text)
-  })
-
-  dlog('child-process: child forked, pid:', child.pid)
+  // Require server.js (auto-starts) and wait for it to be ready
+  dlog('child-process: requiring server.js...')
+  try {
+    const { startServer } = require('./server')
+    startServer().then(() => {
+      dlog('child-process: server started, emitting serverInited')
+      child.emit('message', { serverInited: true })
+    }).catch(err => {
+      dlog('child-process: server start error:', err.message)
+      child.emit('error', err)
+    })
+  } catch (err) {
+    dlog('child-process: require server.js ERROR:', err.message, err.stack)
+    setImmediate(() => {
+      child.emit('error', err)
+    })
+  }
 
   if (extraCaFile) {
     child.on('exit', () => {
@@ -81,5 +87,6 @@ module.exports = (config, env, sysLocale) => {
     })
   }
 
+  log.info('Server starting in-process, port:', config.port)
   return child
 }

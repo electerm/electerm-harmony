@@ -9,10 +9,13 @@ const os = require('os')
 const { app } = require('electron')
 const globalState = require('./glob-state')
 
-const socketPath = path.join(os.tmpdir(), `${app.getName()}-instance.sock`)
+function getSocketPath () {
+  return path.join(os.tmpdir(), `${app.getName()}-instance.sock`)
+}
 
 // Clean up stale socket file
 function cleanupSocket () {
+  const socketPath = getSocketPath()
   if (fs.existsSync(socketPath)) {
     try {
       fs.unlinkSync(socketPath)
@@ -27,6 +30,7 @@ function cleanupSocket () {
  * @param {Function} onSecondInstance - Callback when second instance sends data
  */
 function startSocketServer (onSecondInstance) {
+  const socketPath = getSocketPath()
   cleanupSocket()
 
   const server = net.createServer((socket) => {
@@ -65,6 +69,7 @@ function startSocketServer (onSecondInstance) {
  * @returns {Promise<boolean>} - True if sent successfully
  */
 function sendToFirstInstance (data) {
+  const socketPath = getSocketPath()
   return new Promise((resolve) => {
     const client = net.createConnection(socketPath, () => {
       client.write(JSON.stringify(data))

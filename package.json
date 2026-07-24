@@ -1,6 +1,6 @@
 {
   "name": "electerm-harmony",
-  "version": "4.15.161",
+  "version": "4.15.166",
   "description": "electerm — a free and open-source ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS, built on the electerm codebase.",
   "main": "app.js",
   "bin": "npm/electerm",
@@ -12,6 +12,7 @@
     "clean": "node build/bin/clean",
     "compile": "node build/bin/build",
     "vite-build": "node build/bin/vite-build.js",
+    "install": "node build/bin/install",
     "prepare-file": "node build/bin/prepare",
     "build:harmony": "node build/harmony/build.mjs",
     "lint": "./node_modules/.bin/standard --verbose",
@@ -47,6 +48,7 @@
   "preferGlobal": true,
   "devDependencies": {
     "@ant-design/icons": "6.2.5",
+    "@electerm/electerm-react": "^3.15.166",
     "@electerm/electerm-resource": "2.1.9",
     "@fontsource/maple-mono": "^5.2.5",
     "@novnc/novnc": "1.7.0",
@@ -66,6 +68,7 @@
     "cross-env": "7.0.3",
     "dotenv": "16.4.5",
     "electerm-icons": "1.0.1",
+    "electron": "^39.2.7",
     "filesize": "10.1.6",
     "filesize-parser": "1.5.1",
     "glob": "^13.0.6",

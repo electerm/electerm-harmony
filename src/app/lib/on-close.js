@@ -25,15 +25,18 @@ exports.onClose = async function (e) {
     return e.preventDefault()
   }
   log.debug('Closing app')
-  const childPid = globalState.get('childPid')
-  childPid && process.kill(childPid)
+  // Clean up all terminal sessions
+  try {
+    const { cleanupTerminals } = require('../server/session-process')
+    cleanupTerminals()
+  } catch (e) {}
+  // Kill the main server mock
+  const child = globalState.get('child')
+  if (child && typeof child.kill === 'function') {
+    try { child.kill() } catch (e) {}
+  }
   globalState.set('serverInited', false)
-  process.on('uncaughtException', function () {
-    const childPid = globalState.get('childPid')
-    childPid && process.kill(childPid)
-    process.exit(0)
-  })
-  log.debug('Child process killed')
+  log.debug('Sessions and server cleaned up')
   // await dbAction('data', 'update', {
   //   _id: 'exitStatus'
   // }, {

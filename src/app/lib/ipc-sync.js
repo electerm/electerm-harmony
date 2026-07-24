@@ -6,15 +6,16 @@ const {
   shell,
   clipboard
 } = require('electron')
-const log = require('../common/log')
+// const log = require('../common/log')
 const constants = require('../common/runtime-constants')
+const appProps = require('../common/app-props')
 const windowMove = require('./window-drag-move.js')
 const globalState = require('./glob-state')
 const { transferKeys } = require('../server/transfer')
 const os = require('os')
 const {
   isTest
-} = require('../common/app-props')
+} = appProps
 const {
   getScreenSize
 } = require('./window-control')
@@ -39,12 +40,13 @@ const isMaximized = () => {
 module.exports = {
   getStorageKey,
   nodePtyCheck: () => {
-    try {
-      return !!require('node-pty')
-    } catch (err) {
-      log.error('Failed to load node-pty:', err)
-      return false
-    }
+    return false
+    // try {
+    //   return !!require('node-pty')
+    // } catch (err) {
+    //   log.error('Failed to load node-pty:', err)
+    //   return false
+    // }
   },
   windowMove,
   readClipboard: () => {
@@ -112,6 +114,7 @@ module.exports = {
     return {
       sep: require('path').sep,
       ...constants,
+      homeOrTmp: appProps.homeOrTmp,
       versions: JSON.stringify(process.versions),
       transferKeys,
       fsFunctions: [

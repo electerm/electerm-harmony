@@ -1,7 +1,15 @@
-const { fork } = require('child_process')
-const path = require('path')
+/**
+ * session-process.js — manages terminal session servers in-process.
+ *
+ * Each session is an Express app on its own port, created by
+ * createSessionServer() from session-server.js. No child processes.
+ * Communication is via EventEmitter channels.
+ */
 
-// Map to store active terminal processes (pid -> {child, port, ws})
+const dlog = require('../common/debug-logger')
+const { createSessionServer } = require('./session-server')
+
+// Map to store active terminal processes (pid -> {session, port, ws})
 const activeTerminals = new Map()
 
 // Track the last port assigned
@@ -26,13 +34,10 @@ function getPort (fromPort = MIN_PORT) {
   return new Promise((resolve, reject) => {
     require('find-free-port')(startPort, '127.0.0.1', function (err, freePort) {
       if (err) {
-        // Remove from pending set on error
         pendingPorts.delete(startPort)
         reject(err)
       } else {
-        // Remember this port for next time
         lastPort = freePort
-        // Remove from pending set when done
         pendingPorts.delete(startPort)
         resolve(freePort)
       }
@@ -40,43 +45,43 @@ function getPort (fromPort = MIN_PORT) {
   })
 }
 
+const electermHost = process.env.electermHost || '127.0.0.1'
+
 async function runSessionServer (type, port) {
-  return new Promise((resolve) => {
-    const cleanEnv = Object.assign({}, process.env)
-    delete cleanEnv.ELECTRON_RUN_AS_NODE
-    const child = fork(path.resolve(__dirname, './session-server.js'), {
-      env: Object.assign(
-        {
-          wsPort: port,
-          type
-        },
-        cleanEnv
-      ),
-      cwd: process.cwd()
-    }, (error, stdout, stderr) => {
-      if (error || stderr) {
-        console.error('Error in session server:', error || stderr)
-        throw error || stderr
-      }
+  return new Promise((resolve, reject) => {
+    dlog('session-process: creating session server, type:', type, 'port:', port)
+    const session = createSessionServer(type, port, electermHost)
+
+    session.channel.on('ready', () => {
+      dlog('session-process: session server ready, pid:', session.pid)
+      resolve(session)
     })
-    child.on('message', (m) => {
-      if (m && m.serverInited) {
-        resolve(child)
-      }
+
+    session.channel.on('exit', (code) => {
+      dlog('session-process: session server exit, code:', code)
     })
+
+    // Timeout: if server doesn't start within 10s, reject
+    setTimeout(() => {
+      if (!session.server.listening) {
+        dlog('session-process: session server startup TIMEOUT')
+        session.kill()
+        reject(new Error('Session server startup timed out'))
+      }
+    }, 10000)
   })
 }
 
-async function sendMsgToChildProcess (pid, msg) {
-  const child = typeof pid === 'object' ? pid : activeTerminals.get(pid)?.child
-  if (!child) {
-    throw new Error(`Terminal with PID ${pid} not found`)
-  }
-
+/**
+ * Send a command to a session and wait for the response.
+ * Works the same as the old sendMsgToChildProcess but via channel.
+ */
+async function sendMsgToSession (session, msg) {
   return new Promise((resolve, reject) => {
     const responseHandler = (response) => {
-      if (response.id === msg.id) {
-        child.removeListener('message', responseHandler)
+      // Only match command responses (not SSH data relay which has type:'common')
+      if (response.id === msg.id && !response.type) {
+        session.channel.removeListener('to-parent', responseHandler)
         if (response.error) {
           reject(response.error)
         } else {
@@ -85,8 +90,8 @@ async function sendMsgToChildProcess (pid, msg) {
       }
     }
 
-    child.on('message', responseHandler)
-    child.send({
+    session.channel.on('to-parent', responseHandler)
+    session.channel.toChild({
       type: 'common',
       data: msg
     })
@@ -96,7 +101,7 @@ async function sendMsgToChildProcess (pid, msg) {
 exports.terminal = async function (initOptions, ws, uid) {
   const type = initOptions.termType || initOptions.type || 'terminal'
   const port = await getPort()
-  const child = await runSessionServer(type, port)
+  const session = await runSessionServer(type, port)
   const pid = initOptions.uid
   const isSsh = ![
     'telnet',
@@ -107,47 +112,46 @@ exports.terminal = async function (initOptions, ws, uid) {
     'spice',
     'ftp'
   ].includes(type)
+
   if (isSsh) {
-    child.on('message', (m) => {
-      const { type, data } = m
-      if (type === 'common') {
-        ws.s(data)
+    // Relay SSH data between session and client WebSocket
+    session.channel.on('to-parent', (m) => {
+      if (m.type === 'common') {
+        ws.s(m.data)
         ws.once((data) => {
-          child.send(data)
-        }, data.id)
+          session.channel.toChild(data)
+        }, m.data.id)
       }
     })
   }
-  child.on('exit', () => {
-    // Remove all pending message listeners to prevent memory leaks
-    // if the child exits before responding to sendMsgToChildProcess calls
-    child.removeAllListeners('message')
+
+  session.channel.on('exit', () => {
+    session.channel.removeAllListeners('to-parent')
     activeTerminals.delete(pid)
   })
+
   if (type !== 'ftp') {
     try {
-      await sendMsgToChildProcess(child, {
+      await sendMsgToSession(session, {
         id: uid,
         action: 'create-terminal',
         body: initOptions
       })
     } catch (err) {
-      child.kill()
+      session.kill()
       throw err
     }
   }
 
-  // Kill any existing child process for this pid before overwriting.
-  // This can happen on reconnects where a new process is spawned for the same tab id.
+  // Kill any existing session for this pid before overwriting
   const existingEntry = activeTerminals.get(pid)
   if (existingEntry) {
-    existingEntry.child.kill()
+    existingEntry.session.kill()
     activeTerminals.delete(pid)
   }
 
-  // Store the terminal process in the map
   activeTerminals.set(pid, {
-    child,
+    session,
     port,
     ws
   })
@@ -161,7 +165,7 @@ exports.terminal = async function (initOptions, ws, uid) {
 exports.testConnection = async function (initOptions, ws, uid) {
   const type = initOptions.termType || initOptions.type || 'terminal'
   const port = await getPort()
-  const child = await runSessionServer(type, port)
+  const session = await runSessionServer(type, port)
 
   const isSsh = ![
     'telnet',
@@ -173,24 +177,23 @@ exports.testConnection = async function (initOptions, ws, uid) {
     'ftp'
   ].includes(type)
   if (isSsh && ws) {
-    child.on('message', (m) => {
-      const { type: msgType, data } = m
-      if (msgType === 'common') {
-        ws.s(data)
+    session.channel.on('to-parent', (m) => {
+      if (m.type === 'common') {
+        ws.s(m.data)
         ws.once((respData) => {
-          child.send(respData)
-        }, data.id)
+          session.channel.toChild(respData)
+        }, m.data.id)
       }
     })
   }
 
-  const res = await sendMsgToChildProcess(child, {
+  const res = await sendMsgToSession(session, {
     id: uid,
     action: 'test-terminal',
     body: initOptions
   })
 
-  child.kill()
+  session.kill()
   return res
 }
 
@@ -207,42 +210,42 @@ exports.terminals = function (pid) {
 
   return {
     runCmd: async (cmd, id) => {
-      return sendMsgToChildProcess(pid, {
+      return sendMsgToSession(terminal.session, {
         id,
         action: 'run-cmd',
         body: { cmd, pid }
       })
     },
     resize: (cols, rows, id) => {
-      sendMsgToChildProcess(pid, {
+      sendMsgToSession(terminal.session, {
         id,
         action: 'resize-terminal',
         body: { cols, rows, pid }
-      })// Ignore errors for resize
+      })
     },
     toggleTerminalLog: (id) => {
-      sendMsgToChildProcess(pid, {
+      sendMsgToSession(terminal.session, {
         id,
         action: 'toggle-terminal-log',
         body: { pid }
       })
     },
     toggleTerminalLogTimestamp: (id) => {
-      sendMsgToChildProcess(pid, {
+      sendMsgToSession(terminal.session, {
         id,
         action: 'toggle-terminal-log-timestamp',
         body: { pid }
       })
     },
     setTerminalLogPath: (id, logPath) => {
-      sendMsgToChildProcess(pid, {
+      sendMsgToSession(terminal.session, {
         id,
         action: 'set-terminal-log-path',
         body: { pid, logPath }
       })
     },
     startTerminalLogFile: (id, logFilePath, addTimeStampToTermLog) => {
-      sendMsgToChildProcess(pid, {
+      sendMsgToSession(terminal.session, {
         id,
         action: 'start-terminal-log-file',
         body: { pid, logFilePath, addTimeStampToTermLog }
@@ -256,7 +259,7 @@ exports.terminals = function (pid) {
  */
 exports.cleanupTerminals = function () {
   for (const [pid, terminal] of activeTerminals) {
-    terminal.child.kill()
+    terminal.session.kill()
     activeTerminals.delete(pid)
   }
 }

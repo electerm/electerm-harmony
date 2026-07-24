@@ -1,5 +1,8 @@
 /**
  * server init script
+ *
+ * Starts the Express server in-process (no child process).
+ * Returns a promise that resolves when the server reports ready.
  */
 
 const createChildServer = require('../server/child-process')
@@ -11,13 +14,14 @@ const SERVER_TIMEOUT = 15000 // 15 seconds
 
 module.exports = async (config, env, sysLocale) => {
   dlog('init-server: START, port:', config.port, 'host:', config.host)
+
   return new Promise((resolve, reject) => {
     let resolved = false
     let timer = null
 
-    dlog('init-server: creating child process...')
+    dlog('init-server: creating server...')
     const child = createChildServer(config, env, sysLocale)
-    dlog('init-server: child created, pid:', child.pid)
+    dlog('init-server: server created, pid:', child.pid)
 
     timer = setTimeout(() => {
       if (!resolved) {
@@ -30,19 +34,16 @@ module.exports = async (config, env, sysLocale) => {
     }, SERVER_TIMEOUT)
 
     child.on('exit', (code, signal) => {
-      dlog('init-server: child EXIT, code:', code, 'signal:', signal)
-      log.error('Child server exited, code:', code, 'signal:', signal)
-      globalState.set('childPid', null)
+      dlog('init-server: server EXIT, code:', code, 'signal:', signal)
       if (!resolved) {
         resolved = true
         if (timer) clearTimeout(timer)
-        reject(new Error(`Server process exited with code ${code} signal ${signal}`))
+        reject(new Error(`Server exited with code ${code} signal ${signal}`))
       }
     })
 
     child.on('error', (err) => {
-      dlog('init-server: child ERROR:', err.message || err)
-      log.error('Child server error:', err.message || err)
+      dlog('init-server: server ERROR:', err.message || err)
       if (!resolved) {
         resolved = true
         if (timer) clearTimeout(timer)
@@ -51,8 +52,10 @@ module.exports = async (config, env, sysLocale) => {
     })
 
     globalState.set('childPid', child.pid)
+    globalState.set('child', child)
+
     child.on('message', (m) => {
-      dlog('init-server: child message:', JSON.stringify(m))
+      dlog('init-server: server message:', JSON.stringify(m))
       if (m && m.serverInited && !resolved) {
         resolved = true
         dlog('init-server: serverInited received, resolving')

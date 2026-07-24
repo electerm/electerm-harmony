@@ -33,31 +33,31 @@ dlog('server.js: initializing websocket...')
 initWs(app)
 dlog('server.js: websocket done')
 
-const runServer = function () {
-  const { electermPort, electermHost } = process.env
-  dlog('server.js: app.listen on', electermHost, electermPort)
-  app.listen(electermPort, electermHost, () => {
-    dlog('server.js: LISTENING on', electermHost, electermPort)
-    log.info('server', 'runs on', electermHost, electermPort)
-    process.send({ serverInited: true })
-    dlog('server.js: sent serverInited message to parent')
+// --- Server lifecycle ---
+let _startPromise = null
+
+/**
+ * Start the Express server. Returns a Promise that resolves when
+ * the server is listening. Safe to call multiple times — returns
+ * the same Promise.
+ */
+function startServer () {
+  if (_startPromise) return _startPromise
+  _startPromise = new Promise((resolve, reject) => {
+    const { electermPort, electermHost } = process.env
+    dlog('server.js: app.listen on', electermHost, electermPort)
+    app.listen(electermPort, electermHost, () => {
+      dlog('server.js: LISTENING on', electermHost, electermPort)
+      log.info('server', 'runs on', electermHost, electermPort)
+      // process.send may not exist (in-process mode)
+      try { process.send({ serverInited: true }) } catch {}
+      resolve(app)
+    })
   })
+  return _startPromise
 }
 
-// start
-dlog('server.js: calling runServer()')
-runServer()
+// Auto-start when required
+startServer()
 
-process.on('uncaughtException', (err) => {
-  dlog('server.js: uncaughtException:', err.message || err, err.stack || '')
-  log.error('uncaughtException', err)
-})
-process.on('unhandledRejection', (err) => {
-  dlog('server.js: unhandledRejection:', err?.message || err)
-  log.error('unhandledRejection', err)
-})
-
-process.on('SIGTERM', () => {
-  dlog('server.js: received SIGTERM, exiting')
-  process.exit(0)
-})
+module.exports = { startServer, app }
