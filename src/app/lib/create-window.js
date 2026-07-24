@@ -6,7 +6,6 @@ const {
   isDev, packInfo, iconPath, isMac,
   minWindowWidth, minWindowHeight
 } = require('../common/runtime-constants')
-const defaults = require('../common/default-setting')
 const {
   getWindowSize,
   setWindowPos
@@ -27,9 +26,6 @@ exports.createWindow = async function (userConfig) {
   globalState.set('closeAction', 'closeApp')
   globalState.set('requireAuth', !!userConfig.hashedPassword)
   const { width, height, x, y } = await getWindowSize()
-  // HarmonyOS: always use system title bar (frame:true, transparent:false).
-  // transparent:true causes SIGSEGV in the HarmonyOS compositor.
-  const { useSystemTitleBar = defaults.useSystemTitleBar } = userConfig
   const win = new BrowserWindow({
     width,
     height,
@@ -39,7 +35,7 @@ exports.createWindow = async function (userConfig) {
     minWidth: minWindowWidth,
     minHeight: minWindowHeight,
     title: packInfo.name,
-    frame: useSystemTitleBar,
+    frame: true,
     transparent: false,
     backgroundColor: '#333333',
     webPreferences: {
@@ -51,7 +47,7 @@ exports.createWindow = async function (userConfig) {
       devTools: !userConfig.disableDeveloperTool,
       spellcheck: false
     },
-    titleBarStyle: useSystemTitleBar ? 'default' : 'hidden',
+    titleBarStyle: 'default',
     icon: iconPath
   })
   // hides the traffic lights
