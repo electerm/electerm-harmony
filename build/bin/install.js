@@ -1,4 +1,4 @@
-import pkg from 'shelljs'
+const pkg = require('shelljs')
 
 const { echo, rm, cp } = pkg
 
