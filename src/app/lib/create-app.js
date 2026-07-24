@@ -3,7 +3,7 @@ const {
 } = require('electron')
 const { createWindow } = require('./create-window')
 const {
-  packInfo
+  packInfo, isHarmony
 } = require('../common/runtime-constants')
 const { initCommandLine } = require('./command-line')
 const globalState = require('./glob-state')
@@ -101,11 +101,15 @@ exports.createApp = async function () {
     //   "Couldn't allocate DRM buffer", "Invalid format", etc.
     app.commandLine.appendSwitch('use-gl', 'swiftshader')
   }
-  if (process.platform === 'linux') {
+  // On HarmonyOS, do NOT set enable-transparent-visuals or in-process-gpu:
+  // - enable-transparent-visuals triggers compositor code paths that cause SIGSEGV
+  // - in-process-gpu causes instability on HarmonyOS
+  if (process.platform === 'linux' && !isHarmony) {
     app.commandLine.appendSwitch('enable-transparent-visuals')
     app.commandLine.appendSwitch('in-process-gpu')
   }
-  if (process.platform === 'linux' || process.env.DISABLE_HARDWARE_ACCELERATION) {
+  // On HarmonyOS, always disable hardware acceleration for stability
+  if (process.platform === 'linux' || process.env.DISABLE_HARDWARE_ACCELERATION || isHarmony) {
     app.disableHardwareAcceleration()
   }
   if (process.env.DISABLE_GPU_SANDBOX) {

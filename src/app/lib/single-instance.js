@@ -71,6 +71,23 @@ function startSocketServer (onSecondInstance) {
 function sendToFirstInstance (data) {
   const socketPath = getSocketPath()
   return new Promise((resolve) => {
+    let settled = false
+    const done = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+
+    // Timeout: if we can't connect or get a response within 3 seconds,
+    // the primary instance is likely dead (e.g. crashed). Clean up the
+    // stale socket and proceed as the primary instance.
+    const timer = setTimeout(() => {
+      try { client.destroy() } catch (e) {}
+      cleanupSocket()
+      done(false)
+    }, 3000)
+
     const client = net.createConnection(socketPath, () => {
       client.write(JSON.stringify(data))
       client.end()
@@ -78,11 +95,12 @@ function sendToFirstInstance (data) {
 
     client.on('error', () => {
       // No server listening, we are the first instance
-      resolve(false)
+      cleanupSocket()
+      done(false)
     })
 
     client.on('close', () => {
-      resolve(true)
+      done(true)
     })
   })
 }
