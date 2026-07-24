@@ -5,12 +5,12 @@
 const net = require('net')
 const fs = require('fs')
 const path = require('path')
-const os = require('os')
 const { app } = require('electron')
 const globalState = require('./glob-state')
+const { tempDir } = require('../common/runtime-constants')
 
 function getSocketPath () {
-  return path.join(os.tmpdir(), `${app.getName()}-instance.sock`)
+  return path.join(tempDir, `${app.getName()}-instance.sock`)
 }
 
 // Clean up stale socket file
