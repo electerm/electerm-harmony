@@ -76,8 +76,21 @@ function getDataPath () {
     blog('app.getPath("appData") failed:', e.message)
   }
 
-  // 4. Final fallback
-  blog('falling back to os.tmpdir():', os.tmpdir())
+  // 4. Final fallback — try /data/local/tmp (writable on HarmonyOS/Android),
+  //    then os.tmpdir() as the absolute last resort.
+  const fallbacks = ['/data/local/tmp', os.tmpdir()]
+  for (const dir of fallbacks) {
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      blog('using fallback temp dir:', dir)
+      return dir
+    } catch (e) {
+      blog('fallback dir not writable:', dir, '-', e.message)
+    }
+  }
+
+  // If everything fails, return os.tmpdir() anyway — better than crashing.
+  blog('all fallbacks failed, returning os.tmpdir():', os.tmpdir())
   return os.tmpdir()
 }
 
