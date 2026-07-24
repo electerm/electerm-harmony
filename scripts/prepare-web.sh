@@ -4,16 +4,15 @@
 #
 # This script:
 #   1. Installs npm dependencies in the project root (dev deps for build tools)
-#   2. Runs build/harmony/build.mjs which:
-#      - Vite-builds the React frontend → work/app/assets/
-#      - Copies src/app/ source code → work/app/ (NOT bundled, runs directly)
-#      - Installs production deps in work/app/ (excludes native modules)
+#   2. Runs build/harmony/build.js which:
+#      - Runs `npm run b` (complete electerm build: clean + compile + prepare-file)
+#      - Applies HarmonyOS delta (main → bootstrap.js, remove native modules)
 #      - Copies work/app/ → web_engine/src/main/resources/resfile/resources/app/
 #
-# Key difference from old electerm-web build:
-#   - The electerm source code runs DIRECTLY from source (not esbuild-bundled)
-#   - Native modules (node-pty, serialport) are excluded — source has try/catch guards
-#   - The app entry is app.js (Electron main process), not a generated main.js wrapper
+# Key points:
+#   - Reuses electerm's full build pipeline (npm run b), only adds harmony delta
+#   - Native modules (node-pty, serialport, cpu-features) are removed post-build
+#   - The app entry is bootstrap.js (sets DATA_PATH before loading app.js)
 #
 # Usage:
 #   ./scripts/prepare-web.sh
@@ -75,7 +74,7 @@ npm run build:harmony
 
 if [ ! -d "${RESFILE_APP_DIR}" ]; then
   echo "    ✗ Build output not found at ${RESFILE_APP_DIR}"
-  echo "    Run node build/harmony/build.mjs manually to check for errors."
+  echo "    Run node build/harmony/build.js manually to check for errors."
   exit 1
 fi
 

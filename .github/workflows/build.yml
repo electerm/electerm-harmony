@@ -238,6 +238,55 @@ jobs:
           echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
           echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
 
+      # ── Step 7b: Verify APP contents independently ──────────────────────
+      # build-app.sh already verifies HAP contents, but this step provides
+      # a clear pass/fail signal in the CI log and adds the results to the
+      # GitHub Step Summary for quick inspection.
+      - name: Verify APP contents
+        run: |
+          set -euo pipefail
+          APP_FILE=$(find build/outputs -name "*.app" -type f | head -1)
+          echo "Verifying: ${APP_FILE}"
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+          unzip -q "${APP_FILE}" -d "${TMPDIR}"
+          HAP_FILE=$(find "${TMPDIR}" -name "*.hap" -type f | head -1)
+          HAP_DIR="${TMPDIR}/hap"
+          unzip -q "${HAP_FILE}" -d "${HAP_DIR}"
+          APP_DIR="${HAP_DIR}/resources/resfile/resources/app"
+          ERRORS=""
+          for f in \
+            "assets/index.html" \
+            "bootstrap.js" \
+            "app.js" \
+            "package.json" \
+            "server/server.js" \
+            "lib/file-server.js"; do
+            if [ ! -f "${APP_DIR}/${f}" ]; then
+              ERRORS="${ERRORS}\n  ✗ MISSING: ${f}"
+            else
+              echo "  ✓ ${f}"
+            fi
+          done
+          JS_COUNT=$(find "${APP_DIR}/assets/js" -name "*.js" 2>/dev/null | wc -l)
+          CSS_COUNT=$(find "${APP_DIR}/assets/css" -name "*.css" 2>/dev/null | wc -l)
+          CHUNK_COUNT=$(find "${APP_DIR}/assets/chunk" -name "*.js" 2>/dev/null | wc -l)
+          echo "  ✓ assets/js: ${JS_COUNT} files"
+          echo "  ✓ assets/css: ${CSS_COUNT} files"
+          echo "  ✓ assets/chunk: ${CHUNK_COUNT} files"
+          if [ "${JS_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No JS files in assets/js/"; fi
+          if [ "${CSS_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No CSS files in assets/css/"; fi
+          if [ "${CHUNK_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No chunk files in assets/chunk/"; fi
+          if [ -n "${ERRORS}" ]; then
+            echo -e "::error::APP content verification failed:${ERRORS}"
+            exit 1
+          fi
+          echo "✓ All critical files verified in APP"
+          # Add to GitHub Step Summary
+          echo "| JS files | \`${JS_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| CSS files | \`${CSS_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chunk files | \`${CHUNK_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+
       - name: Upload APP artifact
         uses: actions/upload-artifact@v4
         with:

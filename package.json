@@ -14,7 +14,7 @@
     "vite-build": "node build/bin/vite-build.js",
     "install": "node build/bin/install",
     "prepare-file": "node build/bin/prepare",
-    "build:harmony": "node build/harmony/build.mjs",
+    "build:harmony": "node build/harmony/build.js",
     "lint": "./node_modules/.bin/standard --verbose",
     "fix": "./node_modules/.bin/standard --fix",
     "lock": "npm i --package-lock-only",

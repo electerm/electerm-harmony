@@ -36,6 +36,16 @@ const data = {
   hideLocalTerminal: true,
   defaultAIPreset
 }
+
+// Allow builds (e.g. HarmonyOS) to inject extra data via env var
+if (process.env.PUG_EXTRA_DATA) {
+  try {
+    Object.assign(data, JSON.parse(process.env.PUG_EXTRA_DATA))
+  } catch (e) {
+    console.warn('Warning: Failed to parse PUG_EXTRA_DATA:', e.message)
+  }
+}
+
 const htmlContent = pug.render(pugContent, {
   filename: entryPug,
   ...data,

@@ -48,7 +48,7 @@ electerm-harmony/
 ├── src/                            # Web app source (committed)
 ├── build/                          # Build scripts (committed)
 │   ├── bin/                        # Build helper scripts
-│   ├── harmony/                    # HarmonyOS build (build.mjs, vite.harmony.mjs)
+│   ├── harmony/                    # HarmonyOS build (build.js)
 │   └── vite/                       # Vite config
 ├── package.json                    # Web app npm package (committed)
 ├── scripts/                        # Build scripts (committed)
