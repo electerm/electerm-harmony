@@ -1,15 +1,24 @@
 /**
- * terminal/sftp/serial class
+ * RDP session using IronRDP WASM + RDCleanPath proxy
+ *
+ * Architecture:
+ *   Browser (IronRDP WASM) <--WebSocket--> This Proxy <--TLS--> RDP Server
+ *
+ * The WASM client handles all RDP protocol logic.
+ * This server-side code acts as a RDCleanPath proxy:
+ *   1. Receives RDCleanPath Request from WASM client (ASN.1 DER binary)
+ *   2. TCP connects to the RDP server (optionally through proxy)
+ *   3. Performs X.224 handshake + TLS upgrade
+ *   4. Sends RDCleanPath Response (with certs) back to WASM client
+ *   5. Bidirectional relay: WebSocket <-> TLS
  */
-import log from '../common/log.js'
-import { TerminalBase } from './session-base.js'
-import globalState from './global-state.js'
-import {
+const log = require('../common/log')
+const { TerminalBase } = require('./session-base')
+const globalState = require('./global-state')
+const {
   handleConnection
-} from './rdp-proxy.js'
-import { createHopProxy } from './session-hop.js'
-import proxySock from './socks.js'
-import net from 'net'
+} = require('./rdp-proxy')
+const { createHopProxy } = require('./session-hop')
 
 class TerminalRdp extends TerminalBase {
   init = async () => {
@@ -57,6 +66,8 @@ class TerminalRdp extends TerminalBase {
   }
 
   test = async () => {
+    const net = require('net')
+    const proxySock = require('./socks')
     const {
       host,
       port = 3389,
@@ -121,27 +132,23 @@ class TerminalRdp extends TerminalBase {
   }
 }
 
-export const terminalRdp = async function (initOptions, ws) {
+exports.session = async function (initOptions, ws) {
   const term = new TerminalRdp(initOptions, ws)
   await term.init()
   return term
 }
 
 /**
- * test ssh connection
+ * test RDP connection (TCP connectivity check)
  * @param {object} options
  */
-export const testConnectionRdp = (options) => {
+exports.test = (options) => {
   return (new TerminalRdp(options, undefined, true))
     .test()
-    .then((res) => {
-      res.close()
+    .then(() => {
       return true
     })
     .catch(() => {
       return false
     })
 }
-
-export const terminal = terminalRdp
-export const testConnection = testConnectionRdp

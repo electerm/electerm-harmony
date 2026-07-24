@@ -8,10 +8,10 @@
  * run every upgrade script one by one
  */
 
-import log from '../common/log.js'
-import { dbAction } from '../lib/db.js'
+const log = require('../common/log')
+const { dbAction } = require('../lib/db')
 
-export async function updateDBVersion (toVersion) {
+async function updateDBVersion (toVersion) {
   const versionQuery = {
     _id: 'version'
   }
@@ -35,3 +35,5 @@ export async function updateDBVersion (toVersion) {
       log.error('insert dbUpgradeLog error', toVersion)
     })
 }
+
+exports.updateDBVersion = updateDBVersion

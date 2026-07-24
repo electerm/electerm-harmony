@@ -1,4 +1,4 @@
-export const enc = (str) => {
+exports.enc = (str) => {
   if (typeof str !== 'string') {
     return str
   }
@@ -7,7 +7,7 @@ export const enc = (str) => {
   }).join('')
 }
 
-export const dec = (str) => {
+exports.dec = (str) => {
   if (typeof str !== 'string') {
     return str
   }

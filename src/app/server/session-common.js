@@ -2,7 +2,7 @@
  * terminal/sftp/serial class
  */
 
-export function commonExtends (Cls) {
+exports.commonExtends = function (Cls) {
   Cls.prototype.customEnv = function (envs) {
     if (!envs) {
       return {}

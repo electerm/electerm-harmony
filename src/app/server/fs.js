@@ -2,9 +2,9 @@
  * fs in child process
  */
 
-import { fsExport as fs } from '../lib/fs.js'
+const { fsExport: fs } = require('../lib/fs')
 
-export default function handleFs (ws, msg) {
+function handleFs (ws, msg) {
   const { id, args, func } = msg
   fs[func](...args)
     .then(data => {
@@ -23,3 +23,5 @@ export default function handleFs (ws, msg) {
       })
     })
 }
+
+module.exports = handleFs

@@ -3,12 +3,14 @@
  * Uses zmodem2 (pure JS) for protocol implementation
  */
 
-import fs from 'fs'
-import path from 'path'
-import log from '../common/log.js'
-import generate from '../common/uid.js'
-import sanitizeFilename from '../common/sanitize-filename.js'
-import { Sender, Receiver, SenderEvent, ReceiverEvent } from 'zmodem2'
+const fs = require('fs')
+const path = require('path')
+const log = require('../common/log')
+const generate = require('../common/uid')
+const sanitizeFilename = require('../common/sanitize-filename')
+
+// Import zmodem2 (pure JS, no WASM)
+const { Sender, Receiver, SenderEvent, ReceiverEvent } = require('zmodem2')
 
 // Zmodem state constants
 const ZMODEM_STATE = {
@@ -273,7 +275,6 @@ class ZmodemSession {
    * Handle file start event
    * @param {string} name - File name
    * @param {number} size - File size
-   * @param {number} mtime - File modification time (ms)
    */
   handleFileStart (name, size, mtime) {
     this.currentTransfer = {
@@ -963,9 +964,10 @@ class ZmodemManager {
   }
 }
 
-// Export singleton manager and classes as ESM
+// Export singleton manager
 const zmodemManager = new ZmodemManager()
-export {
+
+module.exports = {
   ZmodemSession,
   ZmodemManager,
   zmodemManager,

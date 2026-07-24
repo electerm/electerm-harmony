@@ -4,7 +4,7 @@
  * Note: basic-ftp only supports one active transfer per client connection
  */
 
-export class FtpTransfer {
+class Transfer {
   constructor ({
     remotePath,
     localPath,
@@ -127,4 +127,8 @@ export class FtpTransfer {
       this.ws = null
     }
   }
+}
+
+module.exports = {
+  Transfer
 }

@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# prepare-web.sh — Install, build, and bundle the web app
+# prepare-web.sh — Install, build, and bundle the electerm app
 # from the project root into the HarmonyOS app's resfile resources.
 #
 # This script:
-#   1. Installs npm dependencies in the project root
-#   2. Runs build/harmony/build.mjs which:
-#      - Vite-builds the React frontend → dist/assets/
-#      - esbuild-bundles the Node.js backend → app.bundle.cjs (CJS format)
-#      - Generates main.js (Electron main process)
-#      - Generates package.json
-#   3. Copies the output into the HarmonyOS resfile directory
+#   1. Installs npm dependencies in the project root (dev deps for build tools)
+#   2. Runs build/harmony/build.js which:
+#      - Copies @electerm/electerm-react/client → src/client/ (gitignored)
+#      - Runs `npm run b` (complete electerm build: clean + compile + prepare-file)
+#      - Applies HarmonyOS delta (main → bootstrap.js, remove native modules)
+#      - Copies work/app/ → web_engine/src/main/resources/resfile/resources/app/
+#
+# Key points:
+#   - Reuses electerm's full build pipeline (npm run b), only adds harmony delta
+#   - Native modules (node-pty, serialport, cpu-features) are removed post-build
+#   - The app entry is bootstrap.js (sets DATA_PATH before loading app.js)
 #
 # Usage:
 #   ./scripts/prepare-web.sh
 #
 # Environment variables:
-#   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (optional, defaults to a local constant)
+#   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (optional)
 
 set -euo pipefail
 
@@ -32,7 +36,7 @@ RESFILE_APP_DIR="${PROJECT_ROOT}/web_engine/src/main/resources/resfile/resources
 
 # --- Main -------------------------------------------------------------------
 
-echo "==> Preparing web app (from project root: ${WEB_SRC_DIR})"
+echo "==> Preparing electerm app (from project root: ${WEB_SRC_DIR})"
 
 if [ ! -f "${WEB_SRC_DIR}/package.json" ]; then
   echo "    ✗ package.json not found at ${WEB_SRC_DIR}/package.json"
@@ -42,57 +46,69 @@ fi
 cd "${WEB_SRC_DIR}"
 
 # Print version for traceability
-WEB_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
-echo "    Version: ${WEB_VERSION}"
+APP_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
+echo "    Version: ${APP_VERSION}"
 
-# Install dependencies (needed for esbuild, vite, and static asset packages)
+# Install dependencies (needed for vite, pug, shelljs, and static asset packages)
+# --ignore-scripts prevents native module compilation (electron-rebuild etc.)
 echo "    Installing dependencies ..."
-npm install --legacy-peer-deps
+npm install --legacy-peer-deps --ignore-scripts
 
-# Create .env from .sample.env (needed by the backend, though main.js
-# overrides most env vars at runtime)
-echo "    Creating .env ..."
-cp .sample.env .env
+# Create .env from .sample.env if it exists (needed by build/vite/common.js for dotenv)
+if [ -f ".sample.env" ]; then
+  echo "    Creating .env ..."
+  cp .sample.env .env
+fi
 
 # Set SERVER_SECRET from CI env var (optional)
 if [ -n "${OHOS_SERVER_SECRET:-}" ]; then
   echo "    Setting SERVER_SECRET from OHOS_SERVER_SECRET ..."
-  sed -i.bak "s/^SERVER_SECRET=.*/SERVER_SECRET=${OHOS_SERVER_SECRET}/" .env
+  sed -i.bak "s/^SERVER_SECRET=.*/SERVER_SECRET=${OHOS_SERVER_SECRET}/" .env 2>/dev/null || true
   rm -f .env.bak
 fi
 
-# Run the HarmonyOS build script (vite + esbuild + Electron main.js)
-echo "    Building HarmonyOS Electron bundle ..."
+# Run the HarmonyOS build script (vite + copy source + install deps + copy to resfile)
+echo "    Building HarmonyOS electerm app (direct source mode) ..."
 npm run build:harmony
 
-# --- Copy output into resfile -----------------------------------------------
+# --- Verify output ---
 
-HARMONY_OUTPUT="${WEB_SRC_DIR}/build/harmony/resfile/resources/app"
-
-if [ ! -d "${HARMONY_OUTPUT}" ]; then
-  echo "    ✗ Build output not found at ${HARMONY_OUTPUT}"
-  echo "    Run node build/harmony/build.mjs manually to check for errors."
+if [ ! -d "${RESFILE_APP_DIR}" ]; then
+  echo "    ✗ Build output not found at ${RESFILE_APP_DIR}"
+  echo "    Run node build/harmony/build.js manually to check for errors."
   exit 1
 fi
 
-# Verify web_engine exists (should have been prepared by prepare-electron-runtime.sh)
-if [ ! -d "${PROJECT_ROOT}/web_engine" ]; then
-  echo "    ✗ web_engine/ not found. Run ./scripts/prepare-electron-runtime.sh first."
+# Verify bootstrap.js (HarmonyOS Electron main process entry)
+if [ ! -f "${RESFILE_APP_DIR}/bootstrap.js" ]; then
+  echo "    ✗ Missing: ${RESFILE_APP_DIR}/bootstrap.js"
   exit 1
 fi
+echo "    ✓ Found: bootstrap.js"
 
-echo "    Copying into ${RESFILE_APP_DIR}/ ..."
+# Verify app.js (loaded by bootstrap.js after paths are ready)
+if [ ! -f "${RESFILE_APP_DIR}/app.js" ]; then
+  echo "    ✗ Missing: ${RESFILE_APP_DIR}/app.js"
+  exit 1
+fi
+echo "    ✓ Found: app.js"
 
-# Clean previous
-rm -rf "${RESFILE_APP_DIR}"
-mkdir -p "${RESFILE_APP_DIR}"
+# Verify package.json
+if [ ! -f "${RESFILE_APP_DIR}/package.json" ]; then
+  echo "    ✗ Missing: ${RESFILE_APP_DIR}/package.json"
+  exit 1
+fi
+echo "    ✓ Found: package.json"
 
-# Copy the entire app/ output (main.js, app.bundle.cjs, package.json,
-# views/, dist/) into resfile/resources/app/
-cp -r "${HARMONY_OUTPUT}/." "${RESFILE_APP_DIR}/"
+# Verify node_modules
+if [ ! -d "${RESFILE_APP_DIR}/node_modules" ]; then
+  echo "    ✗ Missing: node_modules/"
+  exit 1
+fi
+echo "    ✓ Found: node_modules/"
 
-# Remove any .env file — not needed in the Electron app (main.js sets env vars)
+# Remove any .env file — not needed in the Electron app
 rm -f "${RESFILE_APP_DIR}/.env"
 
-echo "    ✓ Bundled size: $(du -sh "${RESFILE_APP_DIR}" | cut -f1)"
+echo "    ✓ App size: $(du -sh "${RESFILE_APP_DIR}" | cut -f1)"
 echo "==> Web app preparation complete."

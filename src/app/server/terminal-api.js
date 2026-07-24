@@ -2,16 +2,14 @@
  * run cmd with terminal
  */
 
-import { terminals } from './remote-common.js'
-import { terminal, testConnection } from './session.js'
-import { isDev } from '../common/runtime-constants.js'
+const { testConnection, terminal, terminals } = require('./session-process')
 
-export async function runCmd (ws, msg) {
+async function runCmd (ws, msg) {
   const { id, pid, cmd } = msg
   const term = terminals(pid)
   let txt = ''
   if (term) {
-    txt = await term.runCmd(cmd)
+    txt = await term.runCmd(cmd, id)
   }
   ws.s({
     id,
@@ -19,11 +17,11 @@ export async function runCmd (ws, msg) {
   })
 }
 
-export function resize (ws, msg) {
+function resize (ws, msg) {
   const { id, pid, cols, rows } = msg
   const term = terminals(pid)
   if (term) {
-    term.resize(cols, rows)
+    term.resize(cols, rows, id)
   }
   ws.s({
     id,
@@ -31,11 +29,11 @@ export function resize (ws, msg) {
   })
 }
 
-export function toggleTerminalLog (ws, msg) {
+function toggleTerminalLog (ws, msg) {
   const { id, pid } = msg
   const term = terminals(pid)
   if (term) {
-    term.toggleTerminalLog()
+    term.toggleTerminalLog(id)
   }
   ws.s({
     id,
@@ -43,11 +41,11 @@ export function toggleTerminalLog (ws, msg) {
   })
 }
 
-export function toggleTerminalLogTimestamp (ws, msg) {
+function toggleTerminalLogTimestamp (ws, msg) {
   const { id, pid } = msg
   const term = terminals(pid)
   if (term) {
-    term.toggleTerminalLogTimestamp()
+    term.toggleTerminalLogTimestamp(id)
   }
   ws.s({
     id,
@@ -55,42 +53,10 @@ export function toggleTerminalLogTimestamp (ws, msg) {
   })
 }
 
-export function setTerminalLogPath (ws, msg) {
-  const { id, pid, logPath } = msg
-  const term = terminals(pid)
-  if (term) {
-    term.setTerminalLogPath(logPath)
-  }
-  ws.s({
-    id,
-    data: 'ok'
-  })
-}
-
-export function startTerminalLogFile (ws, msg) {
-  const { id, pid, logFilePath, addTimeStampToTermLog } = msg
-  const term = terminals(pid)
-  if (term) {
-    term.startTerminalLogFile(logFilePath, addTimeStampToTermLog)
-  }
-  ws.s({
-    id,
-    data: 'ok'
-  })
-}
-
-export function createTerm (ws, msg) {
+function createTerm (ws, msg) {
   const { id, body } = msg
-  terminal(body, ws)
-    .then(r => {
-      const data = isDev
-        ? {
-            pid: r.pid,
-            port: process.env.PORT
-          }
-        : {
-            pid: r.pid
-          }
+  terminal(body, ws, id)
+    .then(data => {
       ws.s({
         id,
         data
@@ -107,9 +73,9 @@ export function createTerm (ws, msg) {
     })
 }
 
-export function testTerm (ws, msg) {
+function testTerm (ws, msg) {
   const { id, body } = msg
-  testConnection(body, ws)
+  testConnection(body, ws, id)
     .then(data => {
       if (data) {
         ws.s({
@@ -136,3 +102,36 @@ export function testTerm (ws, msg) {
       })
     })
 }
+
+function setTerminalLogPath (ws, msg) {
+  const { id, pid, logPath } = msg
+  const term = terminals(pid)
+  if (term) {
+    term.setTerminalLogPath(id, logPath)
+  }
+  ws.s({
+    id,
+    data: 'ok'
+  })
+}
+
+function startTerminalLogFile (ws, msg) {
+  const { id, pid, logFilePath, addTimeStampToTermLog } = msg
+  const term = terminals(pid)
+  if (term) {
+    term.startTerminalLogFile(id, logFilePath, addTimeStampToTermLog)
+  }
+  ws.s({
+    id,
+    data: 'ok'
+  })
+}
+
+exports.createTerm = createTerm
+exports.testTerm = testTerm
+exports.resize = resize
+exports.runCmd = runCmd
+exports.toggleTerminalLog = toggleTerminalLog
+exports.toggleTerminalLogTimestamp = toggleTerminalLogTimestamp
+exports.setTerminalLogPath = setTerminalLogPath
+exports.startTerminalLogFile = startTerminalLogFile

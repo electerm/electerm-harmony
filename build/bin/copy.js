@@ -1,44 +1,27 @@
-import { resolve } from 'path'
-import pkg from 'shelljs'
-import { cwd } from './build-common.js'
-
-const { cp } = pkg
-
-const f1 = resolve(
-  cwd,
-  'src/client/statics/*'
+const { resolve } = require('path')
+const { cp } = require('shelljs')
+const from = resolve(
+  __dirname,
+  '../../node_modules/@electerm/electerm-resource/tray-icons/*'
 )
 const from0 = resolve(
-  cwd,
-  'node_modules/electerm-icons/icons'
-)
-const from1 = resolve(
-  cwd,
-  'src/app/views'
-)
-
-const t1 = resolve(
-  cwd,
-  'dist/assets/'
+  __dirname,
+  '../../node_modules/electerm-icons/icons'
 )
 const to1 = resolve(
-  cwd,
-  'dist'
+  __dirname,
+  '../../work/app/assets/images/'
 )
 const to2 = resolve(
-  cwd,
-  'dist/assets/icons'
+  __dirname,
+  '../../work/app/assets/icons'
 )
 const arr = [
   {
-    from: f1,
-    to: t1
-  },
-  {
-    from: from1,
-    to: to1
-  },
-  {
+    from,
+    to: to1,
+    file: true
+  }, {
     from: from0,
     to: to2
   }

@@ -1,9 +1,8 @@
-import path from 'path'
-import fs from 'fs'
-import * as tar from 'tar'
-import axios from 'axios'
-import { pipeline } from 'stream/promises'
-import zlib from 'zlib'
+const path = require('path')
+const fs = require('fs')
+const tar = require('tar')
+const axios = require('axios')
+const { pipeline } = require('stream/promises')
 
 const npmRegistry = (process.env.NPM_REGISTRY || 'https://registry.npmjs.org').replace(/\/$/, '')
 
@@ -16,20 +15,11 @@ async function fetchManifest (packageName) {
 async function extractTarball (tarballUrl, destDir) {
   const { data: stream } = await axios.get(tarballUrl, { responseType: 'stream' })
   fs.mkdirSync(destDir, { recursive: true })
-  try {
-    await pipeline(
-      stream,
-      zlib.createGunzip(),
-      tar.extract({ cwd: destDir, strip: 1 })
-    )
-  } catch (err) {
-    fs.rmSync(destDir, { recursive: true, force: true })
-    throw err
-  }
-}
-
-function isPackageInstalled (packageDir) {
-  return fs.existsSync(path.join(packageDir, 'package.json'))
+  await pipeline(
+    stream,
+    require('zlib').createGunzip(),
+    tar.extract({ cwd: destDir, strip: 1 })
+  )
 }
 
 async function installPackage (packageName, targetFolder, visited = new Set()) {
@@ -40,7 +30,7 @@ async function installPackage (packageName, targetFolder, visited = new Set()) {
   visited.add(cacheKey)
 
   const packageDir = path.join(targetFolder, 'node_modules', packageName)
-  if (isPackageInstalled(packageDir)) {
+  if (fs.existsSync(packageDir)) {
     return
   }
 
@@ -62,9 +52,9 @@ async function installPackage (packageName, targetFolder, visited = new Set()) {
   }
 }
 
-export async function downloadPackage (packageName, targetFolder) {
+exports.downloadPackage = async (packageName, targetFolder) => {
   const npmPath = path.join(targetFolder, 'node_modules', packageName)
-  if (isPackageInstalled(npmPath)) {
+  if (fs.existsSync(npmPath)) {
     return npmPath
   }
 

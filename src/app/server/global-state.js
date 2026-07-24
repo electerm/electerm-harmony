@@ -1,17 +1,8 @@
 // global-state.js
 class GlobalState {
-  #commonWs = null
   #sessions = {}
   #upgradeInsts = {}
-
-  // Common WebSocket management
-  getCommonWs () {
-    return this.#commonWs
-  }
-
-  setCommonWs (ws) {
-    this.#commonWs = ws
-  }
+  #authed = false
 
   // Sessions management
   getSession (id) {
@@ -39,13 +30,22 @@ class GlobalState {
     delete this.#upgradeInsts[id]
   }
 
+  get authed () {
+    return this.#authed
+  }
+
+  set authed (val) {
+    this.#authed = val
+  }
+
   get data () {
     return {
       sessions: this.#sessions,
-      upgradeInsts: this.#upgradeInsts
+      upgradeInsts: this.#upgradeInsts,
+      authed: this.#authed
     }
   }
 }
 
 // Export a singleton instance
-export default new GlobalState()
+module.exports = new GlobalState()

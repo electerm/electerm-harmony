@@ -1,9 +1,9 @@
 // used code from https://github.com/Eugeny/tabby/blob/master/tabby-telnet/src/session.ts and from https://github.com/mkozjak/node-telnet-client
 
-import { EventEmitter } from 'events'
-import { Socket } from 'net'
-import { Duplex } from 'stream'
-import proxySock from './socks.js'
+const { EventEmitter } = require('events')
+const { Socket } = require('net')
+const { Duplex } = require('stream')
+const proxySock = require('./socks')
 
 const TelnetCommands = {
   SUBOPTION_END: 240,
@@ -46,7 +46,7 @@ class Stream extends Duplex {
   _read () {}
 }
 
-export class Telnet extends EventEmitter {
+class Telnet extends EventEmitter {
   constructor (options = {}) {
     super()
     this.options = {
@@ -365,3 +365,5 @@ export class Telnet extends EventEmitter {
     }
   }
 }
+
+exports.Telnet = Telnet

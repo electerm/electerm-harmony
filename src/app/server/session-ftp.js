@@ -1,12 +1,12 @@
-import { FtpClientWrapper } from './ftp-client.js'
-import { TerminalBase } from './session-base.js'
-import { commonExtends } from './session-common.js'
-import { readRemoteFile, writeRemoteFile } from './ftp-file.js'
-import { Readable, PassThrough } from 'stream'
-import { posix as path } from 'path'
-import globalState from './global-state.js'
+const FtpClientWrapper = require('./ftp-client')
+const { TerminalBase } = require('./session-base')
+const { commonExtends } = require('./session-common')
+const { readRemoteFile, writeRemoteFile } = require('./ftp-file')
+const { Readable, PassThrough } = require('stream')
+const { posix: path } = require('path')
+const globalState = require('./global-state')
 
-export class FtpSession extends TerminalBase {
+class Ftp extends TerminalBase {
   constructor (initOptions) {
     super({
       ...initOptions,
@@ -303,4 +303,4 @@ export class FtpSession extends TerminalBase {
   }
 }
 
-export const Ftp = commonExtends(FtpSession)
+exports.Ftp = commonExtends(Ftp)

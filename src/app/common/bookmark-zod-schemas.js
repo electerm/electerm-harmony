@@ -1,4 +1,4 @@
-import { z } from '../lib/zod.js'
+const { z } = require('../lib/zod')
 
 const runScriptSchema = z.object({
   delay: z.number().optional().describe('Delay in ms before executing this command'),
@@ -115,7 +115,7 @@ const localBookmarkSchema = {
   // execLinuxArgs: z.array(z.string()).optional().describe('Linux exec arguments')
 }
 
-export {
+module.exports = {
   runScriptSchema,
   quickCommandSchema,
   sshTunnelSchema,

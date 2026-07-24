@@ -1,42 +1,55 @@
-import os from 'os'
-import { resolve } from 'path'
-import getJson from './get-json.js'
+/**
+ * run time contants
+ */
 
-export const cwd = process.cwd()
+const os = require('os')
+const { resolve } = require('path')
 
 const platform = os.platform()
 const arch = os.arch()
+const isWin = platform === 'win32'
+const isMac = platform === 'darwin'
+const isLinux = platform === 'linux'
+const isArm = arch.includes('arm')
+
 const { NODE_ENV, NODE_TEST } = process.env
-export const home = os.homedir()
-export const sshKeysPath = resolve(
-  home,
-  '.ssh'
+const isDev = NODE_ENV === 'development'
+const iconPath = resolve(
+  __dirname,
+  (
+    isDev
+      ? '../../../node_modules/@electerm/electerm-resource/res/imgs/electerm-round-128x128.png'
+      : '../assets/images/electerm-round-128x128.png'
+  )
 )
-export const isWin = platform === 'win32'
-export const isMac = platform === 'darwin'
-export const isLinux = platform === 'linux'
-export const isArm = arch.includes('arm')
-export const isDev = NODE_ENV === 'development'
-export const iconPath = resolve(
-  cwd,
-  isDev
-    ? 'node_modules/@electerm/electerm-resource/res/imgs/electerm-round-128x128.png'
-    : 'dist/assets/images/electerm-round-128x128.png'
+const trayIconPath = resolve(
+  __dirname,
+  (
+    isDev
+      ? '../../../node_modules/@electerm/electerm-resource/tray-icons/electerm-tray.png'
+      : '../assets/images/electerm-tray.png'
+  )
 )
-export const extIconPath = isDev
+const extIconPath = isDev
   ? '/node_modules/electerm-icons/icons/'
-  : '/icons/'
-export const defaultUserName = 'default_user'
-export const minWindowWidth = 590
-export const minWindowHeight = 400
-export const defaultLang = 'en_us'
-export const tempDir = os.tmpdir()
-export const homeOrTmp = os.homedir() || os.tmpdir()
-export const packInfo = (() => {
-  try {
-    return getJson(resolve(cwd, 'package.json'))
-  } catch (e) {
-    return { name: 'electerm', version: '0.0.0' }
-  }
-})()
-export const isTest = !!NODE_TEST
+  : 'icons/'
+
+const defaultUserName = require('./default-user-name')
+
+module.exports = {
+  isTest: !!NODE_TEST,
+  isDev,
+  isWin,
+  isMac,
+  isArm,
+  isLinux,
+  iconPath,
+  trayIconPath,
+  extIconPath,
+  defaultUserName,
+  minWindowWidth: 590,
+  minWindowHeight: 400,
+  defaultLang: 'en_us',
+  tempDir: require('os').tmpdir(),
+  packInfo: require(isDev ? '../../../package.json' : '../package.json')
+}

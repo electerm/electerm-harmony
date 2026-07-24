@@ -104,13 +104,13 @@ for lib in libelectron.so libadapter.so libffmpeg.so; do
   echo "    ✓ Found: ${lib}"
 done
 
-# Check app code
-if [ ! -f "${APP_DIR}/main.js" ]; then
-  echo "    ✗ Missing: ${APP_DIR}/main.js"
+# Check app code (electerm uses app.js as Electron main process entry, not main.js)
+if [ ! -f "${APP_DIR}/app.js" ]; then
+  echo "    ✗ Missing: ${APP_DIR}/app.js"
   echo "    Run ./scripts/prepare-electron-runtime.sh then ./scripts/prepare-web.sh first."
   exit 1
 fi
-echo "    ✓ Found: main.js"
+echo "    ✓ Found: app.js"
 
 # Check web_engine module
 if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
@@ -209,6 +209,82 @@ if [ -f "${APP_WINDOW_ADAPTER}" ]; then
   fi
 else
   echo "    (AppWindowAdapter.ets not found, skipping)"
+fi
+
+# --- Patch WebAbilityStage.ets for startup timing fix ------------------------
+
+echo "==> Patching web_engine WebAbilityStage for SetContextPaths timing ..."
+
+WEB_ABILITY_STAGE="${WEB_ENGINE_DIR}/src/main/ets/application/WebAbilityStage.ets"
+if [ -f "${WEB_ABILITY_STAGE}" ]; then
+  python3 -c "
+import sys
+
+with open('${WEB_ABILITY_STAGE}', 'r') as f:
+    content = f.read()
+
+original = content
+
+# 1. Add synchronous DI init + SetContextPaths to onCreate(), before
+#    runTaskAsync() is called. This ensures the native module has the
+#    HarmonyOS directory paths BEFORE the Electron runtime starts and
+#    tries to call app.getPath('appData').
+old_oncreate = '''  onCreate(): void {
+    LogUtil.info(TAG, '[ohoswindow] in WebAbilityStage onCreate.');
+    this.runTaskAsync();
+  }'''
+
+new_oncreate = '''  onCreate(): void {
+    LogUtil.info(TAG, '[ohoswindow] in WebAbilityStage onCreate.');
+    // Initialize DI container and set context paths synchronously,
+    // before the Electron runtime starts. This ensures app.getPath()
+    // works when the Electron main process loads app-props.js.
+    // (Moved from runTaskAsync to fix race condition on slower devices.)
+    if (!GlobalThisHelper.isLaunched()) {
+      let appContext = this.context.getApplicationContext();
+      GlobalThisHelper.appInit(new CommonDependencyProvider(appContext));
+    }
+    JsBindingUtils.SetContextPaths();
+    this.runTaskAsync();
+  }'''
+
+content = content.replace(old_oncreate, new_oncreate)
+
+# 2. Remove the appInit block from runTaskAsync() (now done in onCreate)
+old_appinit = '''      if (!GlobalThisHelper.isLaunched()) {
+        let appContext = this.context.getApplicationContext();
+        GlobalThisHelper.appInit(new CommonDependencyProvider(appContext));
+      }
+      import'''
+
+new_appinit = '''      import'''
+
+content = content.replace(old_appinit, new_appinit)
+
+# 3. Remove SetContextPaths from the async import().then() callback
+#    (now done synchronously in onCreate)
+old_setpaths = '''        this.nativeThemeAdapter = Inject.get(NativeThemeAdapter);
+        JsBindingUtils.SetContextPaths();
+      }).catch'''
+
+new_setpaths = '''        this.nativeThemeAdapter = Inject.get(NativeThemeAdapter);
+      }).catch'''
+
+content = content.replace(old_setpaths, new_setpaths)
+
+if content == original:
+    print('    WARNING: WebAbilityStage.ets pattern not found — file may already be patched or structure changed')
+    print('    The SetContextPaths timing fix was NOT applied, but this is non-fatal.')
+    print('    bootstrap.js + AbilityStage.ets marker file handles the path issue.')
+    sys.exit(0)
+
+with open('${WEB_ABILITY_STAGE}', 'w') as f:
+    f.write(content)
+
+print('    WebAbilityStage patched: SetContextPaths moved to synchronous onCreate()')
+"
+else
+  echo "    (WebAbilityStage.ets not found, skipping)"
 fi
 
 # --- Check signing materials ------------------------------------------------
@@ -504,6 +580,103 @@ mv -f "${SIGNED_APP}" "${UNSIGNED_APP}"
 APP_FILE="${UNSIGNED_APP}"
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
+
+# --- Verify HAP contents -----------------------------------------------------
+
+echo "==> Verifying HAP contents ..."
+
+VERIFY_TMPDIR=$(mktemp -d)
+trap 'rm -rf "${VERIFY_TMPDIR}"' EXIT
+
+# .app is a ZIP containing HAP(s) + pack.info
+unzip -q "${APP_FILE}" -d "${VERIFY_TMPDIR}"
+HAP_IN_APP=$(find "${VERIFY_TMPDIR}" -name "*.hap" -type f | head -1)
+if [ -z "${HAP_IN_APP}" ]; then
+  echo "    ✗ No .hap found inside .app!"
+  exit 1
+fi
+echo "    ✓ HAP found: $(basename "${HAP_IN_APP}")"
+
+# Extract HAP to check critical files
+HAP_EXTRACT="${VERIFY_TMPDIR}/hap-extract"
+unzip -q "${HAP_IN_APP}" -d "${HAP_EXTRACT}"
+APP_IN_HAP="${HAP_EXTRACT}/resources/resfile/resources/app"
+
+HAP_VERIFY_OK=true
+
+# Check index.html
+if [ ! -f "${APP_IN_HAP}/assets/index.html" ]; then
+  echo "    ✗ MISSING: assets/index.html"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ assets/index.html"
+fi
+
+# Check JS bundles
+JS_COUNT=$(find "${APP_IN_HAP}/assets/js" -name "*.js" 2>/dev/null | wc -l)
+if [ "${JS_COUNT}" -eq 0 ]; then
+  echo "    ✗ MISSING: no JS files in assets/js/"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ assets/js/ (${JS_COUNT} files)"
+fi
+
+# Check CSS files
+CSS_COUNT=$(find "${APP_IN_HAP}/assets/css" -name "*.css" 2>/dev/null | wc -l)
+if [ "${CSS_COUNT}" -eq 0 ]; then
+  echo "    ✗ MISSING: no CSS files in assets/css/"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ assets/css/ (${CSS_COUNT} files)"
+fi
+
+# Check chunk files
+CHUNK_COUNT=$(find "${APP_IN_HAP}/assets/chunk" -name "*.js" 2>/dev/null | wc -l)
+if [ "${CHUNK_COUNT}" -eq 0 ]; then
+  echo "    ✗ MISSING: no chunk files in assets/chunk/"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ assets/chunk/ (${CHUNK_COUNT} files)"
+fi
+
+# Check bootstrap.js
+if [ ! -f "${APP_IN_HAP}/bootstrap.js" ]; then
+  echo "    ✗ MISSING: bootstrap.js"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ bootstrap.js"
+fi
+
+# Check app.js
+if [ ! -f "${APP_IN_HAP}/app.js" ]; then
+  echo "    ✗ MISSING: app.js"
+  HAP_VERIFY_OK=false
+else
+  echo "    ✓ app.js"
+fi
+
+# Check package.json main field
+if [ -f "${APP_IN_HAP}/package.json" ]; then
+  MAIN_FIELD=$(python3 -c "import json; print(json.load(open('${APP_IN_HAP}/package.json'))['main'])" 2>/dev/null || echo "")
+  if [ "${MAIN_FIELD}" != "bootstrap.js" ]; then
+    echo "    ✗ package.json main should be \"bootstrap.js\", got \"${MAIN_FIELD}\""
+    HAP_VERIFY_OK=false
+  else
+    echo "    ✓ package.json main = bootstrap.js"
+  fi
+else
+  echo "    ✗ MISSING: package.json"
+  HAP_VERIFY_OK=false
+fi
+
+if [ "${HAP_VERIFY_OK}" != "true" ]; then
+  echo ""
+  echo "    ✗ HAP content verification FAILED!"
+  echo "    The .app file is missing critical files and will not work on device."
+  exit 1
+fi
+
+echo "    ✓ HAP content verification passed"
 
 # --- Rename artifact with proper name ---------------------------------------
 

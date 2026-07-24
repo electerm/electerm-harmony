@@ -2,13 +2,13 @@
  * default setting
  */
 
-export default {
+module.exports = exports.default = {
   hotkey: 'Control+2',
   sshReadyTimeout: 50000,
   scrollback: 3000,
   onStartSessions: [],
   fontSize: 16,
-  fontFamily: 'Fira Code, mono, courier-new, courier, monospace',
+  fontFamily: 'Maple Mono, mono, courier-new, courier, monospace',
   execWindows: 'System32/WindowsPowerShell/v1.0/powershell.exe',
   execMac: 'zsh',
   execLinux: 'bash',
@@ -16,7 +16,7 @@ export default {
   execMacArgs: [],
   execLinuxArgs: [],
   enableGlobalProxy: false,
-  disableSshHistory: false,
+  disableConnectionHistory: false,
   disableTransferHistory: false,
   terminalBackgroundImagePath: '',
   terminalBackgroundFilterOpacity: 1,
@@ -39,7 +39,8 @@ export default {
   initDefaultTabOnStart: true,
   screenReaderMode: false,
   autoRefreshWhenSwitchToSftp: false,
-  keepaliveInterval: 0,
+  addTimeStampToTermLog: false,
+  keepaliveInterval: 10000,
   backspaceMode: '^?',
   shiftEnterMode: '\\n',
   showHiddenFilesOnSftpStart: true,
@@ -64,10 +65,12 @@ export default {
   roleAI: '终端专家,提供不同系统下命令,简要解释用法,用markdown格式',
   apiPathAI: '/chat/completions',
   authHeaderNameAI: 'Authorization: Bearer',
+  proxyAI: '',
   sessionLogPath: '',
   sshSftpSplitView: false,
   showCmdSuggestions: false,
   startDirectoryLocal: '',
-  autoReconnectTerminal: false,
+  allowMultiInstance: false,
+  disableDeveloperTool: false,
   dragDropBehavior: 'ask'
 }

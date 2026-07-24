@@ -1,15 +1,16 @@
 /**
- * Load system-trusted CA certificates for the main web app process.
+ * Load system-trusted CA certificates into Node.js TLS store.
+ * Node.js uses its own bundled CA store and does not trust OS-level
+ * certificates by default. This module exports those certs so they
+ * can be passed to https.Agent as additional trusted CAs.
  */
 
-import { execSync } from 'child_process'
-import { existsSync, readdirSync, readFileSync } from 'fs'
-import https from 'https'
-import os from 'os'
-import { join } from 'path'
+const { execSync } = require('child_process')
+const { existsSync, readdirSync, readFileSync } = require('fs')
+const { join } = require('path')
+const os = require('os')
 
-let cachedPem = null
-let globalApplied = false
+let _certs = null
 
 function loadMacOS () {
   try {
@@ -17,7 +18,7 @@ function loadMacOS () {
       'security find-certificate -a -p ' +
       '/System/Library/Keychains/SystemRootCertificates.keychain ' +
       '/Library/Keychains/System.keychain ' +
-      `${os.homedir()}/Library/Keychains/login.keychain-db`,
+      os.homedir() + '/Library/Keychains/login.keychain-db',
       { encoding: 'utf8', timeout: 10000 }
     )
   } catch {
@@ -34,42 +35,34 @@ function loadLinux () {
   ]
   const files = []
   for (const dir of dirs) {
-    if (!existsSync(dir)) {
-      continue
-    }
-    try {
-      for (const f of readdirSync(dir)) {
-        if (f.endsWith('.crt') || f.endsWith('.pem')) {
-          files.push(join(dir, f))
-        }
-      }
-      break
-    } catch {
-      // try next directory
-    }
-  }
-
-  if (files.length > 0) {
-    return files.map((f) => {
+    if (existsSync(dir)) {
       try {
-        return readFileSync(f, 'utf8')
-      } catch {
-        return ''
-      }
-    }).join('\n')
-  }
-
-  const bundlePaths = [
-    '/etc/ssl/certs/ca-certificates.crt',
-    '/etc/pki/tls/certs/ca-bundle.crt',
-    '/etc/ssl/ca-bundle.pem'
-  ]
-  for (const p of bundlePaths) {
-    if (existsSync(p)) {
-      return readFileSync(p, 'utf8')
+        for (const f of readdirSync(dir)) {
+          if (f.endsWith('.crt') || f.endsWith('.pem')) {
+            files.push(join(dir, f))
+          }
+        }
+        break
+      } catch { /* skip */ }
     }
   }
-  return ''
+  if (!files.length) {
+    // fallback: try the ca-certificates bundle
+    const bundlePaths = [
+      '/etc/ssl/certs/ca-certificates.crt',
+      '/etc/pki/tls/certs/ca-bundle.crt',
+      '/etc/ssl/ca-bundle.pem'
+    ]
+    for (const p of bundlePaths) {
+      if (existsSync(p)) {
+        return readFileSync(p, 'utf8')
+      }
+    }
+    return ''
+  }
+  return files.map(f => {
+    try { return readFileSync(f, 'utf8') } catch { return '' }
+  }).join('\n')
 }
 
 function loadWindows () {
@@ -88,50 +81,24 @@ function loadWindows () {
   }
 }
 
-export function getSystemCAsPem () {
-  if (cachedPem !== null) {
-    return cachedPem
+function getSystemCAs () {
+  if (_certs !== null) {
+    return _certs
   }
   switch (os.platform()) {
     case 'darwin':
-      cachedPem = loadMacOS()
+      _certs = loadMacOS()
       break
     case 'linux':
-      cachedPem = loadLinux()
+      _certs = loadLinux()
       break
     case 'win32':
-      cachedPem = loadWindows()
+      _certs = loadWindows()
       break
     default:
-      cachedPem = ''
-      break
+      _certs = ''
   }
-  return cachedPem
+  return _certs
 }
 
-export function getSystemCAsList () {
-  const pem = getSystemCAsPem()
-  if (!pem) {
-    return []
-  }
-  return pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || []
-}
-
-export function applySystemCAsToGlobalAgent () {
-  if (globalApplied) {
-    return 0
-  }
-  const certs = getSystemCAsList()
-  if (!certs.length) {
-    return 0
-  }
-
-  const existing = https.globalAgent.options.ca
-  const existingList = Array.isArray(existing)
-    ? existing
-    : (typeof existing === 'string' ? [existing] : [])
-  const merged = Array.from(new Set(existingList.concat(certs)))
-  https.globalAgent.options.ca = merged
-  globalApplied = true
-  return certs.length
-}
+module.exports = getSystemCAs

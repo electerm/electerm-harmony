@@ -1,4 +1,4 @@
-export const buildSshTunnels = function (inst) {
+exports.buildSshTunnels = function (inst) {
   return [{
     sshTunnel: inst.sshTunnel,
     sshTunnelRemotePort: inst.sshTunnelRemotePort,

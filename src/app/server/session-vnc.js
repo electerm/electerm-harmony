@@ -2,12 +2,12 @@
  * terminal/sftp/serial class
  */
 
-import log from '../common/log.js'
-import { TerminalBase } from './session-base.js'
-import net from 'net'
-import proxySock from './socks.js'
-import { createHopProxy } from './session-hop.js'
-import globalState from './global-state.js'
+const log = require('../common/log')
+const { TerminalBase } = require('./session-base')
+const net = require('net')
+const proxySock = require('./socks')
+const { createHopProxy } = require('./session-hop')
+const globalState = require('./global-state')
 
 class TerminalVnc extends TerminalBase {
   init = async () => {
@@ -119,7 +119,7 @@ class TerminalVnc extends TerminalBase {
   }
 }
 
-export const terminalVnc = async function (initOptions, ws) {
+exports.session = async function (initOptions, ws) {
   const term = new TerminalVnc(initOptions, ws)
   await term.init()
   return term
@@ -129,7 +129,7 @@ export const terminalVnc = async function (initOptions, ws) {
  * test ssh connection
  * @param {object} options
  */
-export const testConnectionVnc = (options) => {
+exports.test = (options) => {
   const inst = new TerminalVnc(options, undefined, true)
   return inst.test()
     .then(() => {
@@ -141,6 +141,3 @@ export const testConnectionVnc = (options) => {
       return false
     })
 }
-
-export const terminal = terminalVnc
-export const testConnection = testConnectionVnc
