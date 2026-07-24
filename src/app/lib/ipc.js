@@ -25,10 +25,6 @@ const {
   runWidgetFunc
 } = require('../widgets/load-widget')
 const {
-  checkMigrate,
-  migrate
-} = require('../migrate/migrate-1-to-2')
-const {
   setPassword,
   checkPassword
 } = require('./auth')
@@ -176,8 +172,6 @@ function initIpc () {
     loadFontList,
     doUpgrade,
     checkDbUpgrade,
-    checkMigrate,
-    migrate,
     getExitStatus: () => globalState.get('exitStatus'),
     setExitStatus: (status) => {
       globalState.set('exitStatus', status)
@@ -243,6 +237,8 @@ function initIpc () {
     unregisterDeepLink,
     checkProtocolRegistration,
     getPendingDeepLink,
+    checkMigrate: () => false,
+    migrate: () => false,
     getEnv: (key) => {
       if (key) {
         return SAFE_ENV_KEYS.includes(key) ? process.env[key] : ''
