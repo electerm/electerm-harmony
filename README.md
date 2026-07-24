@@ -50,21 +50,6 @@ This project is a **work in progress**. The current goal is to make electerm wor
 - [ ] Obtain software copyright certificate (软件著作权登记) — required for AppGallery publishing
 - [ ] Publish to HarmonyOS AppGallery
 
-## Documentation
-
-| Document | Content |
-|----------|---------|
-| [docs/BUILD.md](docs/BUILD.md) | Build instructions (local + CI), troubleshooting |
-| [docs/ENV_SETUP.md](docs/ENV_SETUP.md) | Huawei Developer account, certificates, GitHub Secrets |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture overview and design decisions |
-
-## All READMEs
-
-| README | Language |
-|--------|----------|
-| [README.md](README.md) | English |
-| [README.zh-CN.md](README.zh-CN.md) | 简体中文 |
-
 ## Sponsors
 
 [GitHub Sponsors](https://github.com/sponsors/electerm)

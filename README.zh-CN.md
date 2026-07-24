@@ -53,21 +53,6 @@
 - [ ] 获取软件著作权登记证书 —— 应用市场上架必需
 - [ ] 发布到 HarmonyOS 应用市场
 
-## 文档
-
-| 文档 | 内容 |
-|------|------|
-| [docs/BUILD.md](docs/BUILD.md) | 构建说明（本地 + CI）、故障排查 |
-| [docs/ENV_SETUP.md](docs/ENV_SETUP.md) | 华为开发者账号、证书、GitHub Secrets 配置 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构概览与设计决策 |
-
-## 所有 README
-
-| README | 语言 |
-|--------|------|
-| [README.md](README.md) | English |
-| [README.zh-CN.md](README.zh-CN.md) | 简体中文 |
-
 ## 赞助
 
 [GitHub Sponsors](https://github.com/sponsors/electerm)
