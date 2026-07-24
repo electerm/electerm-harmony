@@ -5,6 +5,7 @@
 # This script:
 #   1. Installs npm dependencies in the project root (dev deps for build tools)
 #   2. Runs build/harmony/build.js which:
+#      - Copies @electerm/electerm-react/client → src/client/ (gitignored)
 #      - Runs `npm run b` (complete electerm build: clean + compile + prepare-file)
 #      - Applies HarmonyOS delta (main → bootstrap.js, remove native modules)
 #      - Copies work/app/ → web_engine/src/main/resources/resfile/resources/app/

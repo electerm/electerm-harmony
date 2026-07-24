@@ -1,14 +1,13 @@
 /**
  * Build the electerm HarmonyOS app.
  *
- * Reuses electerm's complete build pipeline (`npm run b`):
- *   clean → compile (vite + copy + pug) → prepare-file (src copy + deps install + cleanup)
- *
- * Then applies HarmonyOS-specific delta on top of the result:
- *   - Override package.json: main → bootstrap.js, remove native module deps
- *   - Remove native modules from node_modules (node-pty, serialport, cpu-features)
- *   - Copy work/app → web_engine resfile
- *   - Verify critical files
+ * Step 0: Copy client source from @electerm/electerm-react npm package
+ *         → src/client/ (gitignored, not in repo)
+ * Step 1: Run complete electerm build (npm run b)
+ *         clean → compile (vite + copy + pug) → prepare-file (deps install + cleanup)
+ * Step 2: Apply HarmonyOS delta (main → bootstrap.js, remove native modules)
+ * Step 3: Copy work/app → web_engine resfile
+ * Step 4: Verify critical files
  *
  * This is a CJS file to stay consistent with build/bin/*.js.
  */
@@ -59,6 +58,54 @@ function formatBytes (bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// Step 0: Copy client source from @electerm/electerm-react
+// ---------------------------------------------------------------------------
+// src/client/ is gitignored (moved to npm package in cbce701).
+// Vite config and pug.js reference src/client/entry/*.jsx and
+// src/client/views/index.pug, so we must populate src/client/ before
+// running `npm run b`.
+// ---------------------------------------------------------------------------
+function prepareClientSource () {
+  echo('[harmony] step 0: prepare client source from @electerm/electerm-react')
+  const pkgClient = resolve(ROOT, 'node_modules/@electerm/electerm-react/client')
+  const srcClient = resolve(ROOT, 'src/client')
+
+  if (!fs.existsSync(pkgClient)) {
+    throw new Error(
+      'node_modules/@electerm/electerm-react/client not found. ' +
+      'Run npm install first.'
+    )
+  }
+
+  // Check if src/client/ already has the entry files (local dev)
+  const entryExists = fs.existsSync(resolve(srcClient, 'entry/electerm.jsx'))
+  if (entryExists) {
+    echo('  ✓ src/client/ already populated, skip copy')
+    return
+  }
+
+  // Copy client/ from npm package to src/client/
+  rmrf(srcClient)
+  fs.mkdirSync(resolve(ROOT, 'src'), { recursive: true })
+  cp('-r', pkgClient, srcClient)
+  echo('  ✓ copied @electerm/electerm-react/client → src/client')
+
+  // Verify critical entry files
+  const required = [
+    'entry/electerm.jsx',
+    'entry/basic.js',
+    'entry/worker.js',
+    'views/index.pug'
+  ]
+  for (const f of required) {
+    if (!fs.existsSync(resolve(srcClient, f))) {
+      throw new Error(`Missing required client file: src/client/${f}`)
+    }
+  }
+  echo('  ✓ client source verified')
+}
+
+// ---------------------------------------------------------------------------
 // Step 1: Run complete electerm build (npm run b)
 // ---------------------------------------------------------------------------
 // npm run b = npm run clean && npm run compile && npm run prepare-file
@@ -70,7 +117,10 @@ function formatBytes (bytes) {
 // ---------------------------------------------------------------------------
 function buildElecterm () {
   echo('[harmony] step 1: run complete electerm build (npm run b)')
-  exec('npm run b')
+  const result = exec('npm run b')
+  if (result.code !== 0) {
+    throw new Error(`npm run b failed with exit code ${result.code}`)
+  }
   echo('  ✓ electerm build complete')
 }
 
@@ -240,6 +290,9 @@ function main () {
   echo(`[harmony] version: ${pack.version}`)
   echo('[harmony] mode: reuse electerm build (npm run b) + harmony delta')
   echo('')
+
+  // Step 0: Prepare client source from npm package
+  prepareClientSource()
 
   // Step 1: Complete electerm build
   buildElecterm()
