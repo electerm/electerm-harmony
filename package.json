@@ -8,7 +8,6 @@
     "app": "node build/bin/app",
     "build": "npm run vite-build",
     "start": "node build/bin/start.js",
-    "icon": "node build/bin/icon",
     "clean": "node build/bin/clean",
     "compile": "node build/bin/build",
     "vite-build": "node build/bin/vite-build.js",
@@ -20,8 +19,7 @@
     "lock": "npm i --package-lock-only",
     "test": "npm run test1 && npm run test2",
     "test-unit-ci": "node --test test/unit-ci/*.spec.js",
-    "b": "npm run clean && npm run compile && npm run prepare-file",
-    "r": "./build/bin/release"
+    "b": "npm run clean && npm run compile && npm run prepare-file"
   },
   "license": "MIT",
   "langugeRepo": "https://github.com/electerm/electerm-locales",

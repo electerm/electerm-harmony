@@ -3,6 +3,7 @@ name: Build HarmonyOS APP
 on:
   push:
     branches:
+      - build
       - dev
 
 # Cancel previous runs on the same branch/tag
