@@ -38,6 +38,7 @@ exports.createWindow = async function (userConfig) {
     frame: true,
     transparent: false,
     backgroundColor: '#333333',
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
