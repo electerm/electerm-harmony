@@ -18,6 +18,7 @@
     "fix": "./node_modules/.bin/standard --fix",
     "lock": "npm i --package-lock-only",
     "test": "npm run test1 && npm run test2",
+    "r": "./build/bin/release",
     "test-unit-ci": "node --test test/unit-ci/*.spec.js",
     "b": "npm run clean && npm run compile && npm run prepare-file"
   },
