@@ -5,26 +5,10 @@
  * can be passed to https.Agent as additional trusted CAs.
  */
 
-const { execSync } = require('child_process')
 const { existsSync, readdirSync, readFileSync } = require('fs')
 const { join } = require('path')
-const os = require('os')
 
 let _certs = null
-
-function loadMacOS () {
-  try {
-    return execSync(
-      'security find-certificate -a -p ' +
-      '/System/Library/Keychains/SystemRootCertificates.keychain ' +
-      '/Library/Keychains/System.keychain ' +
-      os.homedir() + '/Library/Keychains/login.keychain-db',
-      { encoding: 'utf8', timeout: 10000 }
-    )
-  } catch {
-    return ''
-  }
-}
 
 function loadLinux () {
   const dirs = [
@@ -65,39 +49,11 @@ function loadLinux () {
   }).join('\n')
 }
 
-function loadWindows () {
-  try {
-    return execSync(
-      'powershell -Command ' +
-      '"Get-ChildItem -Path Cert:\\LocalMachine\\Root, Cert:\\LocalMachine\\CA, Cert:\\CurrentUser\\Root, Cert:\\CurrentUser\\CA ' +
-      '| Where-Object { $_.NotAfter -gt (Get-Date) } ' +
-      '| ForEach-Object { \'-----BEGIN CERTIFICATE-----\'; ' +
-      '[System.Convert]::ToBase64String($_.RawData, \'InsertLineBreaks\'); ' +
-      '\'-----END CERTIFICATE-----\' }"',
-      { encoding: 'utf8', timeout: 10000, windowsHide: true }
-    )
-  } catch {
-    return ''
-  }
-}
-
 function getSystemCAs () {
   if (_certs !== null) {
     return _certs
   }
-  switch (os.platform()) {
-    case 'darwin':
-      _certs = loadMacOS()
-      break
-    case 'linux':
-      _certs = loadLinux()
-      break
-    case 'win32':
-      _certs = loadWindows()
-      break
-    default:
-      _certs = ''
-  }
+  _certs = loadLinux()
   return _certs
 }
 

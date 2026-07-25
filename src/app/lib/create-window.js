@@ -3,7 +3,7 @@ const {
 } = require('electron')
 const { resolve } = require('path')
 const {
-  isDev, packInfo, iconPath, isMac,
+  isDev, packInfo, iconPath,
   minWindowWidth, minWindowHeight
 } = require('../common/runtime-constants')
 const {
@@ -51,10 +51,6 @@ exports.createWindow = async function (userConfig) {
     titleBarStyle: 'default',
     icon: iconPath
   })
-  // hides the traffic lights
-  if (isMac) {
-    win.setWindowButtonVisibility(true)
-  }
 
   win.webContents.session.setSpellCheckerDictionaryDownloadURL('https://00.00/')
 
