@@ -7,12 +7,8 @@
  */
 
 const EventEmitter = require('events')
-const { writeFileSync, unlinkSync } = require('fs')
-const { tmpdir } = require('os')
-const { join } = require('path')
 const log = require('../common/log')
 const dlog = require('../common/debug-logger')
-const getSystemCAs = require('../lib/system-ca')
 
 // --use-system-ca is supported since Node.js 24.3.0
 function supportsSystemCa () {
@@ -36,14 +32,6 @@ module.exports = (config, env, sysLocale) => {
     .filter(Boolean).join(' ').trim()
   if (nodeOpts) {
     process.env.NODE_OPTIONS = nodeOpts
-  }
-
-  let extraCaFile
-  const systemCAs = getSystemCAs()
-  if (systemCAs) {
-    extraCaFile = join(tmpdir(), `electerm-system-ca-${Date.now()}.pem`)
-    writeFileSync(extraCaFile, systemCAs)
-    dlog('child-process: wrote system CA file:', extraCaFile)
   }
 
   // Create a mock child object for init-server.js compatibility
@@ -78,12 +66,6 @@ module.exports = (config, env, sysLocale) => {
     dlog('child-process: require server.js ERROR:', err.message, err.stack)
     setImmediate(() => {
       child.emit('error', err)
-    })
-  }
-
-  if (extraCaFile) {
-    child.on('exit', () => {
-      try { unlinkSync(extraCaFile) } catch {}
     })
   }
 

@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "org.electerm.electerm",
     "vendor": "electerm",
-    "versionCode": 41500121,
-    "versionName": "4.15.121",
+    "versionCode": 31500167,
+    "versionName": "3.15.167",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

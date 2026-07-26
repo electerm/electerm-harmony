@@ -29,12 +29,15 @@ function getAppDataPath () {
 }
 
 const appDataPath = getAppDataPath()
+const sshKeysPath = resolve(appDataPath, '.ssh')
+// Create immediately so SSH key reads/writes never fail on a missing dir.
+try { fs.mkdirSync(sshKeysPath, { recursive: true, mode: 0o700 }) } catch {}
 
 module.exports = {
   appPath: appDataPath,
   isPortable: false,
   exePath: '',
-  sshKeysPath: resolve(appDataPath, '.ssh'),
-  homeOrTmp: os.homedir(),
+  sshKeysPath,
+  homeOrTmp: constants.homeDir,
   ...constants
 }

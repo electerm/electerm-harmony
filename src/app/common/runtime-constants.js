@@ -3,6 +3,7 @@
  */
 
 const os = require('os')
+const fs = require('fs')
 const { resolve } = require('path')
 
 const platform = os.platform()
@@ -36,6 +37,29 @@ const extIconPath = isDev
 
 const defaultUserName = require('./default-user-name')
 
+/**
+ * On HarmonyOS, os.homedir() returns an inaccessible path
+ * (e.g. /storage/Users/currentUser) and os.tmpdir() may also point to
+ * a location outside the app sandbox. When process.env.DATA_PATH is set
+ * (by bootstrap.js), use it as the base for both home and temp dirs.
+ */
+function getHomeDir () {
+  if (process.env.DATA_PATH) {
+    return process.env.DATA_PATH
+  }
+  return os.homedir()
+}
+
+function getTempDir () {
+  if (process.env.DATA_PATH) {
+    const dir = resolve(process.env.DATA_PATH, 'tmp')
+    // Create immediately so downstream writes never fail on a missing dir.
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    return dir
+  }
+  return os.tmpdir()
+}
+
 module.exports = {
   isTest: !!NODE_TEST,
   isDev,
@@ -50,6 +74,7 @@ module.exports = {
   minWindowWidth: 590,
   minWindowHeight: 400,
   defaultLang: 'en_us',
-  tempDir: require('os').tmpdir(),
+  homeDir: getHomeDir(),
+  tempDir: getTempDir(),
   packInfo: require(isDev ? '../../../package.json' : '../package.json')
 }
