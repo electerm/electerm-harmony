@@ -2,18 +2,12 @@ const fss = require('fs/promises')
 const fs = require('fs')
 const log = require('../common/log')
 const path = require('path')
-const { isWin, isMac, tempDir } = require('../common/runtime-constants')
+const { tempDir } = require('../common/runtime-constants')
 const uid = require('../common/uid')
 const { promisify } = require('util')
 const { exec, spawn } = require('child_process')
 const execAsync = promisify(exec)
-const { getSizeCount, getSizeCountWin } = require('../common/get-folder-size-and-file-count.js')
-
-const ROOT_PATH = '/'
-
-function encodeUtf8Base64 (value) {
-  return Buffer.from(String(value), 'utf8').toString('base64')
-}
+const { getSizeCount } = require('../common/get-folder-size-and-file-count.js')
 
 // Encoding function
 function encodeUint8Array (uint8Arr) {
@@ -23,10 +17,6 @@ function encodeUint8Array (uint8Arr) {
 // Decoding function
 function decodeBase64String (base64String) {
   return new Uint8Array(Buffer.from(base64String, 'base64'))
-}
-
-const isWinDrive = function (path) {
-  return /^\w+:$/.test(path)
 }
 
 /**
@@ -103,25 +93,7 @@ function escapePosixShellArg (value) {
   return String(value).replace(/'/g, "'\\''")
 }
 
-/**
- * Escape a string for safe use inside PowerShell single-quoted strings.
- * Single quotes are escaped by doubling them:  '  ->  ''
- */
-function escapePowerShellArg (value) {
-  return String(value).replace(/'/g, "''")
-}
-
-function getFolderSizeWin (folderPath) {
-  const safePath = escapePowerShellArg(folderPath)
-  return runWinCmd(
-    `Get-ChildItem -Path '${safePath}' -Recurse | Where-Object { ! $_.PSIsContainer } | Measure-Object -Property Length -Sum`
-  ).then(res => getSizeCountWin(res.stdout))
-}
-
 function getFolderSize (folderPath) {
-  if (isWin) {
-    return getFolderSizeWin(folderPath)
-  }
   const safePath = escapePosixShellArg(folderPath)
   return run(`du -sh '${safePath}' && find '${safePath}' -type f | wc -l`)
     .then(getSizeCount)
@@ -195,22 +167,7 @@ const touch = (localFilePath) => {
  * @param {string} localFolderPath absolute path
  */
 const openFile = (localFilePath) => {
-  if (isWin) {
-    const script = '$path = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:ELECTERM_OPEN_FILE_PATH_B64)); Invoke-Item -LiteralPath $path'
-    return spawnDetachedCommand('powershell.exe', [
-      '-NoLogo',
-      '-NonInteractive',
-      '-Command',
-      script
-    ], {
-      windowsHide: true,
-      env: {
-        ...process.env,
-        ELECTERM_OPEN_FILE_PATH_B64: encodeUtf8Base64(localFilePath)
-      }
-    })
-  }
-  return spawnDetachedCommand(isMac ? 'open' : 'xdg-open', [localFilePath])
+  return spawnDetachedCommand('xdg-open', [localFilePath])
 }
 
 /**
@@ -231,25 +188,6 @@ const zipFolder = (localFolerPath) => {
     .then(() => p)
 }
 
-const handleWindowsDrive = async (localFilePath, targetFolderPath) => {
-  const tar = require('tar')
-  const tempExtractDir = path.join(tempDir, `electerm-unzip-${uid()}`)
-  await fss.mkdir(tempExtractDir, { recursive: true })
-
-  try {
-    await tar.x({ file: localFilePath, C: tempExtractDir })
-    const items = await fss.readdir(tempExtractDir)
-
-    await Promise.all(items.map(async (item) => {
-      const from = path.join(tempExtractDir, item)
-      const to = path.join(targetFolderPath, item)
-      await mv(from, to)
-    }))
-  } finally {
-    await rmrf(tempExtractDir).catch(log.error)
-  }
-}
-
 /**
  * unzip file
  * @param {string} localFilePath absolute path of a zip file
@@ -257,52 +195,8 @@ const handleWindowsDrive = async (localFilePath, targetFolderPath) => {
  */
 const unzipFile = async (localFilePath, targetFolderPath) => {
   const tar = require('tar')
-  if (isWin && isWinDrive(targetFolderPath)) {
-    await handleWindowsDrive(localFilePath, targetFolderPath)
-  } else {
-    await tar.x({ file: localFilePath, C: targetFolderPath })
-  }
+  await tar.x({ file: localFilePath, C: targetFolderPath })
   return 1
-}
-
-async function listWindowsRootPath () {
-  const drives = await new Promise((resolve, reject) => {
-    const { exec } = require('child_process')
-    const command = 'powershell.exe -Command "Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root"'
-
-    exec(command, { encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) {
-        reject(error)
-        return
-      }
-      if (stderr) {
-        reject(new Error(stderr))
-        return
-      }
-      const drives = stdout.split('\r\n')
-        .map(line => line.trim())
-        // Accept any valid Windows path that ends with backslash
-        .filter(line => /^[^<>:"/\\|?*]+:\\$/.test(line))
-        .map(drive => drive.slice(0, -1)) // Remove trailing backslash
-      resolve(drives)
-    })
-  })
-  const distros = await listWslDistros()
-  return [...drives, ...distros]
-}
-
-async function listWslDistros () {
-  try {
-    const { stdout } = await execAsync('wsl.exe -l -q', { encoding: 'buffer' })
-    const output = Buffer.from(stdout).toString('utf16le').replace(/^\uFEFF/, '')
-    const distros = output.split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(name => '\\\\wsl.localhost\\' + name)
-    return distros
-  } catch {
-    return []
-  }
 }
 
 const readCustom = (p1, len, ...args) => {
@@ -379,14 +273,7 @@ const fsExport = Object.assign(
   },
   {
     readdirAsync: (_path) => {
-      if (_path === ROOT_PATH && isWin) {
-        return listWindowsRootPath()
-      }
-      let path = _path
-      if (isWin && isWinDrive(path)) {
-        path = path + '\\'
-      }
-      return fss.readdir(path)
+      return fss.readdir(_path)
     },
     statAsync: (...args) => {
       return fss.stat(...args)

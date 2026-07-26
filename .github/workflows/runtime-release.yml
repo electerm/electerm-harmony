@@ -1,0 +1,116 @@
+name: Publish Electron Runtime Release
+
+# Re-publishes the pre-built Electron 鸿蒙 runtime tarball (downloaded from
+# the ELECTRON_RUNTIME_URL secret) as a GitHub release asset. This gives the
+# build workflow a stable, public download URL instead of relying on the
+# private secret directly.
+#
+# Trigger manually from the Actions tab ("Run workflow") or via:
+#   gh workflow run runtime-release.yml -f tag=v0.0.1
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.0.1)'
+        required: true
+        default: 'v0.0.1'
+      make_latest:
+        description: 'Mark as latest release'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── Checkout (needed for git tag / gh release context) ───────────────
+      - name: Checkout electerm-harmony
+        uses: actions/checkout@v4
+
+      # ── Download the runtime tarball from the secret URL ────────────────
+      - name: Download Electron runtime tarball
+        env:
+          ELECTRON_RUNTIME_URL: ${{ secrets.ELECTRON_RUNTIME_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ELECTRON_RUNTIME_URL}" ]; then
+            echo "::error::ELECTRON_RUNTIME_URL secret is not set."
+            exit 1
+          fi
+          mkdir -p .cache
+          # Derive a filename from the URL, stripping any query string.
+          FILENAME="$(basename "${ELECTRON_RUNTIME_URL%%\?*}")"
+          if [ -z "${FILENAME}" ] || [ "${FILENAME}" = "/" ]; then
+            FILENAME="electron-runtime.tar.gz"
+          fi
+          echo "Downloading ${ELECTRON_RUNTIME_URL} -> ${FILENAME}"
+          curl -L --fail --retry 10 --retry-all-errors --retry-delay 5 \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o ".cache/${FILENAME}" \
+            "${ELECTRON_RUNTIME_URL}"
+          if [ ! -s ".cache/${FILENAME}" ]; then
+            echo "::error::Downloaded file is empty."
+            exit 1
+          fi
+          echo "asset_path=.cache/${FILENAME}" >> "$GITHUB_ENV"
+          echo "asset_name=${FILENAME}" >> "$GITHUB_ENV"
+          echo "Downloaded ${FILENAME} ($(du -h ".cache/${FILENAME}" | cut -f1))"
+
+      # ── Create release & upload the tarball as an asset ─────────────────
+      - name: Create release and upload asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          ASSET_PATH="${{ env.asset_path }}"
+          ASSET_NAME="${{ env.asset_name }}"
+
+          # Delete an existing release/tag if present (idempotent re-run).
+          gh release delete "${TAG}" --yes --cleanup-tag 2>/dev/null || true
+
+          # Build the --latest flag conditionally.
+          LATEST_ARG=""
+          if [ "${{ inputs.make_latest }}" = "true" ]; then
+            LATEST_ARG="--latest"
+          fi
+
+          # Create the release with the asset attached.
+          gh release create "${TAG}" \
+            --title "Electron 鸿蒙 Runtime ${TAG}" \
+            --notes "Pre-built Electron 鸿蒙 runtime tarball for CI builds.
+
+          This release hosts the runtime asset at a stable, public URL so the
+          build workflow can download it without referencing the
+          \`ELECTRON_RUNTIME_URL\` secret directly.
+
+          **Asset:** \`${ASSET_NAME}\`
+          " \
+            ${LATEST_ARG} \
+            "${ASSET_PATH}"
+
+          echo ""
+          echo "✓ Release ${TAG} published."
+
+          # Print the asset download URL for reference.
+          ASSET_URL=$(gh release view "${TAG}" --json assets --jq ".assets[0].url")
+          echo "Asset URL: ${ASSET_URL}"
+
+          # Add to GitHub Step Summary.
+          {
+            echo "## Release Published"
+            echo ""
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Tag | \`${TAG}\` |"
+            echo "| Asset | \`${ASSET_NAME}\` |"
+            echo "| Asset URL | \`${ASSET_URL}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+

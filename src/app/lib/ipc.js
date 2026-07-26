@@ -45,7 +45,6 @@ const {
 const {
   packInfo,
   appPath,
-  isMac,
   exePath,
   isPortable,
   sshKeysPath
@@ -118,9 +117,7 @@ async function initAppServer () {
     dlog('initAppServer: initServer resolved, child pid:', child?.pid)
     child.on('message', (m) => {
       if (m && m.showFileInFolder) {
-        if (!isMac) {
-          shell.showItemInFolder(m.showFileInFolder)
-        }
+        shell.showItemInFolder(m.showFileInFolder)
       }
     })
     globalState.set('serverInited', true)

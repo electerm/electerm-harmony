@@ -5,9 +5,6 @@
 
 const { app } = require('electron')
 const log = require('../common/log')
-const {
-  isMac
-} = require('../common/runtime-constants')
 const globalState = require('./glob-state')
 const { parseQuickConnect, SUPPORTED_PROTOCOLS } = require('../common/parse-quick-connect')
 /**
@@ -135,23 +132,10 @@ function getPendingDeepLink () {
  * Setup deep link handlers for the app
  */
 function setupDeepLinkHandlers () {
-  // Handle deep links on macOS (open-url event)
-  if (isMac) {
-    app.on('open-url', (event, url) => {
-      event.preventDefault()
-      log.info('open-url event:', url)
-      handleDeepLink(url)
-    })
-  }
-
   // Note: second-instance and process.argv protocol URL handling is done by
   // single-instance.js (socket-based IPC → add-tab-from-command-line) and
   // command-line.js (initCommandLine → addTabFromCommandLine) respectively.
   // Handling them here too would cause duplicate tabs to open.
-  //
-  // The 'open-url' event below (macOS only) is the only handler needed here,
-  // as it covers the case where the app is opened via a clicked link or
-  // `open -a electerm ssh://...` command, which does NOT go through argv.
 }
 
 module.exports = {

@@ -10,7 +10,6 @@ const globalState = require('./glob-state')
 const {
   packInfo
 } = require('../common/runtime-constants')
-const buildMenu = require('./menu')
 
 function capitalizeFirstLetter (string) {
   return string.charAt(0).toUpperCase() + string.slice(1)
@@ -30,8 +29,9 @@ function initApp (langMap, config) {
     }
     return globalState.get('getLang')()[txt] || txt
   })
-  const menu = buildMenu()
-  Menu.setApplicationMenu(menu)
+  // Remove the desktop-style menu bar — all menu functionality
+  // (settings, about, etc.) is available in the web UI.
+  Menu.setApplicationMenu(null)
   const e = globalState.get('translate')
   // handle autohide flag
   if (process.argv.includes('--autohide')) {

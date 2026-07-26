@@ -34,9 +34,6 @@ const {
   setTerminalLogPath,
   startTerminalLogFile
 } = require('./session-api')
-const {
-  isWin
-} = require('../common/runtime-constants')
 const wsDec = require('./ws-dec')
 const { zmodemManager } = require('./zmodem')
 const { trzszManager } = require('./trzsz')
@@ -288,9 +285,6 @@ function createSessionServer (type, wsPort, electermHost) {
       }
 
       term.on('close', onClose)
-      if (term.isLocal && isWin) {
-        term.on('exit', onClose)
-      }
 
       ws.on('message', function (msg) {
         try {
