@@ -1,5 +1,5 @@
 const {
-  BrowserWindow
+  BrowserWindow, screen
 } = require('electron')
 const { resolve } = require('path')
 const {
@@ -10,6 +10,7 @@ const {
   getWindowSize,
   setWindowPos
 } = require('./window-control')
+const { ensureWindowVisible } = require('./window-restore')
 const { onClose } = require('./on-close')
 const { initIpc, initAppServer } = require('./ipc')
 const { disableShortCuts } = require('./key-bind')
@@ -51,6 +52,9 @@ exports.createWindow = async function (userConfig) {
     titleBarStyle: 'default',
     icon: iconPath
   })
+  // Safety net: verify the window is actually visible on a connected
+  // display and move it to the primary display if not.
+  ensureWindowVisible(win, screen)
 
   win.webContents.session.setSpellCheckerDictionaryDownloadURL('https://00.00/')
 
