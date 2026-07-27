@@ -1,6 +1,6 @@
 {
   "name": "electerm-harmony",
-  "version": "4.15.173",
+  "version": "4.15.175",
   "description": "electerm — a free and open-source ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS, built on the electerm codebase.",
   "main": "app.js",
   "bin": "npm/electerm",
@@ -45,7 +45,7 @@
   "preferGlobal": true,
   "devDependencies": {
     "@ant-design/icons": "6.2.5",
-    "@electerm/electerm-react": "^3.15.171",
+    "@electerm/electerm-react": "^3.15.173",
     "@electerm/electerm-resource": "2.1.10",
     "@fontsource/maple-mono": "^5.2.5",
     "@novnc/novnc": "1.7.0",
