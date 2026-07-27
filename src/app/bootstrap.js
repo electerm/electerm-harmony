@@ -1,18 +1,17 @@
 /**
  * bootstrap.js — HarmonyOS entry point.
  *
- * On HarmonyOS, app.getPath('appData') does not work in the Electron runtime
- * due to a C++ binding issue (SetContextPaths is not effective). Instead,
- * AbilityStage.ets writes the sandbox filesDir to a marker file before the
- * Electron runtime starts. This file reads that marker and sets
- * process.env.DATA_PATH so all downstream modules (app-props.js, db.js, etc.)
- * use the correct sandbox path.
+ * AbilityStage.ets writes the data path (the user's pre-authorized
+ * Documents directory) to a marker file before the Electron runtime
+ * starts. This file reads that marker and sets process.env.DATA_PATH
+ * so all downstream modules use the correct path.
  *
- * Path derivation:
- *   __dirname = /data/storage/el1/bundle/entry/resources/resfile/resources/app
- *   filesDir  = /data/storage/el2/base/haps/entry/files
- *   Transform: replace "/el1/bundle/" with "/el2/base/haps/", strip the
- *   resources/resfile/... suffix, append "/files".
+ * Resolution order:
+ *   1. Marker file (written by AbilityStage.ets, contains Documents/electerm)
+ *   2. Derive from os.homedir() + '/Documents/electerm'
+ *      (os.homedir() returns /storage/Users/currentUser on HarmonyOS)
+ *   3. Sandbox filesDir (derived from __dirname) — unreliable, last resort
+ *   4. /data/local/tmp or os.tmpdir() — absolute last resort
  */
 const fs = require('fs')
 const path = require('path')
@@ -55,29 +54,37 @@ function getDataPath () {
     } catch (e) {
       blog('marker file not found at', markerPath, '-', e.code || e.message)
     }
+  }
 
-    // 2. Marker not found — try the derived path directly
+  // 2. Use the user's pre-authorized Documents directory.
+  // os.homedir() returns /storage/Users/currentUser on HarmonyOS.
+  // The READ_WRITE_DOCUMENTS_DIRECTORY permission (declared in
+  // module.json5) grants reliable read/write access to Documents/.
+  const docsPath = path.join(os.homedir(), 'Documents', 'electerm')
+  try {
+    fs.mkdirSync(docsPath, { recursive: true })
+    // Verify write access
+    const testFile = path.join(docsPath, '.write-test')
+    fs.writeFileSync(testFile, 'ok')
+    fs.unlinkSync(testFile)
+    blog('using Documents dir:', docsPath)
+    return docsPath
+  } catch (e) {
+    blog('Documents dir not writable:', docsPath, '-', e.message)
+  }
+
+  // 3. Try sandbox filesDir (unreliable — may lose data on restart)
+  if (derivedDir) {
     try {
       fs.mkdirSync(derivedDir, { recursive: true })
-      blog('using derived sandbox path:', derivedDir)
+      blog('using derived sandbox path (unreliable):', derivedDir)
       return derivedDir
     } catch (e) {
       blog('derived path not writable:', derivedDir, '-', e.message)
     }
   }
 
-  // 3. Last resort: try app.getPath('appData')
-  try {
-    const { app } = require('electron')
-    const p = app.getPath('appData')
-    blog('using app.getPath("appData"):', p)
-    return p
-  } catch (e) {
-    blog('app.getPath("appData") failed:', e.message)
-  }
-
-  // 4. Final fallback — try /data/local/tmp (writable on HarmonyOS/Android),
-  //    then os.tmpdir() as the absolute last resort.
+  // 4. Final fallback — try /data/local/tmp, then os.tmpdir()
   const fallbacks = ['/data/local/tmp', os.tmpdir()]
   for (const dir of fallbacks) {
     try {
@@ -89,7 +96,6 @@ function getDataPath () {
     }
   }
 
-  // If everything fails, return os.tmpdir() anyway — better than crashing.
   blog('all fallbacks failed, returning os.tmpdir():', os.tmpdir())
   return os.tmpdir()
 }

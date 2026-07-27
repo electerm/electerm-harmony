@@ -87,7 +87,9 @@ const SAFE_ENV_KEYS = [
   'COMPUTERNAME', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
   'Apple_PubSub_Socket_Render',
   'DBUS_SESSION_BUS_ADDRESS', 'DESKTOP_SESSION', 'GNOME_DESKTOP_SESSION_ID', 'KDE_FULL_SESSION',
-  'CI', 'DOCKER_HOST', 'CONTAINER'
+  'CI', 'DOCKER_HOST', 'CONTAINER',
+  // HarmonyOS: app sandbox data directory (set by bootstrap.js)
+  'DATA_PATH'
 ]
 
 async function initAppServer () {
