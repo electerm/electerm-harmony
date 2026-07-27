@@ -38,15 +38,12 @@ const extIconPath = isDev
 const defaultUserName = require('./default-user-name')
 
 /**
- * On HarmonyOS, os.homedir() returns an inaccessible path
- * (e.g. /storage/Users/currentUser) and os.tmpdir() may also point to
- * a location outside the app sandbox. When process.env.DATA_PATH is set
- * (by bootstrap.js), use it as the base for both home and temp dirs.
+ * bootstrap.js overrides os.homedir() to return the app's sandbox data
+ * directory (DATA_PATH), so getHomeDir() simply delegates to it.
+ * os.tmpdir() may still point outside the sandbox, so getTempDir()
+ * derives a writable tmp/ subdirectory under DATA_PATH.
  */
 function getHomeDir () {
-  if (process.env.DATA_PATH) {
-    return process.env.DATA_PATH
-  }
   return os.homedir()
 }
 

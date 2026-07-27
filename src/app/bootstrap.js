@@ -96,5 +96,18 @@ function getDataPath () {
 
 process.env.DATA_PATH = getDataPath()
 blog('DATA_PATH set to:', process.env.DATA_PATH)
+
+// ── Override os.homedir() ──────────────────────────────────────────
+// On HarmonyOS the default os.homedir() returns an inaccessible path
+// (e.g. /storage/Users/currentUser). bootstrap.js is the very first
+// module to run, so patching os.homedir() here guarantees that every
+// downstream call — whether in our own code or in third-party
+// dependencies — returns the unified sandbox data directory.
+const _originalHomedir = os.homedir.bind(os)
+os.homedir = function homedir () {
+  return process.env.DATA_PATH || _originalHomedir()
+}
+blog('os.homedir() overridden to return:', os.homedir())
+
 blog('require app.js...')
 require('./app.js')

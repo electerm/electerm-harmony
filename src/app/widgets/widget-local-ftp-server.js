@@ -25,7 +25,7 @@ const widgetInfo = {
     {
       name: 'directory',
       type: 'string',
-      default: process.env.DATA_PATH || os.homedir(),
+      default: os.homedir(),
       description: 'The directory to serve files from (default: user\'s home directory)'
     },
     {

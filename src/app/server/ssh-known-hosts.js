@@ -15,14 +15,9 @@ function normalizeHost (host = '') {
 }
 
 function getKnownHostsPath () {
-  // On HarmonyOS, os.homedir() returns an inaccessible path
-  // (e.g. /storage/Users/currentUser). Use the app's sandbox data
-  // directory (sshKeysPath, set by child-process.js from app-props.js)
-  // which is the same directory used for SSH keys.
-  const { sshKeysPath } = process.env
-  if (sshKeysPath) {
-    return join(sshKeysPath, 'known_hosts')
-  }
+  // os.homedir() is overridden by bootstrap.js to return the app's
+  // sandbox data directory (DATA_PATH), so this resolves to
+  // <DATA_PATH>/.ssh/known_hosts.
   return join(os.homedir(), '.ssh', 'known_hosts')
 }
 

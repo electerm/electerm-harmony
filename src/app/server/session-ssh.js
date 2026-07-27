@@ -17,6 +17,7 @@ const { TerminalBase } = require('./session-base')
 const { commonExtends } = require('./session-common')
 const globalState = require('./global-state')
 const iconv = require('iconv-lite')
+const os = require('os')
 
 // Encodings that are equivalent to UTF-8 (no conversion needed)
 const utf8Aliases = new Set(['utf-8', 'utf8', 'utf-8-strict'])
@@ -519,12 +520,14 @@ class TerminalSshBase extends TerminalBase {
   }
 
   getSSHKeys () {
-    const { sshKeysPath } = process.env
+    // os.homedir() is overridden by bootstrap.js to return the
+    // sandbox DATA_PATH, so this resolves to <DATA_PATH>/.ssh.
+    const keysDir = pathResolve(os.homedir(), '.ssh')
     try {
       return require('fs')
-        .readdirSync(sshKeysPath)
+        .readdirSync(keysDir)
         .filter(file => file.endsWith('.pub'))
-        .map(file => pathResolve(sshKeysPath, file.replace('.pub', '')))
+        .map(file => pathResolve(keysDir, file.replace('.pub', '')))
     } catch (e) {
       log.error(e)
       return []
