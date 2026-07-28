@@ -61,10 +61,13 @@ if [ -f ".sample.env" ]; then
 fi
 
 # Set SERVER_SECRET from CI env var (optional)
+# Use printf + grep -v + append to avoid sed delimiter issues
+# with base64 secrets that may contain / or & characters.
 if [ -n "${OHOS_SERVER_SECRET:-}" ]; then
   echo "    Setting SERVER_SECRET from OHOS_SERVER_SECRET ..."
-  sed -i.bak "s/^SERVER_SECRET=.*/SERVER_SECRET=${OHOS_SERVER_SECRET}/" .env 2>/dev/null || true
-  rm -f .env.bak
+  grep -v '^SERVER_SECRET=' .env > .env.tmp 2>/dev/null || true
+  printf 'SERVER_SECRET=%s\n' "${OHOS_SERVER_SECRET}" >> .env.tmp
+  mv .env.tmp .env
 fi
 
 # Run the HarmonyOS build script (vite + copy source + install deps + copy to resfile)

@@ -19,6 +19,14 @@ const pack = require('../../package.json')
 // Ensure we run from project root (build/bin/*.js rely on cwd)
 process.chdir(resolve(__dirname, '../..'))
 const ROOT = process.cwd()
+
+// Load .env so SERVER_SECRET is available for build-time injection
+// (called after chdir to ensure .env is found in project root)
+try {
+  require('dotenv').config()
+} catch (_) {
+  // dotenv may not be installed yet during very early runs
+}
 const WORK_APP = resolve(ROOT, 'work/app')
 const OUTPUT_DIR = resolve(ROOT, 'web_engine/src/main/resources/resfile/resources/app')
 
@@ -159,7 +167,27 @@ function applyHarmonyDelta () {
     }
   }
 
-  // 2c. Remove .env (not needed in the packed app)
+  // 2c. Inject SERVER_SECRET into safe-storage.js
+  // The backend code is copied as-is (not bundled by vite), so
+  // process.env.SERVER_SECRET is NOT available at runtime.
+  // We replace the default placeholder at build time so the
+  // production secret is baked into the output.
+  // JSON.stringify ensures the value is safely escaped for JS.
+  const safeStoragePath = resolve(WORK_APP, 'lib/safe-storage.js')
+  if (fs.existsSync(safeStoragePath) && process.env.SERVER_SECRET) {
+    let safeSrc = fs.readFileSync(safeStoragePath, 'utf8')
+    const escaped = JSON.stringify(process.env.SERVER_SECRET)
+    safeSrc = safeSrc.replace(
+      "'static-secret-string-safe-storage'",
+      escaped
+    )
+    fs.writeFileSync(safeStoragePath, safeSrc, 'utf8')
+    echo('  ✓ safe-storage.js: SERVER_SECRET injected')
+  } else {
+    echo('  ⚠ safe-storage.js: using default secret (SERVER_SECRET not set)')
+  }
+
+  // 2d. Remove .env (not needed in the packed app)
   rmrf(resolve(WORK_APP, '.env'))
   rmrf(resolve(WORK_APP, '.env.bak'))
 

@@ -17,13 +17,40 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
-// Minimal inline logger for bootstrap — debug-logger.js depends on DATA_PATH
-// which isn't set yet at this point, so we write to a fixed early-stage path.
+// ── File logger ────────────────────────────────────────────────────
+// Writes to $DATA_PATH/electerm-debug.log once DATA_PATH is set.
+// Before that, lines are buffered in memory and flushed after.
+const _logBuffer = []
+let _logPath = null
+
 function blog (...args) {
   try {
-    const line = `[${new Date().toISOString()}] [bootstrap] ${args.join(' ')}\n`
-    // Write to both stderr (visible in HiLog) and a temp file for early-stage logs
+    const now = new Date()
+    const ts = now.toISOString().replace('T', ' ').replace('Z', '')
+    const ms = String(now.getMilliseconds()).padStart(3, '0')
+    const line = `[${ts}.${ms}] [bootstrap] ${args.join(' ')}\n`
     process.stderr.write(line)
+    if (_logPath) {
+      fs.appendFileSync(_logPath, line)
+    } else {
+      _logBuffer.push(line)
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function flushLogBuffer () {
+  if (!_logPath || _logBuffer.length === 0) return
+  try {
+    const block = _logBuffer.join('')
+    fs.appendFileSync(_logPath, block)
+    _logBuffer.length = 0
+  } catch (e) { /* ignore */ }
+}
+
+function initFileLog () {
+  try {
+    _logPath = path.join(process.env.DATA_PATH, 'electerm-debug.log')
+    flushLogBuffer()
   } catch (e) { /* ignore */ }
 }
 
@@ -102,6 +129,26 @@ function getDataPath () {
 
 process.env.DATA_PATH = getDataPath()
 blog('DATA_PATH set to:', process.env.DATA_PATH)
+initFileLog()
+
+// ── Diagnostic: log existing data files ────────────────────────────
+// Helps diagnose data persistence issues by showing what files exist
+// at startup and their sizes.
+try {
+  const dbDir = path.join(process.env.DATA_PATH, 'users', 'default_user')
+  if (fs.existsSync(dbDir)) {
+    const files = fs.readdirSync(dbDir)
+    blog(`[diag] db dir: ${dbDir}, ${files.length} files`)
+    for (const f of files) {
+      const stat = fs.statSync(path.join(dbDir, f))
+      blog(`[diag]   ${f}: ${stat.size} bytes`)
+    }
+  } else {
+    blog(`[diag] db dir does not exist yet: ${dbDir}`)
+  }
+} catch (e) {
+  blog('[diag] failed to list db dir:', e.message)
+}
 
 // ── Override os.homedir() ──────────────────────────────────────────
 // On HarmonyOS the default os.homedir() returns an inaccessible path
