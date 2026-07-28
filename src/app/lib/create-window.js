@@ -6,7 +6,6 @@ const {
   isDev, packInfo, iconPath, isMac,
   minWindowWidth, minWindowHeight
 } = require('../common/runtime-constants')
-const defaults = require('../common/default-setting')
 const {
   getWindowSize,
   setWindowPos
@@ -28,7 +27,6 @@ exports.createWindow = async function (userConfig) {
   globalState.set('closeAction', 'closeApp')
   globalState.set('requireAuth', !!userConfig.hashedPassword)
   const { width, height, x, y } = await getWindowSize()
-  const { useSystemTitleBar = defaults.useSystemTitleBar } = userConfig
   // HarmonyOS: `transparent: true` and `titleBarStyle: 'hidden'` are NOT
   // supported — they cause a double title bar (the OS title bar plus the
   // app's custom one). We therefore always use the system title bar,
@@ -45,7 +43,7 @@ exports.createWindow = async function (userConfig) {
     minWidth: minWindowWidth,
     minHeight: minWindowHeight,
     title: packInfo.name,
-    frame: useSystemTitleBar,
+    frame: true,
     backgroundColor: '#333333',
     autoHideMenuBar: true,
     webPreferences: {
