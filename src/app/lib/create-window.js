@@ -3,9 +3,10 @@ const {
 } = require('electron')
 const { resolve } = require('path')
 const {
-  isDev, packInfo, iconPath,
+  isDev, packInfo, iconPath, isMac,
   minWindowWidth, minWindowHeight
 } = require('../common/runtime-constants')
+const defaults = require('../common/default-setting')
 const {
   getWindowSize,
   setWindowPos
@@ -27,6 +28,14 @@ exports.createWindow = async function (userConfig) {
   globalState.set('closeAction', 'closeApp')
   globalState.set('requireAuth', !!userConfig.hashedPassword)
   const { width, height, x, y } = await getWindowSize()
+  const { useSystemTitleBar = defaults.useSystemTitleBar } = userConfig
+  // HarmonyOS: `transparent: true` and `titleBarStyle: 'hidden'` are NOT
+  // supported — they cause a double title bar (the OS title bar plus the
+  // app's custom one). We therefore always use the system title bar,
+  // mirroring the override in get-config.js.
+  // `frame` IS supported, so once transparent/titleBarStyle are supported,
+  // remove this line to respect the user's useSystemTitleBar setting.
+  // useSystemTitleBar = true
   const win = new BrowserWindow({
     width,
     height,
@@ -36,8 +45,7 @@ exports.createWindow = async function (userConfig) {
     minWidth: minWindowWidth,
     minHeight: minWindowHeight,
     title: packInfo.name,
-    frame: true,
-    transparent: false,
+    frame: useSystemTitleBar,
     backgroundColor: '#333333',
     autoHideMenuBar: true,
     webPreferences: {
@@ -49,12 +57,16 @@ exports.createWindow = async function (userConfig) {
       devTools: !userConfig.disableDeveloperTool,
       spellcheck: false
     },
-    titleBarStyle: 'default',
     icon: iconPath
   })
   // Safety net: verify the window is actually visible on a connected
   // display and move it to the primary display if not.
   ensureWindowVisible(win, screen)
+
+  // macOS: show the traffic-light buttons
+  if (isMac) {
+    win.setWindowButtonVisibility(true)
+  }
 
   win.webContents.session.setSpellCheckerDictionaryDownloadURL('https://00.00/')
 

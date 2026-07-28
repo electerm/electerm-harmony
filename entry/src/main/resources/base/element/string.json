@@ -19,6 +19,10 @@
     {
       "name": "reason_running_lock",
       "value": "Electerm needs to keep the backend running in the background"
+    },
+    {
+      "name": "reason",
+      "value": "Electerm needs access to the Documents, Download, and Desktop directories to store app data, transfer files, and persist settings reliably across restarts"
     }
   ]
 }

@@ -1,17 +1,26 @@
 /**
  * bootstrap.js — HarmonyOS entry point.
  *
- * AbilityStage.ets writes the data path (the user's pre-authorized
- * Documents directory) to a marker file before the Electron runtime
- * starts. This file reads that marker and sets process.env.DATA_PATH
- * so all downstream modules use the correct path.
+ * AbilityStage.ets writes the sandbox filesDir path to a marker file
+ * (.electerm-data-path) before the Electron runtime starts. This file
+ * reads that marker and sets process.env.DATA_PATH so all downstream
+ * modules use the sandbox directory for data storage (nedb, config, logs).
  *
- * Resolution order:
- *   1. Marker file (written by AbilityStage.ets, contains Documents/electerm)
- *   2. Derive from os.homedir() + '/Documents/electerm'
- *      (os.homedir() returns /storage/Users/currentUser on HarmonyOS)
- *   3. Sandbox filesDir (derived from __dirname) — unreliable, last resort
- *   4. /data/local/tmp or os.tmpdir() — absolute last resort
+ * EntryAbility.ets requests READ_WRITE_DOCUMENTS_DIRECTORY at runtime,
+ * then writes the Documents directory path to a second marker file
+ * (.electerm-documents-path). This file reads that marker and overrides
+ * os.homedir() to return the Documents folder — so that file save
+ * dialogs, SFTP local paths, and other home-directory-based operations
+ * default to the user-visible Documents folder.
+ *
+ * DATA_PATH resolution order:
+ *   1. Marker file (.electerm-data-path, written by AbilityStage.ets → sandbox filesDir)
+ *   2. Derived sandbox filesDir (from __dirname)
+ *   3. /data/local/tmp or os.tmpdir() — absolute last resort
+ *
+ * HOMEDIR_PATH resolution order:
+ *   1. Marker file (.electerm-documents-path, written by EntryAbility.ets → Documents dir)
+ *   2. Original os.homedir() (system default)
  */
 const fs = require('fs')
 const path = require('path')
@@ -64,6 +73,12 @@ function deriveSandboxFilesDir () {
   return null
 }
 
+/**
+ * Resolve DATA_PATH — the sandbox filesDir used for app data storage.
+ * This is always the sandbox directory, NOT the user-visible Documents
+ * folder. The sandbox is always writable and doesn't require runtime
+ * permission requests.
+ */
 function getDataPath () {
   const derivedDir = deriveSandboxFilesDir()
   blog('derivedDir:', derivedDir)
@@ -81,37 +96,18 @@ function getDataPath () {
     } catch (e) {
       blog('marker file not found at', markerPath, '-', e.code || e.message)
     }
-  }
 
-  // 2. Use the user's pre-authorized Documents directory.
-  // os.homedir() returns /storage/Users/currentUser on HarmonyOS.
-  // The READ_WRITE_DOCUMENTS_DIRECTORY permission (declared in
-  // module.json5) grants reliable read/write access to Documents/.
-  const docsPath = path.join(os.homedir(), 'Documents', 'electerm')
-  try {
-    fs.mkdirSync(docsPath, { recursive: true })
-    // Verify write access
-    const testFile = path.join(docsPath, '.write-test')
-    fs.writeFileSync(testFile, 'ok')
-    fs.unlinkSync(testFile)
-    blog('using Documents dir:', docsPath)
-    return docsPath
-  } catch (e) {
-    blog('Documents dir not writable:', docsPath, '-', e.message)
-  }
-
-  // 3. Try sandbox filesDir (unreliable — may lose data on restart)
-  if (derivedDir) {
+    // 2. Use the derived sandbox filesDir directly
     try {
       fs.mkdirSync(derivedDir, { recursive: true })
-      blog('using derived sandbox path (unreliable):', derivedDir)
+      blog('using derived sandbox path:', derivedDir)
       return derivedDir
     } catch (e) {
       blog('derived path not writable:', derivedDir, '-', e.message)
     }
   }
 
-  // 4. Final fallback — try /data/local/tmp, then os.tmpdir()
+  // 3. Final fallback — try /data/local/tmp, then os.tmpdir()
   const fallbacks = ['/data/local/tmp', os.tmpdir()]
   for (const dir of fallbacks) {
     try {
@@ -125,6 +121,50 @@ function getDataPath () {
 
   blog('all fallbacks failed, returning os.tmpdir():', os.tmpdir())
   return os.tmpdir()
+}
+
+/**
+ * Resolve HOMEDIR_PATH — the user-visible Documents directory.
+ * This is used to override os.homedir() so that file save dialogs,
+ * SFTP local paths, and other home-directory-based operations default
+ * to the Documents folder visible to users.
+ *
+ * If the Documents path marker is not available (permission denied),
+ * falls back to the original os.homedir() value.
+ */
+function getHomedirPath () {
+  const derivedDir = deriveSandboxFilesDir()
+
+  if (derivedDir) {
+    const markerPath = path.join(derivedDir, '.electerm-documents-path')
+    try {
+      const data = fs.readFileSync(markerPath, 'utf8').trim()
+      if (data) {
+        blog('got homedir path from documents marker:', data)
+        return data
+      }
+    } catch (e) {
+      blog('documents marker not found at', markerPath, '-', e.code || e.message)
+    }
+  }
+
+  // Fallback: try os.homedir() + '/Documents'
+  const docsPath = path.join(os.homedir(), 'Documents')
+  try {
+    fs.mkdirSync(docsPath, { recursive: true })
+    const testFile = path.join(docsPath, '.write-test')
+    fs.writeFileSync(testFile, 'ok')
+    fs.unlinkSync(testFile)
+    blog('using derived Documents dir for homedir:', docsPath)
+    return docsPath
+  } catch (e) {
+    blog('Documents dir not accessible for homedir:', docsPath, '-', e.message)
+  }
+
+  // Final fallback: original os.homedir()
+  const orig = os.homedir()
+  blog('using original os.homedir() for homedir:', orig)
+  return orig
 }
 
 process.env.DATA_PATH = getDataPath()
@@ -152,13 +192,17 @@ try {
 
 // ── Override os.homedir() ──────────────────────────────────────────
 // On HarmonyOS the default os.homedir() returns an inaccessible path
-// (e.g. /storage/Users/currentUser). bootstrap.js is the very first
-// module to run, so patching os.homedir() here guarantees that every
-// downstream call — whether in our own code or in third-party
-// dependencies — returns the unified sandbox data directory.
+// (e.g. /storage/Users/currentUser). We override it to return the
+// user-visible Documents directory, so that file save dialogs, SFTP
+// local paths, and other home-directory-based operations work
+// correctly for the user.
+//
+// DATA_PATH (sandbox filesDir) is used for internal app data storage
+// and is NOT exposed as the home directory.
 const _originalHomedir = os.homedir.bind(os)
+const _homedirPath = getHomedirPath()
 os.homedir = function homedir () {
-  return process.env.DATA_PATH || _originalHomedir()
+  return _homedirPath || _originalHomedir()
 }
 blog('os.homedir() overridden to return:', os.homedir())
 
