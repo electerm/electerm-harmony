@@ -132,38 +132,6 @@ echo "==> Fixing permissions for SDK compatibility ..."
 # via AppGallery Connect. See docs/ENV_SETUP.md §2.6 for details.
 UNSUPPORTED_PERMS="SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE"
 
-# Fix entry module.json5
-ENTRY_MODULE_JSON="${PROJECT_ROOT}/entry/src/main/module.json5"
-if [ -f "${ENTRY_MODULE_JSON}" ]; then
-  for perm in ${UNSUPPORTED_PERMS}; do
-    if grep -q "ohos.permission.${perm}" "${ENTRY_MODULE_JSON}" 2>/dev/null; then
-      echo "    entry: removing unsupported permission ohos.permission.${perm}"
-      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${ENTRY_MODULE_JSON}"
-    fi
-  done
-  echo "    entry permissions cleaned"
-else
-  echo "    (entry module.json5 not found, skipping)"
-fi
-
-# Fix web_engine module.json5
-WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
-if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
-  for perm in ${UNSUPPORTED_PERMS}; do
-    if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
-      echo "    web_engine: removing unsupported permission ohos.permission.${perm}"
-      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${WEB_ENGINE_MODULE_JSON}"
-    fi
-  done
-  echo "    web_engine permissions cleaned"
-else
-  echo "    (web_engine module.json5 not found, skipping)"
-fi
-
-# --- Remove unused privacy-sensitive permissions -----------------------------
-
-echo "==> Removing unused privacy-sensitive permissions ..."
-
 # electerm-harmony is a terminal/SSH client — it has no legitimate use for
 # geolocation, camera, microphone, or Bluetooth. The vendored web_engine
 # template (a generic Electron-on-HarmonyOS runtime) declares these by
@@ -173,18 +141,69 @@ echo "==> Removing unused privacy-sensitive permissions ..."
 # template by prepare-electron-runtime.sh.
 PRIVACY_UNUSED_PERMS="LOCATION APPROXIMATELY_LOCATION MICROPHONE CAMERA ACCESS_BLUETOOTH"
 
-for MODULE_LABEL_JSON in "entry:${ENTRY_MODULE_JSON}" "web_engine:${WEB_ENGINE_MODULE_JSON}"; do
-  MODULE_LABEL="${MODULE_LABEL_JSON%%:*}"
-  MODULE_JSON="${MODULE_LABEL_JSON#*:}"
-  if [ -f "${MODULE_JSON}" ]; then
-    for perm in ${PRIVACY_UNUSED_PERMS}; do
-      if grep -q "ohos.permission.${perm}\"" "${MODULE_JSON}" 2>/dev/null; then
-        echo "    ${MODULE_LABEL}: removing unused privacy permission ohos.permission.${perm}"
-        perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}\"[^{}]*\\}[\\s,]*//g" "${MODULE_JSON}"
-      fi
-    done
+ENTRY_MODULE_JSON="${PROJECT_ROOT}/entry/src/main/module.json5"
+WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
+
+# Use Python to remove permission entries from module.json5 files.
+# The old perl regex [^{}]* could not match permission entries that contain
+# nested objects (e.g., "usedScene": { "abilities": [...], "when": "..." }),
+# so permissions with usedScene were silently left in the file and ended up
+# in the compiled HAP, triggering AGC's privacy-permission review.
+# This Python script uses a regex that handles one level of nested braces.
+remove_module_perms() {
+  local file="${1}"
+  local label="${2}"
+  shift 2
+
+  if [ ! -f "${file}" ]; then
+    echo "    (${label} module.json5 not found, skipping)"
+    return
   fi
-done
+
+  python3 - "${file}" "${label}" "$@" <<'PYEOF'
+import re, sys
+
+file_path = sys.argv[1]
+label = sys.argv[2]
+perms = sys.argv[3:]
+
+with open(file_path, 'r') as f:
+    content = f.read()
+
+for perm in perms:
+    if f'"ohos.permission.{perm}"' not in content:
+        continue
+    # Match a permission object, handling one level of nested braces
+    # (usedScene with abilities/when). The (?:\{[^{}]*\}[^{}]*)* group
+    # allows zero or more nested {...} blocks within the entry.
+    pattern = (
+        r'\{[^{}]*"ohos\.permission\.' + re.escape(perm) + r'"'
+        r'[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[\s,]*'
+    )
+    new_content = re.sub(pattern, '', content)
+    if new_content != content:
+        print(f'    {label}: removed ohos.permission.{perm}')
+        content = new_content
+    else:
+        print(f'    {label}: WARNING — could not remove ohos.permission.{perm}')
+
+with open(file_path, 'w') as f:
+    f.write(content)
+PYEOF
+}
+
+remove_module_perms "${ENTRY_MODULE_JSON}" "entry" ${UNSUPPORTED_PERMS}
+echo "    entry permissions cleaned"
+
+remove_module_perms "${WEB_ENGINE_MODULE_JSON}" "web_engine" ${UNSUPPORTED_PERMS}
+echo "    web_engine permissions cleaned"
+
+# --- Remove unused privacy-sensitive permissions -----------------------------
+
+echo "==> Removing unused privacy-sensitive permissions ..."
+
+remove_module_perms "${ENTRY_MODULE_JSON}" "entry" ${PRIVACY_UNUSED_PERMS}
+remove_module_perms "${WEB_ENGINE_MODULE_JSON}" "web_engine" ${PRIVACY_UNUSED_PERMS}
 echo "    privacy-sensitive permissions cleaned"
 
 # --- Neutralize unused geolocation/bluetooth/camera adapters ----------------
