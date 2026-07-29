@@ -38,7 +38,13 @@ struct NodeHandleWindow {
   }
 
   onBackPress(): boolean {
-    this.nativeContext.OnBackToLastPage(this.xComponentId);
+    // On 2-in-1/PC devices the system maps the ESC key to the back event.
+    // Only hand off to the last widget when one actually exists — otherwise
+    // the native adapter falls back to minimizing this window, which is not
+    // the expected behavior for a plain ESC key press.
+    if (this.nativeContext.GetLastActiveWidgetId()) {
+      this.nativeContext.OnBackToLastPage(this.xComponentId);
+    }
     return true;
   }
 
