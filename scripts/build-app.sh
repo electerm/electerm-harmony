@@ -160,6 +160,252 @@ else
   echo "    (web_engine module.json5 not found, skipping)"
 fi
 
+# --- Remove unused privacy-sensitive permissions -----------------------------
+
+echo "==> Removing unused privacy-sensitive permissions ..."
+
+# electerm-harmony is a terminal/SSH client — it has no legitimate use for
+# geolocation, camera, microphone, or Bluetooth. The vendored web_engine
+# template (a generic Electron-on-HarmonyOS runtime) declares these by
+# default, which triggers AppGallery Connect's privacy-permission review
+# ("检测当前APP申请了以下隐私权限"). Strip the declarations here so they are
+# removed on every build, since web_engine/ is re-copied from the vendor
+# template by prepare-electron-runtime.sh.
+PRIVACY_UNUSED_PERMS="LOCATION APPROXIMATELY_LOCATION MICROPHONE CAMERA ACCESS_BLUETOOTH"
+
+for MODULE_LABEL_JSON in "entry:${ENTRY_MODULE_JSON}" "web_engine:${WEB_ENGINE_MODULE_JSON}"; do
+  MODULE_LABEL="${MODULE_LABEL_JSON%%:*}"
+  MODULE_JSON="${MODULE_LABEL_JSON#*:}"
+  if [ -f "${MODULE_JSON}" ]; then
+    for perm in ${PRIVACY_UNUSED_PERMS}; do
+      if grep -q "ohos.permission.${perm}\"" "${MODULE_JSON}" 2>/dev/null; then
+        echo "    ${MODULE_LABEL}: removing unused privacy permission ohos.permission.${perm}"
+        perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}\"[^{}]*\\}[\\s,]*//g" "${MODULE_JSON}"
+      fi
+    done
+  fi
+done
+echo "    privacy-sensitive permissions cleaned"
+
+# --- Neutralize unused geolocation/bluetooth/camera adapters ----------------
+
+echo "==> Neutralizing unused geolocation/bluetooth/camera adapters ..."
+
+# These adapters are not bound in web_engine's AdapterModule.ets (dead code
+# from the vendor template) but their imports of @ohos.geoLocationManager /
+# @ohos.bluetooth.* / @kit.CameraKit still get compiled into the HAP and are
+# flagged by AGC's static privacy scan. Replace with minimal no-op stubs.
+GEO_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/GeolocationAdapter.ets"
+if [ -f "${GEO_ADAPTER}" ]; then
+  echo "    Replacing GeolocationAdapter.ets with minimal stub"
+  cat > "${GEO_ADAPTER}" <<'GEOSTUB'
+// GeolocationAdapter.ets — Stubbed: electerm-harmony does not use geolocation.
+// Original file imported @ohos.geoLocationManager, which AGC's privacy scan
+// flags. The adapter IS bound (in JsBindingMethod.ets → GeolocationAdapterBind),
+// so the class and method signatures stay; only the @ohos.geoLocationManager
+// implementation is gutted into no-ops. (The binding's `import type geoLocationManager`
+// is type-only and erased at compile, so it does not reach the HAP.)
+export class GeolocationAdapter {
+  startListening(
+    onLocationReport: (location: Object) => void,
+    onErrorReport: (errorCode: number) => void
+  ): void {
+    onErrorReport(-1);
+  }
+  stopListening(): void {
+  }
+}
+GEOSTUB
+else
+  echo "    (GeolocationAdapter.ets not found, skipping)"
+fi
+
+BLUETOOTH_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/BluetoothAdapter.ets"
+if [ -f "${BLUETOOTH_ADAPTER}" ]; then
+  echo "    Replacing BluetoothAdapter.ets with minimal stub"
+  cat > "${BLUETOOTH_ADAPTER}" <<'BTSTUB'
+// BluetoothAdapter.ets — Stubbed: electerm-harmony does not use Bluetooth.
+// Original file imported @ohos.bluetooth.access / @ohos.bluetooth.connection,
+// which AGC's privacy scan flags. The adapter IS bound (in JsBindingMethod.ets
+// → BluetoothAdapterBind), so the class and method signatures stay; only the
+// @ohos.bluetooth implementation is gutted into no-ops.
+export class BluetoothAdapter {
+  isBluetoothSwitched(): boolean {
+    return false;
+  }
+  getAdapterName(): string {
+    return '--';
+  }
+  setAdapterName(_name: string): boolean {
+    return false;
+  }
+  getBluetoothState(): number {
+    return -1;
+  }
+  enableBluetooth(): void {
+  }
+  disableBluetooth(): void {
+  }
+  startBluetoothStateMonitor(bluetoothStateCb: (state: number) => void): void {
+    bluetoothStateCb(-1);
+  }
+  stopBluetoothStateMonitor(): void {
+  }
+  getBluetoothScanMode(): number {
+    return -1;
+  }
+  setBluetoothScanMode(_mode: number, _duration: number): void {
+  }
+  startBluetoothDiscovery(): void {
+  }
+  stopBluetoothDiscovery(): void {
+  }
+  startDiscoveryMonitor(_deviceListCb: (deviceList: Array<string>) => void): void {
+  }
+  stopDiscoveryMonitor(): void {
+  }
+  getRemoteDeviceName(_deviceId: string): string {
+    return '';
+  }
+  getPairState(_deviceId: string): number {
+    return 0;
+  }
+  getRemoteDeviceClass(_deviceId: string): number {
+    return 0;
+  }
+  pairDevice(_deviceId: string, pairCb: (isSuccess: boolean) => void): void {
+    pairCb(false);
+  }
+  getPairedDevices(): Array<string> {
+    return [];
+  }
+  setDevicePinCode(_deviceId: string, _pinCode: string, setPinCodeCb: (isSuccess: boolean) => void): boolean {
+    setPinCodeCb(false);
+    return false;
+  }
+  isBluetoothDiscovering(): boolean {
+    return false;
+  }
+  getPairedState(_deviceId: string): number {
+    return 0;
+  }
+}
+BTSTUB
+else
+  echo "    (BluetoothAdapter.ets not found, skipping)"
+fi
+
+BLE_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/BluetoothLowEnergyAdapter.ets"
+if [ -f "${BLE_ADAPTER}" ]; then
+  echo "    Replacing BluetoothLowEnergyAdapter.ets with minimal stub"
+  cat > "${BLE_ADAPTER}" <<'BLESTUB'
+// BluetoothLowEnergyAdapter.ets — Stubbed: electerm-harmony does not use BLE.
+// Original file imported @ohos.bluetooth.ble, which AGC's privacy scan flags.
+// The adapter IS bound (in JsBindingMethod.ets → BluetoothLowEnergyAdapterBind),
+// so the class and the ServiceInfo/DescriptorInfo/CharacteristicInfo type exports
+// that the binding imports must stay; only the @ohos.bluetooth.ble implementation
+// is gutted into no-ops.
+export interface ServiceInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  is_primary: boolean;
+}
+
+export interface DescriptorInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  characteristic_uuid: string;
+  descriptor_uuid: string;
+}
+
+export interface CharacteristicInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  properties: number;
+  characteristic_uuid: string;
+}
+
+export class BluetoothLowEnergyAdapter {
+  startBluetoothDiscovery(): void {
+  }
+  stopBluetoothDiscovery(): void {
+  }
+  startDiscoveryMonitor(_onReceiveEvent: (data: ArrayBuffer, scanResult: Object) => void): void {
+  }
+  stopDiscoveryMonitor(): void {
+  }
+  createGattClientDevice(_deviceId: string, onGattChangeCallback: (state: number) => void): void {
+    onGattChangeCallback(-1);
+  }
+  disconnectGatt(_deviceId: string): void {
+  }
+  onAdvertisingStateChange(_onReceiveEvent: (data: Object) => void): void {
+  }
+  offAdvertisingStateChange(): void {
+  }
+  startAdvertising(_param: Object, _getAdvIdCallback: (advertising_id: number) => void): void {
+  }
+  stopAdvertising(_advertisingId: number): void {
+  }
+  startGattDiscovery(_deviceId: string, callback: (serviceInfos: Array<Object>) => void): void {
+    callback([]);
+  }
+  createCharacteristic(_serviceId: string, _deviceId: string, callback: (characteristicInfo: Array<Object>) => void): void {
+    callback([]);
+  }
+  createDescriptor(_characteristicId: string, _deviceId: string, callback: (descriptorInfo: Array<Object>) => void): void {
+    callback([]);
+  }
+  readCharacteristic(_id: string, _deviceId: string, callback: (error_code: number, value: ArrayBuffer) => void): void {
+    callback(-1, new ArrayBuffer(8));
+  }
+  deprecatedWriteCharacteristic(_id: string, _deviceId: string, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  writeCharacteristic(_id: string, _deviceId: string, _writeType: number, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  readDescriptor(_id: string, _deviceId: string, callback: (error_code: number, value: ArrayBuffer) => void): void {
+    callback(-1, new ArrayBuffer(8));
+  }
+  subscribeToNotifications(_id: string, _deviceId: string, callback: (value: ArrayBuffer, error_code: number) => void): void {
+    callback(new ArrayBuffer(8), -1);
+  }
+  unsubscribeFromNotifications(_id: string, _deviceId: string, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  writeDescriptor(_id: string, _deviceId: string, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+}
+BLESTUB
+else
+  echo "    (BluetoothLowEnergyAdapter.ets not found, skipping)"
+fi
+
+# MediaAdapter.ets imports @kit.CameraKit but never actually uses the camera
+# module (dead import) — strip the import line so the CameraKit reference
+# disappears from the compiled HAP.
+MEDIA_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/MediaAdapter.ets"
+if [ -f "${MEDIA_ADAPTER}" ] && grep -q "@kit.CameraKit" "${MEDIA_ADAPTER}" 2>/dev/null; then
+  echo "    Removing unused @kit.CameraKit import from MediaAdapter.ets"
+  perl -i -ne "print unless /import \{ camera \} from '\@kit\.CameraKit';/" "${MEDIA_ADAPTER}"
+fi
+
+# PermissionManagerAdapter.ets still lists location/microphone/camera/bluetooth
+# permission groups in its needPermissions map. Remove them so runtime
+# permission requests for these unused features can't be triggered either.
+PERMISSION_MGR_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/PermissionManagerAdapter.ets"
+if [ -f "${PERMISSION_MGR_ADAPTER}" ] && grep -q "'location'" "${PERMISSION_MGR_ADAPTER}" 2>/dev/null; then
+  echo "    Removing location/microphone/camera/bluetooth entries from PermissionManagerAdapter needPermissions map"
+  perl -i -0pe "s/\\s*\\['(location|microphone|camera|bluetooth)',\\s*\\[[^\\]]*\\]\\],?//g" "${PERMISSION_MGR_ADAPTER}"
+fi
+
+echo "    unused geolocation/bluetooth/camera adapters neutralized"
+
 # --- Patch NativeMessagingAdapter.ets for API compatibility ------------------
 
 echo "==> Patching web_engine NativeMessagingAdapter for API compatibility ..."
