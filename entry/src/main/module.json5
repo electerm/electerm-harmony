@@ -44,39 +44,7 @@
         }
       },
       {
-        "name": "ohos.permission.LOCATION",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.APPROXIMATELY_LOCATION",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
         "name": "ohos.permission.ACCESS_CERT_MANAGER"
-      },
-      {
-        "name": "ohos.permission.MICROPHONE",
-        "reason": "$string:microphone",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
-      {
-        "name": "ohos.permission.CAMERA",
-        "reason": "$string:camera",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
       },
       {
         "name": "ohos.permission.PRINT"
@@ -87,14 +55,6 @@
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"
-        }
-      },
-      {
-        "name": "ohos.permission.ACCESS_BLUETOOTH",
-        "reason": "$string:access_bluetooth",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
         }
       },
       {

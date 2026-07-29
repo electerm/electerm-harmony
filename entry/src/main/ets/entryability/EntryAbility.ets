@@ -33,16 +33,13 @@ const TAG: string = 'ElectermEntryAbility';
 // Permissions without "reason"/"usedScene" (INTERNET, GET_NETWORK_INFO,
 // ACCESS_CERT_MANAGER, PRINT, GYROSCOPE, ACCELEROMETER) are normal or
 // system-grant permissions that don't need runtime request.
+// Removed LOCATION, MICROPHONE, CAMERA, ACCESS_BLUETOOTH — a terminal/SSH
+// app has no use for geolocation, audio/video capture, or Bluetooth.
 const ALL_USER_PERMISSIONS: Permissions[] = [
   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
   'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY',
   'ohos.permission.READ_WRITE_DESKTOP_DIRECTORY',
-  'ohos.permission.LOCATION',
-  'ohos.permission.APPROXIMATELY_LOCATION',
-  'ohos.permission.MICROPHONE',
-  'ohos.permission.CAMERA',
-  'ohos.permission.READ_PASTEBOARD',
-  'ohos.permission.ACCESS_BLUETOOTH'
+  'ohos.permission.READ_PASTEBOARD'
 ];
 
 export default class EntryAbility extends WebAbility {
