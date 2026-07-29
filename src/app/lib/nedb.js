@@ -6,7 +6,6 @@
 const { resolve } = require('path')
 const fs = require('fs')
 const Datastore = require('@electerm/nedb')
-const dlog = require('../common/debug-logger')
 
 // ── HarmonyOS fix: monkey-patch nedb storage ──────────────────────────
 // nedb's storage.js uses fs.fsync in crashSafeWriteFile (called during
@@ -25,10 +24,7 @@ nedbStorage.flushToStorage = function (options, callback) {
   // On HarmonyOS the sandbox filesystem may not support fsync
   // (especially on directories). The actual write/rename in
   // crashSafeWriteFile still works; we just skip the fsync guarantee.
-  const wrappedCb = function (err) {
-    if (err) {
-      dlog('[nedb] flushToStorage non-fatal error:', err.message || err)
-    }
+  const wrappedCb = function () {
     callback(null)
   }
 
@@ -88,7 +84,6 @@ function createDb (appPath, defaultUserName, { enc, dec } = {}) {
       // force the executor to "ready" so DB operations can proceed.
       onload: (err) => {
         if (err) {
-          dlog(`[nedb] loadDatabase error for "${table}":`, err.message || err)
           // Force executor ready so buffered operations execute.
           // The data was already loaded into memory before the
           // compaction step (persistCachedDatabase) ran.
@@ -100,18 +95,6 @@ function createDb (appPath, defaultUserName, { enc, dec } = {}) {
     }
     db[table] = new Datastore(conf)
   })
-
-  // Log data dir and file info for diagnostics
-  try {
-    const files = fs.readdirSync(dbDir)
-    dlog(`[nedb] data dir: ${dbDir}, files: ${files.length}`)
-    for (const f of files) {
-      const stat = fs.statSync(resolve(dbDir, f))
-      dlog(`[nedb]   ${f}: ${stat.size} bytes`)
-    }
-  } catch (e) {
-    dlog('[nedb] failed to list data dir:', e.message)
-  }
 
   /**
    * Encrypt a plain JSON string for storage.

@@ -53,3 +53,4 @@ build/harmony/rawfile
 src/client/electerm-react/
 entry/src/main/resources/rawfile
 /src/client
+/data

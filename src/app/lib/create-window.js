@@ -19,10 +19,8 @@ const getPort = require('./get-port')
 const globalState = require('./glob-state')
 const webviewHandler = require('./webview-handler')
 const log = require('../common/log')
-const dlog = require('../common/debug-logger')
 
 exports.createWindow = async function (userConfig) {
-  dlog('createWindow: START')
   log.info('createWindow: starting...')
   globalState.set('closeAction', 'closeApp')
   globalState.set('requireAuth', !!userConfig.hashedPassword)
@@ -71,16 +69,12 @@ exports.createWindow = async function (userConfig) {
   webviewHandler.init(win)
 
   globalState.set('win', win)
-  dlog('createWindow: BrowserWindow created')
   log.info('createWindow: BrowserWindow created, starting initAppServer...')
 
   try {
-    dlog('createWindow: calling initAppServer...')
     await initAppServer()
-    dlog('createWindow: initAppServer DONE')
     log.info('createWindow: initAppServer done')
   } catch (e) {
-    dlog('createWindow: initAppServer FAILED:', e?.message || e, e?.stack || '')
     log.error('createWindow: initAppServer failed:', e?.message || e, e?.stack || '')
     // Show error page in the window instead of leaving black screen
     const htmlContent = `<html><body style="background:#1e1e1e;color:#fff;font-family:monospace;padding:20px;"><h2>Server failed to start</h2><pre>${e?.message || e}</pre></body></html>`
@@ -90,18 +84,14 @@ exports.createWindow = async function (userConfig) {
   }
 
   initIpc()
-  dlog('createWindow: initIpc done')
   log.info('createWindow: initIpc done')
   const port = isDev
     ? process.env.devPort || 5570
     : await getPort()
-  dlog('createWindow: got port:', port)
   const opts = `http://127.0.0.1:${port}/index.html?v=${packInfo.version}`
-  dlog('createWindow: loading URL:', opts)
   log.info('createWindow: loading URL:', opts)
   // If loading the URL fails (e.g. proxy/firewall interference), show error page
   win.webContents.once('did-fail-load', (event, errorCode, errorDescription) => {
-    dlog('createWindow: did-fail-load:', errorCode, errorDescription)
     log.error('createWindow: did-fail-load:', errorCode, errorDescription)
     const htmlContent = require('./error-page')(port)
     const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`
@@ -109,7 +99,6 @@ exports.createWindow = async function (userConfig) {
   })
   win.loadURL(opts)
   win.webContents.once('dom-ready', () => {
-    dlog('createWindow: dom-ready!')
     log.info('createWindow: dom-ready')
     if (isDev && !userConfig.disableDeveloperTool) {
       win.webContents.openDevTools()

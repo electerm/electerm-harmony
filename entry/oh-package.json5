@@ -1,6 +1,6 @@
 {
   "name": "entry",
-  "version": "4.15.178",
+  "version": "4.15.179",
   "description": "Electerm HarmonyOS entry module — provides UI surface and Electron runtime integration",
   "main": "",
   "license": "MIT",

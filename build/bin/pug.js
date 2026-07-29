@@ -34,7 +34,8 @@ const data = {
   isDev: false,
   disableUpgradeCheck: true,
   hideLocalTerminal: true,
-  defaultAIPreset
+  defaultAIPreset,
+  AIDisclamer: '本内容由 AI 生成，仅供参考'
 }
 
 // Allow builds (e.g. HarmonyOS) to inject extra data via env var

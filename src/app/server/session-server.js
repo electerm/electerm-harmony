@@ -22,7 +22,6 @@ const {
 const { Transfer, transferKeys } = require('./transfer')
 const { Transfer: FtpTransfer } = require('./ftp-transfer')
 const log = require('../common/log')
-const dlog = require('../common/debug-logger')
 const appDec = require('./app-wrap')
 const {
   createTerm,
@@ -50,8 +49,6 @@ let _pidCounter = 100001
  * @returns {{ channel: EventEmitter, kill: Function, pid: number, port: number }}
  */
 function createSessionServer (type, wsPort, electermHost) {
-  dlog('session-server: createSessionServer type:', type, 'port:', wsPort)
-
   const app = express()
   const channel = new EventEmitter()
   channel.setMaxListeners(100)
@@ -501,7 +498,6 @@ function createSessionServer (type, wsPort, electermHost) {
   function cleanup () {
     if (cleanupCalled) return
     cleanupCalled = true
-    dlog('session-server: cleanup, port:', wsPort)
     if (noConnectionTimer) {
       clearTimeout(noConnectionTimer)
     }
@@ -514,7 +510,6 @@ function createSessionServer (type, wsPort, electermHost) {
   // Start listening
   httpServer = app.listen(wsPort, electermHost, () => {
     log.info('session server', 'runs on', electermHost, wsPort)
-    dlog('session-server: listening on', electermHost, wsPort)
     channel.toParent({ serverInited: true })
     channel.emit('ready')
   })

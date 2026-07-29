@@ -6,7 +6,6 @@
  * Communication is via EventEmitter channels.
  */
 
-const dlog = require('../common/debug-logger')
 const { createSessionServer } = require('./session-server')
 
 // Map to store active terminal processes (pid -> {session, port, ws})
@@ -49,22 +48,15 @@ const electermHost = process.env.electermHost || '127.0.0.1'
 
 async function runSessionServer (type, port) {
   return new Promise((resolve, reject) => {
-    dlog('session-process: creating session server, type:', type, 'port:', port)
     const session = createSessionServer(type, port, electermHost)
 
     session.channel.on('ready', () => {
-      dlog('session-process: session server ready, pid:', session.pid)
       resolve(session)
-    })
-
-    session.channel.on('exit', (code) => {
-      dlog('session-process: session server exit, code:', code)
     })
 
     // Timeout: if server doesn't start within 10s, reject
     setTimeout(() => {
       if (!session.server.listening) {
-        dlog('session-process: session server startup TIMEOUT')
         session.kill()
         reject(new Error('Session server startup timed out'))
       }

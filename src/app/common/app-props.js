@@ -10,7 +10,7 @@ const fs = require('fs')
 const constants = require('./runtime-constants')
 
 function getAppDataPath () {
-  return process.env.DATA_PATH
+  return process.env.DATA_PATH || resolve(__dirname, '../../data')
 }
 
 const appDataPath = getAppDataPath()

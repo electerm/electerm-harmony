@@ -8,7 +8,6 @@
 
 const EventEmitter = require('events')
 const log = require('../common/log')
-const dlog = require('../common/debug-logger')
 
 // --use-system-ca is supported since Node.js 24.3.0
 function supportsSystemCa () {
@@ -17,8 +16,6 @@ function supportsSystemCa () {
 }
 
 module.exports = (config, env, sysLocale) => {
-  dlog('child-process: START, port:', config.port, 'host:', config.host)
-
   // Set environment variables that server.js reads
   process.env.electermPort = String(config.port)
   process.env.electermHost = config.host || '127.0.0.1'
@@ -42,7 +39,6 @@ module.exports = (config, env, sysLocale) => {
   child.stderr = { on: () => {} }
   child.kill = () => {
     child.killed = true
-    dlog('child-process: kill() called')
     child.emit('exit', 0, 'SIGTERM')
     return true
   }
@@ -52,18 +48,14 @@ module.exports = (config, env, sysLocale) => {
   }
 
   // Require server.js (auto-starts) and wait for it to be ready
-  dlog('child-process: requiring server.js...')
   try {
     const { startServer } = require('./server')
     startServer().then(() => {
-      dlog('child-process: server started, emitting serverInited')
       child.emit('message', { serverInited: true })
     }).catch(err => {
-      dlog('child-process: server start error:', err.message)
       child.emit('error', err)
     })
   } catch (err) {
-    dlog('child-process: require server.js ERROR:', err.message, err.stack)
     setImmediate(() => {
       child.emit('error', err)
     })

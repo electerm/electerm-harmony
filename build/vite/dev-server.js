@@ -29,6 +29,7 @@ const base = {
   siteName: pack.name,
   defaultAIPreset,
   disableUpgradeCheck: true,
+  AIDisclamer: '本内容由 AI 生成，仅供参考',
   hideLocalTerminal: true
 }
 
