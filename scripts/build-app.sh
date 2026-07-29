@@ -406,6 +406,48 @@ fi
 
 echo "    unused geolocation/bluetooth/camera adapters neutralized"
 
+# --- Patch binding files for type compatibility with stubbed adapters --------
+
+echo "==> Patching binding files for stubbed adapter type compatibility ..."
+
+# The adapter stubs use Object for callback parameters that the original
+# SDK types (ble.ScanResult, geoLocationManager.Location, etc.) occupied.
+# ArkTS enforces strict contravariance on function parameters, so the
+# binding files' callbacks must also use Object — otherwise:
+#   "Argument of type '(x: ScanResult) => void' is not assignable to
+#    parameter of type '(x: Object) => void'"
+# Patch the binding files to match the stubs, and remove the now-unused
+# type-only SDK imports so they don't linger in the compiled HAP.
+
+BLE_BIND="${WEB_ENGINE_DIR}/src/main/ets/jsbindings/BluetoothLowEnergyAdapterBind.ets"
+if [ -f "${BLE_BIND}" ]; then
+  echo "    Patching BluetoothLowEnergyAdapterBind.ets callback types"
+  # Replace SDK-specific callback parameter types with Object to match stubs
+  perl -i -pe 's/ble\.ScanResult/Object/g' "${BLE_BIND}"
+  perl -i -pe 's/ble\.AdvertisingStateChangeInfo/Object/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<ServiceInfo>/Array<Object>/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<CharacteristicInfo>/Array<Object>/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<DescriptorInfo>/Array<Object>/g' "${BLE_BIND}"
+  # Remove now-unused type-only imports (ble + adapter type exports)
+  perl -i -ne "print unless /import type ble from '\@ohos\.bluetooth\.ble';/" "${BLE_BIND}"
+  perl -i -0777 -pe "s/import type \{[^}]*\} from '\.\.\/adapter\/BluetoothLowEnergyAdapter';\n//" "${BLE_BIND}"
+  echo "    BluetoothLowEnergyAdapterBind patched"
+else
+  echo "    (BluetoothLowEnergyAdapterBind.ets not found, skipping)"
+fi
+
+GEO_BIND="${WEB_ENGINE_DIR}/src/main/ets/jsbindings/GeolocationAdapterBind.ets"
+if [ -f "${GEO_BIND}" ]; then
+  echo "    Patching GeolocationAdapterBind.ets callback types"
+  perl -i -pe 's/geoLocationManager\.Location/Object/g' "${GEO_BIND}"
+  perl -i -ne "print unless /import type geoLocationManager from '\@ohos\.geoLocationManager';/" "${GEO_BIND}"
+  echo "    GeolocationAdapterBind patched"
+else
+  echo "    (GeolocationAdapterBind.ets not found, skipping)"
+fi
+
+echo "    binding files patched for stub compatibility"
+
 # --- Patch NativeMessagingAdapter.ets for API compatibility ------------------
 
 echo "==> Patching web_engine NativeMessagingAdapter for API compatibility ..."
