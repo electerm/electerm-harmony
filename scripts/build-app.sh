@@ -132,33 +132,340 @@ echo "==> Fixing permissions for SDK compatibility ..."
 # via AppGallery Connect. See docs/ENV_SETUP.md §2.6 for details.
 UNSUPPORTED_PERMS="SET_ABILITY_INSTANCE_INFO GET_FILE_ICON PRIVACY_WINDOW LOCK_WINDOW_CURSOR ACCESS_BIOMETRIC SYSTEM_FLOAT_WINDOW FILE_ACCESS_PERSIST PREPARE_APP_TERMINATE CUSTOM_SCREEN_CAPTURE"
 
-# Fix entry module.json5
+# electerm-harmony is a terminal/SSH client — it has no legitimate use for
+# geolocation, camera, microphone, or Bluetooth. The vendored web_engine
+# template (a generic Electron-on-HarmonyOS runtime) declares these by
+# default, which triggers AppGallery Connect's privacy-permission review
+# ("检测当前APP申请了以下隐私权限"). Strip the declarations here so they are
+# removed on every build, since web_engine/ is re-copied from the vendor
+# template by prepare-electron-runtime.sh.
+PRIVACY_UNUSED_PERMS="LOCATION APPROXIMATELY_LOCATION MICROPHONE CAMERA ACCESS_BLUETOOTH"
+
 ENTRY_MODULE_JSON="${PROJECT_ROOT}/entry/src/main/module.json5"
-if [ -f "${ENTRY_MODULE_JSON}" ]; then
-  for perm in ${UNSUPPORTED_PERMS}; do
-    if grep -q "ohos.permission.${perm}" "${ENTRY_MODULE_JSON}" 2>/dev/null; then
-      echo "    entry: removing unsupported permission ohos.permission.${perm}"
-      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${ENTRY_MODULE_JSON}"
-    fi
-  done
-  echo "    entry permissions cleaned"
+WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
+
+# Use Python to remove permission entries from module.json5 files.
+# The old perl regex [^{}]* could not match permission entries that contain
+# nested objects (e.g., "usedScene": { "abilities": [...], "when": "..." }),
+# so permissions with usedScene were silently left in the file and ended up
+# in the compiled HAP, triggering AGC's privacy-permission review.
+# This Python script uses a regex that handles one level of nested braces.
+remove_module_perms() {
+  local file="${1}"
+  local label="${2}"
+  shift 2
+
+  if [ ! -f "${file}" ]; then
+    echo "    (${label} module.json5 not found, skipping)"
+    return
+  fi
+
+  python3 - "${file}" "${label}" "$@" <<'PYEOF'
+import re, sys
+
+file_path = sys.argv[1]
+label = sys.argv[2]
+perms = sys.argv[3:]
+
+with open(file_path, 'r') as f:
+    content = f.read()
+
+for perm in perms:
+    if f'"ohos.permission.{perm}"' not in content:
+        continue
+    # Match a permission object, handling one level of nested braces
+    # (usedScene with abilities/when). The (?:\{[^{}]*\}[^{}]*)* group
+    # allows zero or more nested {...} blocks within the entry.
+    pattern = (
+        r'\{[^{}]*"ohos\.permission\.' + re.escape(perm) + r'"'
+        r'[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[\s,]*'
+    )
+    new_content = re.sub(pattern, '', content)
+    if new_content != content:
+        print(f'    {label}: removed ohos.permission.{perm}')
+        content = new_content
+    else:
+        print(f'    {label}: WARNING — could not remove ohos.permission.{perm}')
+
+with open(file_path, 'w') as f:
+    f.write(content)
+PYEOF
+}
+
+remove_module_perms "${ENTRY_MODULE_JSON}" "entry" ${UNSUPPORTED_PERMS}
+echo "    entry permissions cleaned"
+
+remove_module_perms "${WEB_ENGINE_MODULE_JSON}" "web_engine" ${UNSUPPORTED_PERMS}
+echo "    web_engine permissions cleaned"
+
+# --- Remove unused privacy-sensitive permissions -----------------------------
+
+echo "==> Removing unused privacy-sensitive permissions ..."
+
+remove_module_perms "${ENTRY_MODULE_JSON}" "entry" ${PRIVACY_UNUSED_PERMS}
+remove_module_perms "${WEB_ENGINE_MODULE_JSON}" "web_engine" ${PRIVACY_UNUSED_PERMS}
+echo "    privacy-sensitive permissions cleaned"
+
+# --- Neutralize unused geolocation/bluetooth/camera adapters ----------------
+
+echo "==> Neutralizing unused geolocation/bluetooth/camera adapters ..."
+
+# These adapters are not bound in web_engine's AdapterModule.ets (dead code
+# from the vendor template) but their imports of @ohos.geoLocationManager /
+# @ohos.bluetooth.* / @kit.CameraKit still get compiled into the HAP and are
+# flagged by AGC's static privacy scan. Replace with minimal no-op stubs.
+GEO_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/GeolocationAdapter.ets"
+if [ -f "${GEO_ADAPTER}" ]; then
+  echo "    Replacing GeolocationAdapter.ets with minimal stub"
+  cat > "${GEO_ADAPTER}" <<'GEOSTUB'
+// GeolocationAdapter.ets — Stubbed: electerm-harmony does not use geolocation.
+// Original file imported @ohos.geoLocationManager, which AGC's privacy scan
+// flags. The adapter IS bound (in JsBindingMethod.ets → GeolocationAdapterBind),
+// so the class and method signatures stay; only the @ohos.geoLocationManager
+// implementation is gutted into no-ops. (The binding's `import type geoLocationManager`
+// is type-only and erased at compile, so it does not reach the HAP.)
+export class GeolocationAdapter {
+  startListening(
+    onLocationReport: (location: Object) => void,
+    onErrorReport: (errorCode: number) => void
+  ): void {
+    onErrorReport(-1);
+  }
+  stopListening(): void {
+  }
+}
+GEOSTUB
 else
-  echo "    (entry module.json5 not found, skipping)"
+  echo "    (GeolocationAdapter.ets not found, skipping)"
 fi
 
-# Fix web_engine module.json5
-WEB_ENGINE_MODULE_JSON="${WEB_ENGINE_DIR}/src/main/module.json5"
-if [ -f "${WEB_ENGINE_MODULE_JSON}" ]; then
-  for perm in ${UNSUPPORTED_PERMS}; do
-    if grep -q "ohos.permission.${perm}" "${WEB_ENGINE_MODULE_JSON}" 2>/dev/null; then
-      echo "    web_engine: removing unsupported permission ohos.permission.${perm}"
-      perl -i -0pe "s/\\{[^{}]*ohos\\.permission\\.${perm}[^{}]*\\}[\\s,]*//g" "${WEB_ENGINE_MODULE_JSON}"
-    fi
-  done
-  echo "    web_engine permissions cleaned"
+BLUETOOTH_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/BluetoothAdapter.ets"
+if [ -f "${BLUETOOTH_ADAPTER}" ]; then
+  echo "    Replacing BluetoothAdapter.ets with minimal stub"
+  cat > "${BLUETOOTH_ADAPTER}" <<'BTSTUB'
+// BluetoothAdapter.ets — Stubbed: electerm-harmony does not use Bluetooth.
+// Original file imported @ohos.bluetooth.access / @ohos.bluetooth.connection,
+// which AGC's privacy scan flags. The adapter IS bound (in JsBindingMethod.ets
+// → BluetoothAdapterBind), so the class and method signatures stay; only the
+// @ohos.bluetooth implementation is gutted into no-ops.
+export class BluetoothAdapter {
+  isBluetoothSwitched(): boolean {
+    return false;
+  }
+  getAdapterName(): string {
+    return '--';
+  }
+  setAdapterName(_name: string): boolean {
+    return false;
+  }
+  getBluetoothState(): number {
+    return -1;
+  }
+  enableBluetooth(): void {
+  }
+  disableBluetooth(): void {
+  }
+  startBluetoothStateMonitor(bluetoothStateCb: (state: number) => void): void {
+    bluetoothStateCb(-1);
+  }
+  stopBluetoothStateMonitor(): void {
+  }
+  getBluetoothScanMode(): number {
+    return -1;
+  }
+  setBluetoothScanMode(_mode: number, _duration: number): void {
+  }
+  startBluetoothDiscovery(): void {
+  }
+  stopBluetoothDiscovery(): void {
+  }
+  startDiscoveryMonitor(_deviceListCb: (deviceList: Array<string>) => void): void {
+  }
+  stopDiscoveryMonitor(): void {
+  }
+  getRemoteDeviceName(_deviceId: string): string {
+    return '';
+  }
+  getPairState(_deviceId: string): number {
+    return 0;
+  }
+  getRemoteDeviceClass(_deviceId: string): number {
+    return 0;
+  }
+  pairDevice(_deviceId: string, pairCb: (isSuccess: boolean) => void): void {
+    pairCb(false);
+  }
+  getPairedDevices(): Array<string> {
+    return [];
+  }
+  setDevicePinCode(_deviceId: string, _pinCode: string, setPinCodeCb: (isSuccess: boolean) => void): boolean {
+    setPinCodeCb(false);
+    return false;
+  }
+  isBluetoothDiscovering(): boolean {
+    return false;
+  }
+  getPairedState(_deviceId: string): number {
+    return 0;
+  }
+}
+BTSTUB
 else
-  echo "    (web_engine module.json5 not found, skipping)"
+  echo "    (BluetoothAdapter.ets not found, skipping)"
 fi
+
+BLE_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/BluetoothLowEnergyAdapter.ets"
+if [ -f "${BLE_ADAPTER}" ]; then
+  echo "    Replacing BluetoothLowEnergyAdapter.ets with minimal stub"
+  cat > "${BLE_ADAPTER}" <<'BLESTUB'
+// BluetoothLowEnergyAdapter.ets — Stubbed: electerm-harmony does not use BLE.
+// Original file imported @ohos.bluetooth.ble, which AGC's privacy scan flags.
+// The adapter IS bound (in JsBindingMethod.ets → BluetoothLowEnergyAdapterBind),
+// so the class and the ServiceInfo/DescriptorInfo/CharacteristicInfo type exports
+// that the binding imports must stay; only the @ohos.bluetooth.ble implementation
+// is gutted into no-ops.
+export interface ServiceInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  is_primary: boolean;
+}
+
+export interface DescriptorInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  characteristic_uuid: string;
+  descriptor_uuid: string;
+}
+
+export interface CharacteristicInfo {
+  identifier: string;
+  device_id: string;
+  service_uuid: string;
+  properties: number;
+  characteristic_uuid: string;
+}
+
+export class BluetoothLowEnergyAdapter {
+  startBluetoothDiscovery(): void {
+  }
+  stopBluetoothDiscovery(): void {
+  }
+  startDiscoveryMonitor(_onReceiveEvent: (data: ArrayBuffer, scanResult: Object) => void): void {
+  }
+  stopDiscoveryMonitor(): void {
+  }
+  createGattClientDevice(_deviceId: string, onGattChangeCallback: (state: number) => void): void {
+    onGattChangeCallback(-1);
+  }
+  disconnectGatt(_deviceId: string): void {
+  }
+  onAdvertisingStateChange(_onReceiveEvent: (data: Object) => void): void {
+  }
+  offAdvertisingStateChange(): void {
+  }
+  startAdvertising(_param: Object, _getAdvIdCallback: (advertising_id: number) => void): void {
+  }
+  stopAdvertising(_advertisingId: number): void {
+  }
+  startGattDiscovery(_deviceId: string, callback: (serviceInfos: Array<Object>) => void): void {
+    callback([]);
+  }
+  createCharacteristic(_serviceId: string, _deviceId: string, callback: (characteristicInfo: Array<Object>) => void): void {
+    callback([]);
+  }
+  createDescriptor(_characteristicId: string, _deviceId: string, callback: (descriptorInfo: Array<Object>) => void): void {
+    callback([]);
+  }
+  readCharacteristic(_id: string, _deviceId: string, callback: (error_code: number, value: ArrayBuffer) => void): void {
+    callback(-1, new ArrayBuffer(8));
+  }
+  deprecatedWriteCharacteristic(_id: string, _deviceId: string, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  writeCharacteristic(_id: string, _deviceId: string, _writeType: number, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  readDescriptor(_id: string, _deviceId: string, callback: (error_code: number, value: ArrayBuffer) => void): void {
+    callback(-1, new ArrayBuffer(8));
+  }
+  subscribeToNotifications(_id: string, _deviceId: string, callback: (value: ArrayBuffer, error_code: number) => void): void {
+    callback(new ArrayBuffer(8), -1);
+  }
+  unsubscribeFromNotifications(_id: string, _deviceId: string, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+  writeDescriptor(_id: string, _deviceId: string, _value: ArrayBuffer, callback: (error_code: number) => void): void {
+    callback(-1);
+  }
+}
+BLESTUB
+else
+  echo "    (BluetoothLowEnergyAdapter.ets not found, skipping)"
+fi
+
+# MediaAdapter.ets imports @kit.CameraKit but never actually uses the camera
+# module (dead import) — strip the import line so the CameraKit reference
+# disappears from the compiled HAP.
+MEDIA_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/MediaAdapter.ets"
+if [ -f "${MEDIA_ADAPTER}" ] && grep -q "@kit.CameraKit" "${MEDIA_ADAPTER}" 2>/dev/null; then
+  echo "    Removing unused @kit.CameraKit import from MediaAdapter.ets"
+  perl -i -ne "print unless /import \{ camera \} from '\@kit\.CameraKit';/" "${MEDIA_ADAPTER}"
+fi
+
+# PermissionManagerAdapter.ets still lists location/microphone/camera/bluetooth
+# permission groups in its needPermissions map. Remove them so runtime
+# permission requests for these unused features can't be triggered either.
+PERMISSION_MGR_ADAPTER="${WEB_ENGINE_DIR}/src/main/ets/adapter/PermissionManagerAdapter.ets"
+if [ -f "${PERMISSION_MGR_ADAPTER}" ] && grep -q "'location'" "${PERMISSION_MGR_ADAPTER}" 2>/dev/null; then
+  echo "    Removing location/microphone/camera/bluetooth entries from PermissionManagerAdapter needPermissions map"
+  perl -i -0pe "s/\\s*\\['(location|microphone|camera|bluetooth)',\\s*\\[[^\\]]*\\]\\],?//g" "${PERMISSION_MGR_ADAPTER}"
+fi
+
+echo "    unused geolocation/bluetooth/camera adapters neutralized"
+
+# --- Patch binding files for type compatibility with stubbed adapters --------
+
+echo "==> Patching binding files for stubbed adapter type compatibility ..."
+
+# The adapter stubs use Object for callback parameters that the original
+# SDK types (ble.ScanResult, geoLocationManager.Location, etc.) occupied.
+# ArkTS enforces strict contravariance on function parameters, so the
+# binding files' callbacks must also use Object — otherwise:
+#   "Argument of type '(x: ScanResult) => void' is not assignable to
+#    parameter of type '(x: Object) => void'"
+# Patch the binding files to match the stubs, and remove the now-unused
+# type-only SDK imports so they don't linger in the compiled HAP.
+
+BLE_BIND="${WEB_ENGINE_DIR}/src/main/ets/jsbindings/BluetoothLowEnergyAdapterBind.ets"
+if [ -f "${BLE_BIND}" ]; then
+  echo "    Patching BluetoothLowEnergyAdapterBind.ets callback types"
+  # Replace SDK-specific callback parameter types with Object to match stubs
+  perl -i -pe 's/ble\.ScanResult/Object/g' "${BLE_BIND}"
+  perl -i -pe 's/ble\.AdvertisingStateChangeInfo/Object/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<ServiceInfo>/Array<Object>/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<CharacteristicInfo>/Array<Object>/g' "${BLE_BIND}"
+  perl -i -pe 's/Array<DescriptorInfo>/Array<Object>/g' "${BLE_BIND}"
+  # Remove now-unused type-only imports (ble + adapter type exports)
+  perl -i -ne "print unless /import type ble from '\@ohos\.bluetooth\.ble';/" "${BLE_BIND}"
+  perl -i -0777 -pe "s/import type \{[^}]*\} from '\.\.\/adapter\/BluetoothLowEnergyAdapter';\n//" "${BLE_BIND}"
+  echo "    BluetoothLowEnergyAdapterBind patched"
+else
+  echo "    (BluetoothLowEnergyAdapterBind.ets not found, skipping)"
+fi
+
+GEO_BIND="${WEB_ENGINE_DIR}/src/main/ets/jsbindings/GeolocationAdapterBind.ets"
+if [ -f "${GEO_BIND}" ]; then
+  echo "    Patching GeolocationAdapterBind.ets callback types"
+  perl -i -pe 's/geoLocationManager\.Location/Object/g' "${GEO_BIND}"
+  perl -i -ne "print unless /import type geoLocationManager from '\@ohos\.geoLocationManager';/" "${GEO_BIND}"
+  echo "    GeolocationAdapterBind patched"
+else
+  echo "    (GeolocationAdapterBind.ets not found, skipping)"
+fi
+
+echo "    binding files patched for stub compatibility"
 
 # --- Patch NativeMessagingAdapter.ets for API compatibility ------------------
 
