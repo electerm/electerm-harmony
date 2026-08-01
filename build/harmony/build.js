@@ -68,15 +68,20 @@ function formatBytes (bytes) {
 // ---------------------------------------------------------------------------
 // Step 0: Copy client source from @electerm/electerm-react
 // ---------------------------------------------------------------------------
-// src/client/ is gitignored (moved to npm package in cbce701).
+// Layout of src/client/:
+//   - electerm-react/   ← gitignored, vendored from the npm package at build
+//   - entry/, harmony/, views/ ← tracked in git (HarmonyOS-specific overrides)
 // Vite config and pug.js reference src/client/entry/*.jsx and
-// src/client/views/index.pug, so we must populate src/client/ before
-// running `npm run b`.
+// src/client/views/index.pug (tracked), while entry/basic.js and
+// harmony/main.jsx import the vendored source via ../electerm-react/...
+// So we only need to populate src/client/electerm-react/ before `npm run b`,
+// and must NOT overwrite or remove the tracked overrides.
 // ---------------------------------------------------------------------------
 function prepareClientSource () {
   echo('[harmony] step 0: prepare client source from @electerm/electerm-react')
   const pkgClient = resolve(ROOT, 'node_modules/@electerm/electerm-react/client')
   const srcClient = resolve(ROOT, 'src/client')
+  const vendored = resolve(srcClient, 'electerm-react')
 
   if (!fs.existsSync(pkgClient)) {
     throw new Error(
@@ -85,29 +90,31 @@ function prepareClientSource () {
     )
   }
 
-  // Check if src/client/ already has the entry files (local dev)
-  const entryExists = fs.existsSync(resolve(srcClient, 'entry/electerm.jsx'))
-  if (entryExists) {
-    echo('  ✓ src/client/ already populated, skip copy')
+  // Skip when the vendored source is already present (local dev keeps a
+  // real checkout here). Do NOT test src/client/entry/electerm.jsx — that
+  // file is tracked in git, so it always exists in CI and would wrongly
+  // short-circuit the copy, leaving ../electerm-react/... unresolved.
+  if (fs.existsSync(resolve(vendored, 'components'))) {
+    echo('  ✓ src/client/electerm-react/ already populated, skip copy')
     return
   }
 
-  // Copy client/ from npm package to src/client/
-  rmrf(srcClient)
-  fs.mkdirSync(resolve(ROOT, 'src'), { recursive: true })
-  cp('-r', pkgClient, srcClient)
-  echo('  ✓ copied @electerm/electerm-react/client → src/client')
+  // Copy client/ from the npm package into src/client/electerm-react/.
+  // The tracked overrides under src/client/{entry,harmony,views}/ are
+  // intentionally left untouched.
+  fs.mkdirSync(srcClient, { recursive: true })
+  cp('-r', pkgClient, vendored)
+  echo('  ✓ copied @electerm/electerm-react/client → src/client/electerm-react')
 
-  // Verify critical entry files
+  // Verify critical vendored files referenced by the tracked overrides
   const required = [
-    'entry/electerm.jsx',
-    'entry/basic.js',
-    'entry/worker.js',
-    'views/index.pug'
+    'components/main/index.jsx',
+    'common/pre.js',
+    'css/basic.styl'
   ]
   for (const f of required) {
-    if (!fs.existsSync(resolve(srcClient, f))) {
-      throw new Error(`Missing required client file: src/client/${f}`)
+    if (!fs.existsSync(resolve(vendored, f))) {
+      throw new Error(`Missing required vendored file: src/client/electerm-react/${f}`)
     }
   }
   echo('  ✓ client source verified')
