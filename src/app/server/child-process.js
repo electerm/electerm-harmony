@@ -22,7 +22,12 @@ module.exports = (config, env, sysLocale) => {
   process.env.requireAuth = config.requireAuth || ''
   process.env.tokenElecterm = config.tokenElecterm
   process.env.sshKeysPath = env.sshKeysPath
-  process.env.LANG = `${sysLocale.replace(/-/, '_')}.UTF-8`
+  // Normalize to canonical "<lang>_<REGION>.UTF-8" for the remote shell,
+  // e.g. "zh-cn" → "zh_CN.UTF-8". sysLocale is lowercased upstream for
+  // language-pack matching, so restore conventional territory casing here.
+  const [langPart, regionPart] = sysLocale.split(/[-_]/)
+  const sshLocale = regionPart ? `${langPart}_${regionPart.toUpperCase()}` : langPart
+  process.env.LANG = `${sshLocale}.UTF-8`
 
   // Handle system CAs
   const nodeOpts = [env.NODE_OPTIONS, supportsSystemCa() ? '--use-system-ca' : '']

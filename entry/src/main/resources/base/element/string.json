@@ -2,27 +2,27 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "Electerm module"
+      "value": "electerm module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "Electerm"
+      "value": "electerm"
     },
     {
       "name": "EntryAbility_label",
-      "value": "Electerm"
+      "value": "electerm"
     },
     {
       "name": "reason_internet",
-      "value": "Electerm needs network access to connect to ssh/sftp/telnet/RDP/VNC/Spice/ftp servers and to serve the web UI on localhost"
+      "value": "electerm needs network access to connect to ssh/sftp/telnet/RDP/VNC/Spice/ftp servers and to serve the web UI on localhost"
     },
     {
       "name": "reason_running_lock",
-      "value": "Electerm needs to keep the backend running in the background"
+      "value": "electerm needs to keep the backend running in the background"
     },
     {
       "name": "reason",
-      "value": "Electerm needs access to the Documents, Download, and Desktop directories to store app data, transfer files, and persist settings reliably across restarts"
+      "value": "electerm needs access to the Documents, Download, and Desktop directories to store app data, transfer files, and persist settings reliably across restarts"
     }
   ]
 }

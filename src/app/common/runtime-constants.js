@@ -70,7 +70,7 @@ module.exports = {
   defaultUserName,
   minWindowWidth: 590,
   minWindowHeight: 400,
-  defaultLang: 'en_us',
+  defaultLang: 'zh_cn',
   homeDir: getHomeDir(),
   tempDir: getTempDir(),
   packInfo: require(isDev ? '../../../package.json' : '../package.json')

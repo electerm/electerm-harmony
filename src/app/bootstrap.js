@@ -112,6 +112,30 @@ function getHomedirPath () {
 
 process.env.DATA_PATH = getDataPath()
 
+// ── Resolve system locale from native marker ──────────────────────
+// AbilityStage.ets detects the HarmonyOS system locale (@ohos.intl) and
+// writes it to .electerm-locale before the Electron runtime starts.
+// os-locale-s's shell-based detection does not work in the HarmonyOS
+// sandbox, so we expose the locale through the environment instead —
+// src/app/lib/locales.js reads process.env.LANG directly. Format written
+// by native is "<lang>-<REGION>" (e.g. "zh-CN"); we append ".UTF-8" so the
+// value is also a valid LANG for the SSH child-process environment.
+function getSystemLocale () {
+  const markerPath = path.join(process.env.DATA_PATH, '.electerm-locale')
+  try {
+    const data = fs.readFileSync(markerPath, 'utf8').trim()
+    if (data) {
+      return data
+    }
+  } catch (e) { /* ignore */ }
+  return ''
+}
+
+const _systemLocale = getSystemLocale()
+if (_systemLocale) {
+  process.env.LANG = `${_systemLocale}.UTF-8`
+}
+
 // ── Override os.homedir() ──────────────────────────────────────────
 // On HarmonyOS the default os.homedir() returns an inaccessible path
 // (e.g. /storage/Users/currentUser). We override it to return the
