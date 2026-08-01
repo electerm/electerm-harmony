@@ -4,36 +4,13 @@
 
 const { isDev, defaultLang } = require('../common/runtime-constants')
 const { resolve } = require('path')
-const fs = require('fs')
-
-function getOsLocale () {
-  // On HarmonyOS the only meaningful source of the system locale is the
-  // native marker file (.electerm-locale) written by AbilityStage.ets via
-  // @ohos.i18n before the Electron runtime starts. The Node/Electron
-  // process.env.LANG is NOT a reliable indicator here: when native detection
-  // has not populated it, the runtime leaves an English default ("en_US"/"C")
-  // that would force the wrong language even on a Chinese system. So read the
-  // marker file directly — a missing marker falls through to the empty string
-  // (and then to defaultLang), never to a misleading English env value.
-  if (process.env.DATA_PATH) {
-    try {
-      const marker = resolve(process.env.DATA_PATH, '.electerm-locale')
-      const data = fs.readFileSync(marker, 'utf8').trim()
-      if (data) {
-        // lowercase + strip the codeset suffix, e.g. "zh-CN.UTF-8" → "zh-cn".
-        // Must be lowercase to match the regexes in @electerm/electerm-locales
-        // (e.g. "zh(_|-)cn").
-        return data.split('.')[0].trim().toLowerCase()
-      }
-    } catch (e) { /* marker absent — fall through */ }
-  }
-  // Dev / non-HarmonyOS fallback: conventional POSIX env vars.
-  const envLocale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || process.env.LANGUAGE || ''
-  return envLocale ? envLocale.split('.')[0].trim().toLowerCase() : ''
-}
 
 async function loadLocales () {
-  const sysLocale = await getOsLocale() || defaultLang
+  // No system-locale detection on HarmonyOS: every detection attempt
+  // (os-locale-s, @ohos.intl, @ohos.i18n) returned a wrong ("en") value on
+  // real devices. Default to Simplified Chinese (defaultLang); users can
+  // still switch language in Settings.
+  const sysLocale = defaultLang
   const path = (isDev
     ? '../../'
     : '') +
