@@ -21,8 +21,53 @@
 import { WebAbilityStage } from 'web_engine';
 import fs from '@ohos.file.fs';
 import i18n from '@ohos.i18n';
+import Intl from '@ohos.intl';
 
 const TAG: string = 'ElectermAbilityStage';
+
+// Resolve the HarmonyOS system locale, trying every available API so that a
+// single failing/deprecated API never leaves us without a value. Returns the
+// locale in "<lang>-<REGION>" form (e.g. "zh-CN"), or "" if all sources fail.
+function resolveSystemLocale (): string {
+  let lang: string = '';
+  let region: string = '';
+
+  // 1. Preferred: @ohos.i18n.System static API (@since 9).
+  try {
+    const sysLang: string = i18n.System.getSystemLanguage() || '';
+    if (sysLang) {
+      // getSystemLanguage() returns a BCP-47 tag such as "zh-Hans-CN".
+      // Take only the primary language subtag — drop the script ("Hans")
+      // because "zh_Hans_CN" would not match the "zh(_|-)cn" regex downstream.
+      lang = sysLang.split(/[-_]/)[0].toLowerCase();
+      try {
+        region = (i18n.System.getSystemRegion() || '').toUpperCase();
+      } catch (e) { /* region optional */ }
+    }
+  } catch (e) {
+    // 2. Fallback: namespace-level i18n API (deprecated alias, @since 7).
+    try {
+      const sysLang: string = i18n.getSystemLanguage() || '';
+      if (sysLang) {
+        lang = sysLang.split(/[-_]/)[0].toLowerCase();
+        try {
+          region = (i18n.getSystemRegion() || '').toUpperCase();
+        } catch (e2) { /* region optional */ }
+      }
+    } catch (e2) { /* fall through */ }
+  }
+
+  // 3. Last resort: Intl.Locale with no argument.
+  if (!lang) {
+    try {
+      const loc = new Intl.Locale();
+      lang = (loc.language || '').toLowerCase();
+      region = (loc.region || '').toUpperCase();
+    } catch (e) { /* fall through */ }
+  }
+
+  return region ? `${lang}-${region}` : lang;
+}
 
 export default class ElectermAbilityStage extends WebAbilityStage {
   onCreate(): void {
@@ -46,38 +91,18 @@ export default class ElectermAbilityStage extends WebAbilityStage {
     // Detect the HarmonyOS system locale natively and write it to a marker
     // file BEFORE the Electron runtime starts. os-locale-s's shell-based
     // detection (`locale` command) does not work in the HarmonyOS sandbox, so
-    // bootstrap.js reads this marker and exports it as process.env.LANG, which
-    // locales.js consumes directly. Format is "<lang>-<REGION>" (e.g. "zh-CN")
-    // so it normalizes to "zh_cn" and matches the language regexes — we omit
-    // the script subtag (e.g. "Hans") on purpose, since "zh_Hans_CN" would not
-    // match the "zh(_|-)cn" pattern.
-    //
-    // IMPORTANT: we read the system language/region via @ohos.i18n
-    // (System.getSystemLanguage / getSystemRegion). The earlier approach using
-    // `new Intl.Locale()` with no argument does NOT reliably reflect the
-    // device's system language on real HarmonyOS devices — on cloud-debug
-    // devices it returned an empty/default ("en") locale, so the UI stayed
-    // English even when the device language was Chinese. @ohos.i18n.System is
-    // the canonical, reliable API for the *system* (not app-process) locale.
+    // bootstrap.js / locales.js read this marker instead. Format written is
+    // "<lang>-<REGION>" (e.g. "zh-CN"), which normalizes to "zh_cn" and
+    // matches the language regexes — we omit the script subtag (e.g. "Hans")
+    // on purpose, since "zh_Hans_CN" would not match the "zh(_|-)cn" pattern.
     try {
-      const sysLang: string = i18n.System.getSystemLanguage() || '';
-      // getSystemLanguage() returns a BCP-47 tag such as "zh-Hans-CN" or
-      // "en-US". Take only the primary language subtag (drop the script like
-      // "Hans" so the value matches the "zh(_|-)cn" regex downstream).
-      const lang: string = sysLang.split(/[-_]/)[0].toLowerCase();
-      const region: string = (i18n.System.getSystemRegion() || '').toUpperCase();
-      const localeStr: string = region ? `${lang}-${region}` : lang;
+      const localeStr: string = resolveSystemLocale();
       if (localeStr) {
         const localeMarkerPath: string = `${filesDir}/.electerm-locale`;
         const lf = fs.openSync(localeMarkerPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
         fs.writeSync(lf.fd, localeStr);
         fs.closeSync(lf);
-        console.info(`[${TAG}] wrote locale marker: ${localeMarkerPath} → ${localeStr} (from getSystemLanguage="${sysLang}", region="${region}")`);
-      } else {
-        console.warn(`[${TAG}] resolved empty locale (getSystemLanguage="${sysLang}"), skipping marker`);
       }
-    } catch (e) {
-      console.error(`[${TAG}] failed to write locale marker: ${JSON.stringify(e)}`);
-    }
+    } catch (e) { /* ignore */ }
   }
 }
