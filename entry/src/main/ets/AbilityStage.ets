@@ -20,7 +20,7 @@
 
 import { WebAbilityStage } from 'web_engine';
 import fs from '@ohos.file.fs';
-import Intl from '@ohos.intl';
+import i18n from '@ohos.i18n';
 
 const TAG: string = 'ElectermAbilityStage';
 
@@ -51,17 +51,30 @@ export default class ElectermAbilityStage extends WebAbilityStage {
     // so it normalizes to "zh_cn" and matches the language regexes — we omit
     // the script subtag (e.g. "Hans") on purpose, since "zh_Hans_CN" would not
     // match the "zh(_|-)cn" pattern.
+    //
+    // IMPORTANT: we read the system language/region via @ohos.i18n
+    // (System.getSystemLanguage / getSystemRegion). The earlier approach using
+    // `new Intl.Locale()` with no argument does NOT reliably reflect the
+    // device's system language on real HarmonyOS devices — on cloud-debug
+    // devices it returned an empty/default ("en") locale, so the UI stayed
+    // English even when the device language was Chinese. @ohos.i18n.System is
+    // the canonical, reliable API for the *system* (not app-process) locale.
     try {
-      const loc = new Intl.Locale();
-      const lang = (loc.language || '').toLowerCase();
-      const region = (loc.region || '').toUpperCase();
-      const localeStr = region ? `${lang}-${region}` : lang;
+      const sysLang: string = i18n.System.getSystemLanguage() || '';
+      // getSystemLanguage() returns a BCP-47 tag such as "zh-Hans-CN" or
+      // "en-US". Take only the primary language subtag (drop the script like
+      // "Hans" so the value matches the "zh(_|-)cn" regex downstream).
+      const lang: string = sysLang.split(/[-_]/)[0].toLowerCase();
+      const region: string = (i18n.System.getSystemRegion() || '').toUpperCase();
+      const localeStr: string = region ? `${lang}-${region}` : lang;
       if (localeStr) {
         const localeMarkerPath: string = `${filesDir}/.electerm-locale`;
         const lf = fs.openSync(localeMarkerPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
         fs.writeSync(lf.fd, localeStr);
         fs.closeSync(lf);
-        console.info(`[${TAG}] wrote locale marker: ${localeMarkerPath} → ${localeStr}`);
+        console.info(`[${TAG}] wrote locale marker: ${localeMarkerPath} → ${localeStr} (from getSystemLanguage="${sysLang}", region="${region}")`);
+      } else {
+        console.warn(`[${TAG}] resolved empty locale (getSystemLanguage="${sysLang}"), skipping marker`);
       }
     } catch (e) {
       console.error(`[${TAG}] failed to write locale marker: ${JSON.stringify(e)}`);

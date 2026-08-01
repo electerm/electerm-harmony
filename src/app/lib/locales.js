@@ -9,7 +9,7 @@ function getOsLocale () {
   // os-locale-s relies on shell commands (`locale`, `defaults`, PowerShell)
   // that are unavailable in the HarmonyOS sandbox, so it always fell back to
   // "en_US". Instead, bootstrap.js exports the HarmonyOS system locale
-  // detected natively (@ohos.intl) through process.env.LANG — read the locale
+  // detected natively (@ohos.i18n) through process.env.LANG — read the locale
   // environment directly here. The order matches the POSIX convention that
   // os-locale-s itself used.
   const envLocale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || process.env.LANGUAGE || ''

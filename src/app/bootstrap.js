@@ -113,8 +113,9 @@ function getHomedirPath () {
 process.env.DATA_PATH = getDataPath()
 
 // ── Resolve system locale from native marker ──────────────────────
-// AbilityStage.ets detects the HarmonyOS system locale (@ohos.intl) and
-// writes it to .electerm-locale before the Electron runtime starts.
+// AbilityStage.ets detects the HarmonyOS system locale via @ohos.i18n
+// (System.getSystemLanguage / getSystemRegion) and writes it to
+// .electerm-locale before the Electron runtime starts.
 // os-locale-s's shell-based detection does not work in the HarmonyOS
 // sandbox, so we expose the locale through the environment instead —
 // src/app/lib/locales.js reads process.env.LANG directly. Format written
