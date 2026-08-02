@@ -25,6 +25,7 @@
 - [electerm 在线版](https://cloud.electerm.org)：免费公共在线 electerm 应用
 - [electerm 演示](https://demo.electerm.org)：electerm 在线演示
 - [electerm AI](https://ai.electerm.org)：electerm 用户免费 AI
+- [electerm theme](https://theme.electerm.org)：创建/分享主题站点，支持实时预览与 AI 创建
 - [electerm Android](https://github.com/electerm/electerm-android)：electerm 安卓版
 - [electerm deb 仓库](https://repos.electerm.org/deb)：electerm Debian 仓库
 - [electerm rpm 仓库](https://repos.electerm.org/rpm)：electerm RPM 仓库
