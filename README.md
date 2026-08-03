@@ -45,10 +45,7 @@ This project is a **work in progress**. The current goal is to make electerm wor
 - [x] Build pipeline (CI + local) that downloads pre-built runtime tarball
 - [x] ArkTS layer using web_engine HAR module (WebAbility, WebWindow)
 - [x] **Get the app to build and run successfully on HarmonyOS**
-- [x] Test electerm-web frontend + backend in the Electron Harmony OS runtime
-- [ ] Fix any runtime issues (API compatibility, file paths, permissions)
-- [ ] Add more Electron-specific features (or evaluate using electerm's original Electron code)
-- [ ] Obtain software copyright certificate (软件著作权登记) — required for AppGallery publishing
+- [x] Fix any runtime issues (API compatibility, file paths, permissions)
 - [ ] Publish to HarmonyOS AppGallery
 
 ## Sponsors

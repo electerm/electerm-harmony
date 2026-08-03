@@ -48,10 +48,7 @@
 - [x] 构建流程（CI + 本地）自动下载预构建运行时压缩包
 - [x] 使用 web_engine HAR 模块的 ArkTS 层（WebAbility、WebWindow）
 - [x] **成功在 HarmonyOS 上构建并运行应用**
-- [x] 在 Electron 鸿蒙运行时中测试 electerm-web 前端 + 后端
-- [ ] 修复运行时问题（API 兼容性、文件路径、权限）
-- [ ] 添加更多 Electron 特定功能（或评估使用 electerm 原始 Electron 代码）
-- [ ] 获取软件著作权登记证书 —— 应用市场上架必需
+- [x] 修复运行时问题（API 兼容性、文件路径、权限）
 - [ ] 发布到 HarmonyOS 应用市场
 
 ## 赞助
