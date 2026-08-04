@@ -35,6 +35,7 @@ const data = {
   disableUpgradeCheck: true,
   hideLocalTerminal: true,
   defaultAIPreset,
+  disableAIFeature: true,
   AIDisclamer: '本内容由 AI 生成，仅供参考'
 }
 

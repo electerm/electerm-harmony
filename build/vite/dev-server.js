@@ -30,7 +30,8 @@ const base = {
   defaultAIPreset,
   disableUpgradeCheck: true,
   AIDisclamer: '本内容由 AI 生成，仅供参考',
-  hideLocalTerminal: true
+  hideLocalTerminal: true,
+  disableAIFeature: true
 }
 
 function handleIndex (req, res) {
