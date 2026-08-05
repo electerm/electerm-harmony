@@ -36,16 +36,8 @@ const data = {
   hideLocalTerminal: true,
   defaultAIPreset,
   disableAIFeature: true,
-  AIDisclamer: '本内容由 AI 生成，仅供参考'
-}
-
-// Allow builds (e.g. HarmonyOS) to inject extra data via env var
-if (process.env.PUG_EXTRA_DATA) {
-  try {
-    Object.assign(data, JSON.parse(process.env.PUG_EXTRA_DATA))
-  } catch (e) {
-    console.warn('Warning: Failed to parse PUG_EXTRA_DATA:', e.message)
-  }
+  AIDisclamer: '本内容由 AI 生成，仅供参考',
+  supportSessionTypes: ['ssh', 'telnet', 'rdp', 'vnc', 'ftp', 'spice']
 }
 
 const htmlContent = pug.render(pugContent, {

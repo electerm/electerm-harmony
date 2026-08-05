@@ -32,11 +32,6 @@ const OUTPUT_DIR = resolve(ROOT, 'web_engine/src/main/resources/resfile/resource
 
 const timeStart = Date.now()
 
-// HarmonyOS-specific pug data — must be set before `npm run b` runs pug.js
-process.env.PUG_EXTRA_DATA = JSON.stringify({
-  supportSessionTypes: ['ssh', 'telnet', 'web', 'rdp', 'vnc', 'ftp', 'spice']
-})
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

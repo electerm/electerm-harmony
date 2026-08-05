@@ -1,5 +1,5 @@
 const {
-  BrowserWindow, screen
+  BrowserWindow, screen, shell
 } = require('electron')
 const { resolve } = require('path')
 const {
@@ -70,6 +70,30 @@ exports.createWindow = async function (userConfig) {
 
   globalState.set('win', win)
   log.info('createWindow: BrowserWindow created, starting initAppServer...')
+
+  // Intercept navigation to external URLs. Without this, clicking a
+  // link (<a href="https://...">) inside the app would navigate the
+  // Electron window itself to that URL, loading the external page
+  // in-app instead of opening the system browser.
+  win.webContents.on('will-navigate', (event, url) => {
+    // Allow navigation to the app's own local server
+    if (url.startsWith('http://127.0.0.1:') || url.startsWith('data:')) {
+      return
+    }
+    event.preventDefault()
+    log.info('will-navigate: redirecting to system browser:', url)
+    shell.openExternal(url)
+  })
+
+  // Intercept window.open() calls — redirect to system browser
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://127.0.0.1:') || url.startsWith('data:')) {
+      return { action: 'allow' }
+    }
+    log.info('setWindowOpenHandler: redirecting to system browser:', url)
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   try {
     await initAppServer()

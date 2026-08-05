@@ -7,6 +7,16 @@ const { app } = require('electron')
 const log = require('../common/log')
 const globalState = require('./glob-state')
 const { parseQuickConnect, SUPPORTED_PROTOCOLS } = require('../common/parse-quick-connect')
+
+// Protocols that should NOT be registered as system handlers.
+// http/https are excluded because registering as a web URL handler
+// triggers Huawei AppGallery's ArkWeb requirement review.
+// The app can still parse and open these URLs (via web tabs), it just
+// won't register as the system-level handler for them.
+const EXCLUDED_PROTOCOLS = ['http', 'https']
+const REGISTRABLE_PROTOCOLS = SUPPORTED_PROTOCOLS.filter(
+  p => !EXCLUDED_PROTOCOLS.includes(p)
+)
 /**
  * Register electerm as a handler for supported protocols
  * Note: This makes electerm available as a handler but doesn't force it as default.
@@ -16,7 +26,7 @@ const { parseQuickConnect, SUPPORTED_PROTOCOLS } = require('../common/parse-quic
  * @returns {object} - Status of registration for each protocol
  */
 function registerDeepLink (force = false) {
-  const protocols = SUPPORTED_PROTOCOLS
+  const protocols = REGISTRABLE_PROTOCOLS
   const results = {}
 
   // Only register in packaged app or when explicitly requested
@@ -57,7 +67,7 @@ function registerDeepLink (force = false) {
  * @returns {object} - Status of each protocol
  */
 function checkProtocolRegistration () {
-  const protocols = SUPPORTED_PROTOCOLS
+  const protocols = REGISTRABLE_PROTOCOLS
   const status = {}
 
   protocols.forEach(protocol => {
@@ -72,7 +82,7 @@ function checkProtocolRegistration () {
  * @param {Array<string>} protocols - Optional array of specific protocols to unregister
  * @returns {object} - Status of unregistration
  */
-function unregisterDeepLink (protocols = SUPPORTED_PROTOCOLS) {
+function unregisterDeepLink (protocols = REGISTRABLE_PROTOCOLS) {
   const results = {}
 
   protocols.forEach(protocol => {
