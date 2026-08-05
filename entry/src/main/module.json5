@@ -84,28 +84,40 @@
         "skills": [
           {
             "entities": [
-              "entity.system.home",
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          },
+          {
+            "entities": [
               "entity.system.browsable"
             ],
             "actions": [
-              "action.system.home",
               "ohos.want.action.viewData"
             ],
             "uris": [
               {
-                "type": "application/pdf",
-                "scheme": "file",
-                "linkFeature": "FileOpen"
+                "scheme": "ssh"
               },
               {
-                "type": "text/html",
-                "scheme": "file",
-                "linkFeature": "FileOpen"
+                "scheme": "telnet"
               },
               {
-                "type": "application/x-mimearchive",
-                "scheme": "file",
-                "linkFeature": "FileOpen"
+                "scheme": "vnc"
+              },
+              {
+                "scheme": "rdp"
+              },
+              {
+                "scheme": "spice"
+              },
+              {
+                "scheme": "ftp"
+              },
+              {
+                "scheme": "electerm"
               }
             ]
           }
