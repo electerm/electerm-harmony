@@ -38,22 +38,7 @@
 
 ---
 
-## 当前状态
-
-本项目正在**开发中**。当前目标是让 electerm 以 Web 应用形式在 HarmonyOS 上运行 —— 成功构建并运行。发布到 HarmonyOS 应用市场可能需要数月时间（需要软件著作权证书及其他合规步骤）。
-
-## 待办事项
-
-- [x] 基础项目结构与 Electron 鸿蒙运行时集成
-- [x] 构建流程（CI + 本地）自动下载预构建运行时压缩包
-- [x] 使用 web_engine HAR 模块的 ArkTS 层（WebAbility、WebWindow）
-- [x] **成功在 HarmonyOS 上构建并运行应用**
-- [x] 修复运行时问题（API 兼容性、文件路径、权限）
-- [ ] 发布到 HarmonyOS 应用市场
-
-## 赞助
-
-[GitHub Sponsors](https://github.com/sponsors/electerm)
+商店地址: [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm)
 
 ## 开源协议
 

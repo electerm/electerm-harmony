@@ -35,22 +35,7 @@ This project brings electerm to **HarmonyOS** using the [Electron Harmony OS run
 
 ---
 
-## Current Status
-
-This project is a **work in progress**. The current goal is to make electerm work as a web app on HarmonyOS — building and running successfully. Publishing to the HarmonyOS AppGallery may take months (requires software copyright certificate and other compliance steps).
-
-## TODO
-
-- [x] Basic project structure with Electron Harmony OS runtime integration
-- [x] Build pipeline (CI + local) that downloads pre-built runtime tarball
-- [x] ArkTS layer using web_engine HAR module (WebAbility, WebWindow)
-- [x] **Get the app to build and run successfully on HarmonyOS**
-- [x] Fix any runtime issues (API compatibility, file paths, permissions)
-- [ ] Publish to HarmonyOS AppGallery
-
-## Sponsors
-
-[GitHub Sponsors](https://github.com/sponsors/electerm)
+[Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm)
 
 ## License
 
