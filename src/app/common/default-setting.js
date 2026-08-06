@@ -72,5 +72,6 @@ module.exports = exports.default = {
   startDirectoryLocal: '',
   allowMultiInstance: false,
   disableDeveloperTool: false,
-  dragDropBehavior: 'ask'
+  dragDropBehavior: 'ask',
+  switchTabOnHover: false
 }

@@ -208,6 +208,13 @@ exports.terminals = function (pid) {
         body: { cmd, pid }
       })
     },
+    execCommand: async (cmd, timeoutMs, id) => {
+      return sendMsgToSession(terminal.session, {
+        id,
+        action: 'exec-cmd',
+        body: { cmd, pid, timeoutMs }
+      })
+    },
     resize: (cols, rows, id) => {
       sendMsgToSession(terminal.session, {
         id,
