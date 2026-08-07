@@ -31,7 +31,7 @@ const base = {
   disableUpgradeCheck: true,
   AIDisclamer: '本内容由 AI 生成，仅供参考',
   hideLocalTerminal: true,
-  disableAIFeature: true,
+  disableAIFeature: false,
   supportSessionTypes: ['ssh', 'telnet', 'rdp', 'vnc', 'ftp', 'spice']
 }
 

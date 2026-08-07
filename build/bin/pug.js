@@ -35,7 +35,7 @@ const data = {
   disableUpgradeCheck: true,
   hideLocalTerminal: true,
   defaultAIPreset,
-  disableAIFeature: true,
+  disableAIFeature: false,
   AIDisclamer: '本内容由 AI 生成，仅供参考',
   supportSessionTypes: ['ssh', 'telnet', 'rdp', 'vnc', 'ftp', 'spice']
 }
