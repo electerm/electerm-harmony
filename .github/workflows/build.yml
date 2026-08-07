@@ -5,6 +5,7 @@ on:
     branches:
       - build
       - dev
+      - dev1
 
 # Cancel previous runs on the same branch/tag
 concurrency:
