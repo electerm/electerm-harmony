@@ -381,6 +381,9 @@ function createSessionServer (type, wsPort, electermHost) {
               // Not JSON, treat as regular terminal input
             }
           }
+          // Let an active zmodem session observe Ctrl-C (transfer abort);
+          // the keystroke itself is still written through untouched.
+          zmodemManager.handleUserInput(pid, msg)
           term.write(msg)
         } catch (ex) {
           log.error(ex)
