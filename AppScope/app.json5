@@ -3,7 +3,7 @@
     "bundleName": "org.electerm.electerm",
     "vendor": "electerm",
     "versionCode": 31500167,
-    "versionName": "5.3.0",
+    "versionName": "5.3.5",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
