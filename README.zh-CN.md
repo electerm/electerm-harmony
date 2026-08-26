@@ -27,18 +27,19 @@
 - [electerm AI](https://ai.electerm.org)：electerm 用户免费 AI
 - [electerm theme](https://theme.electerm.org)：创建/分享主题站点，支持实时预览与 AI 创建
 - [electerm Android](https://github.com/electerm/electerm-android)：electerm 安卓版
+- [electerm iOS](https://github.com/electerm/electerm-ios)：electerm iOS 版
 - [electerm deb 仓库](https://repos.electerm.org/deb)：electerm Debian 仓库
 - [electerm rpm 仓库](https://repos.electerm.org/rpm)：electerm RPM 仓库
 
 ---
 
-**electerm** 是一个免费开源的 ssh/sftp/telnet/RDP/VNC/Spice/ftp 客户端（支持 Linux、Mac、Windows、HarmonyOS、Android）。
+**electerm** 是一个免费开源的 ssh/sftp/telnet/RDP/VNC/Spice/ftp 客户端（支持 Linux、Mac、Windows、HarmonyOS、Android、iOS）。
 
 本项目使用 [Electron 鸿蒙运行时](https://gitcode.com/openharmony-sig/electron)（Chromium + Node.js）将 electerm 移植到 **HarmonyOS** 平台。
 
 ---
 
-商店地址: [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm)
+商店地址: [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/cn/app/electerm/id6792971552)
 
 ## 开源协议
 

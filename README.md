@@ -24,18 +24,19 @@
 - [electerm AI](https://ai.electerm.org): Free AI for electerm users
 - [electerm theme](https://theme.electerm.org): Create/share theme site with live preview and AI creation
 - [electerm Android](https://github.com/electerm/electerm-android): electerm for Android
+- [electerm iOS](https://github.com/electerm/electerm-ios): electerm for iOS
 - [electerm deb repo](https://repos.electerm.org/deb): Debian repo of electerm
 - [electerm rpm repo](https://repos.electerm.org/rpm): RPM repo of electerm
 
 ---
 
-**electerm** is a free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client (linux, mac, win, HarmonyOS, Android).
+**electerm** is a free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client (linux, mac, win, HarmonyOS, Android, iOS).
 
 This project brings electerm to **HarmonyOS** using the [Electron Harmony OS runtime](https://gitcode.com/openharmony-sig/electron) (Chromium + Node.js).
 
 ---
 
-[Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm)
+[Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/cn/app/electerm/id6792971552)
 
 ## License
 
