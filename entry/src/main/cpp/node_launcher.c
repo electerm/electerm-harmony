@@ -386,6 +386,40 @@ typedef int (*node_start_fn)(int argc, char *argv[]);
 static int g_sigsysSeen[32];
 static int g_sigsysSeenCount = 0;
 
+/* aarch64 (asm-generic) syscall numbers worth naming in the log — the
+ * suspects an app seccomp policy actually fences off. */
+static const char *syscallName(int sc) {
+  switch (sc) {
+    case 19: return "eventfd2";
+    case 20: return "epoll_create1";
+    case 220: return "clone";
+    case 221: return "execve";
+    case 241: return "perf_event_open";
+    case 265: return "open_by_handle_at";
+    case 270: return "process_vm_readv";
+    case 272: return "kcmp";
+    case 277: return "seccomp";
+    case 278: return "getrandom";
+    case 280: return "bpf";
+    case 281: return "execveat";
+    case 282: return "userfaultfd";
+    case 283: return "membarrier";
+    case 288: return "pkey_mprotect";
+    case 291: return "statx";
+    case 293: return "rseq";
+    case 403: return "clock_gettime64";
+    case 424: return "pidfd_send_signal";
+    case 425: return "io_uring_setup";
+    case 434: return "pidfd_open";
+    case 435: return "clone3";
+    case 436: return "close_range";
+    case 437: return "openat2";
+    case 439: return "faccessat2";
+    case 440: return "process_madvise";
+    default: return "?";
+  }
+}
+
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   (void)sig;
   int sc = si->si_syscall; /* musl: #define si_syscall __si_fields.__sigsys.si_syscall */
@@ -398,7 +432,8 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   }
   if (!known && g_sigsysSeenCount < 32) {
     g_sigsysSeen[g_sigsysSeenCount++] = sc;
-    logWrite("[launcher] SIGSYS: syscall %d blocked by seccomp → ENOSYS", sc);
+    logWrite("[launcher] SIGSYS: syscall %d (%s) blocked by seccomp → ENOSYS",
+             sc, syscallName(sc));
   }
   ucontext_t *uc = (ucontext_t *)ctx;
   /* aarch64: the trapped instruction is the 4-byte `svc #0`; skip it and
