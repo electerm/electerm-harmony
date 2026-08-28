@@ -146,9 +146,9 @@ struct Index {
       const ok: boolean = await this.waitForBackend();
       if (!ok) {
         this.bootFailed = true;
-        const lastLine: string = this.readBootLogLastLine();
-        this.statusMessage = lastLine
-          ? `Engine failed: ${lastLine}`
+        const tail: string = this.readBootLogTailLines(8);
+        this.statusMessage = tail
+          ? tail
           : 'Engine failed to start (no node-boot.log — child never ran?)';
         this.logBootTail();
         return;
@@ -180,18 +180,29 @@ struct Index {
   /** Last non-empty log line — shown in the overlay while booting so the
    * failure reason is visible on a plain screen mirror (cloud debug). */
   readBootLogLastLine(): string {
+    return this.readBootLogTailLines(1);
+  }
+
+  /** Last `n` non-empty log lines joined by newline — the failure overlay
+   * shows the whole launcher ladder (stat → dlopen → dlsym → start) so one
+   * device round-trip is enough to see exactly which step failed. */
+  readBootLogTailLines(n: number): string {
     const text: string = this.readBootLog();
     if (!text) {
       return '';
     }
     const lines: string[] = text.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
+    const picked: string[] = [];
+    for (let i = lines.length - 1; i >= 0 && picked.length < n; i--) {
       const line: string = lines[i].trim();
       if (line) {
-        return line.length > 160 ? `…${line.substring(line.length - 159)}` : line;
+        const clipped: string = line.length > 120
+          ? `…${line.substring(line.length - 119)}`
+          : line;
+        picked.unshift(clipped);
       }
     }
-    return '';
+    return picked.join('\n');
   }
 
   /** Dump the launcher's boot log tail to hilog — the fastest way to see why

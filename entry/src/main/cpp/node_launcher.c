@@ -27,8 +27,9 @@
  * (tag electerm.launcher, error level so release builds keep it) — so the
  * boot sequence is visible even when the log file cannot be pulled.
  *
- * Exit codes: 40 script missing · 41 node binary not found · 42 all exec
- * strategies failed.
+ * Exit codes: 40 script missing · 41 node binary not found · 42 in-process
+ * start failed AND all exec strategies failed · else node's own exit code
+ * (in-process mode exits from nodeThreadMain).
  */
 
 #include <stdbool.h> /* native_child_process.h uses `bool` */
@@ -38,6 +39,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -273,6 +275,87 @@ static void logMountFlagsFor(const char *path) {
   }
 }
 
+/* ── Strategy 1: run node IN-PROCESS (the nodejs-mobile / WineHua pattern) ──
+ *
+ * execve of any new image is refused inside an app child process on
+ * HarmonyOS (errno EACCES — direct, via the system loader, and via memfd,
+ * even with a code-signed binary: XPM blocks the syscall for app uids).
+ * But dlopen() of a shared object demonstrably works — nativespawn loaded
+ * this very library. The bundled node is a dynamic PIE, and OHOS musl's
+ * loader does not reject executables: no PT_INTERP / DF_1_PIE check in
+ * load_library(). node exports its embedder entry
+ *   int node::Start(int argc, char *argv[])   (_ZN4node5StartEiPPc)
+ * so we dlopen the binary, resolve node::Start, and call it on a dedicated
+ * big-stack thread (node needs a large stack; nativespawn's Main() thread
+ * cannot be assumed to have one).
+ *
+ * Returns only on failure (-1); on success node::Start runs until exit and
+ * the thread wrapper _exit()s the process with node's exit code. */
+
+typedef int (*node_start_fn)(int argc, char *argv[]);
+
+struct NodeThreadArgs {
+  node_start_fn start;
+  char *argv[3];
+  int rc;
+};
+
+static void *nodeThreadMain(void *p) {
+  struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
+  a->rc = a->start(2, a->argv);
+  logWrite("[launcher] node::Start returned %d", a->rc);
+  _exit(a->rc & 0xff);
+  return NULL; /* unreachable */
+}
+
+static int runNodeInProcess(const char *nodePath, const char *script) {
+  logWrite("[launcher] in-process: dlopen(%s)", nodePath);
+  void *h = dlopen(nodePath, RTLD_NOW | RTLD_LOCAL);
+  if (!h) {
+    const char *e1 = dlerror();
+    const char *e2 = dlerror();
+    logWrite("[launcher] dlopen failed: %s / %s", e1 ? e1 : "-",
+             e2 ? e2 : "-");
+    return -1;
+  }
+  dlerror();
+  node_start_fn start = (node_start_fn)dlsym(h, "_ZN4node5StartEiPPc");
+  const char *e = dlerror();
+  if (!start || (e && e[0])) {
+    logWrite("[launcher] dlsym(node::Start) failed: %s", e ? e : "null sym");
+    return -1;
+  }
+  logWrite("[launcher] node::Start resolved at %p", (void *)start);
+
+  /* argv must outlive the thread — static storage. */
+  static char arg0[MAX_LINE * 2];
+  static char arg1[MAX_LINE * 2];
+  snprintf(arg0, sizeof(arg0), "%s", nodePath);
+  snprintf(arg1, sizeof(arg1), "%s", script);
+
+  static struct NodeThreadArgs na;
+  na.start = start;
+  na.argv[0] = arg0;
+  na.argv[1] = arg1;
+  na.argv[2] = NULL;
+  na.rc = -1;
+
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 32 * 1024 * 1024); /* node wants a big stack */
+  pthread_t th;
+  int prc = pthread_create(&th, &attr, nodeThreadMain, &na);
+  if (prc != 0) {
+    logWrite("[launcher] pthread_create failed: %s", strerror(prc));
+    return -1;
+  }
+  void *ret = NULL;
+  pthread_join(th, &ret); /* nodeThreadMain _exits, so this returns on error only */
+  (void)ret;
+  logWrite("[launcher] node thread ended without _exit (rc=%d)", na.rc);
+  return -1;
+}
+
 /* execveat on a memfd copy of the binary — the noexec-bypass fallback. */
 static int execFromMemfd(const char *binaryPath, char *const argv[],
                          char *const envp[]) {
@@ -431,7 +514,28 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     logMountFlagsFor(nodePath);
   }
 
-  /* 6. exec. */
+  /* 5b. node writes relative paths into the data dir — make that the cwd
+   *     (the resfile install dir it runs from is read-only). */
+  if (cfg.dataDir[0]) {
+    if (chdir(cfg.dataDir) == 0) {
+      logWrite("[launcher] cwd: %s", cfg.dataDir);
+    } else {
+      logWrite("[launcher] chdir(%s) failed: %s", cfg.dataDir,
+               strerror(errno));
+    }
+  }
+
+  /* 6. STRATEGY 1 — in-process node::Start via dlopen. Exec of a new image
+   *    is blocked on device (direct, loader, memfd: all EACCES, even
+   *    code-signed); dlopen is how app code legitimately gets mapped
+   *    executable (nativespawn loaded this very library). Runs until exit
+   *    on success; falls through to the exec ladder only if it cannot start.
+   */
+  if (runNodeInProcess(nodePath, cfg.script) == 0) {
+    _exit(0); /* unreachable — nodeThreadMain exits the process */
+  }
+
+  /* 7. exec ladder (kept for environments where exec is permitted). */
   chmod(nodePath, 0755); /* no-op on the read-only bundle mount; logged above */
 
   char nodeArg0[MAX_LINE * 2];
@@ -468,7 +572,8 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     _exit(0); /* unreachable */
   }
 
-  logWrite("[launcher] FATAL: all exec strategies failed (execv errno=%d)",
+  logWrite("[launcher] FATAL: in-process start failed AND all exec strategies "
+           "failed (execv errno=%d)",
            execErr);
   _exit(42);
 }
