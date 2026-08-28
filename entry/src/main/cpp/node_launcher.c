@@ -231,11 +231,19 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
   const char *params = args.entryParams ? args.entryParams : "";
   parseEntryParams(params, &cfg, extraEnv, &extraEnvCount);
 
-  /* 1. Open the boot log inside the writable data dir */
+  /* 1. Open the boot log inside the writable data dir. The dataDir string
+   * from the parent process may not be mounted in this child's namespace
+   * (sandbox paths differ) — retry via the per-process el2 junction, which
+   * points at the same files dir. */
   if (cfg.dataDir[0]) {
     char logPath[MAX_LINE * 2];
     snprintf(logPath, sizeof(logPath), "%s/node-boot.log", cfg.dataDir);
     g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (g_logFd < 0) {
+      snprintf(logPath, sizeof(logPath),
+               "/data/storage/el2/base/electerm-data/node-boot.log");
+      g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    }
   }
   logWrite("[launcher] Main() entered, pid=%d", (int)getpid());
   logWrite("[launcher] entryParams: %s", params);

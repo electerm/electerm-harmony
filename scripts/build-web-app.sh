@@ -170,9 +170,15 @@ BUILD_PROFILE="${PROJECT_ROOT}/build-profile.json5"
 
 SDK_PKG_JSON="${OHOS_SDK_HOME}/default/sdk-pkg.json"
 if [ -f "${SDK_PKG_JSON}" ]; then
-  SDK_API_VERSION=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['apiVersion'])" 2>/dev/null || echo "")
-  SDK_DISPLAY_NAME=$(python3 -c "import json; d=json.load(open('${SDK_PKG_JSON}')); print(d['data']['displayName'])" 2>/dev/null || echo "")
-  SDK_VERSION=$(echo "${SDK_DISPLAY_NAME}" | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+  # Extract both fields with python (portable — BSD sed lacks \+ quantifiers)
+  read -r SDK_API_VERSION SDK_VERSION SDK_DISPLAY_NAME <<SDKINFO || true
+$(python3 -c "
+import json, re
+d = json.load(open('${SDK_PKG_JSON}'))['data']
+m = re.search(r'[0-9]+\.[0-9]+\.[0-9]+', d.get('platformVersion') or d.get('displayName') or '')
+print(d.get('apiVersion', ''), m.group(0) if m else '', d.get('displayName', ''))
+" 2>/dev/null || echo "   ")
+SDKINFO
   if [ -n "${SDK_API_VERSION}" ] && [ -n "${SDK_VERSION}" ]; then
     COMPILE_SDK_VERSION="${SDK_VERSION}(${SDK_API_VERSION})"
     echo "    Detected SDK: ${SDK_DISPLAY_NAME} (API ${SDK_API_VERSION})"

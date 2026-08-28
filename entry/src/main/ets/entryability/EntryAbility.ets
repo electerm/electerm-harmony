@@ -17,6 +17,7 @@ import AbilityConstant from '@ohos.app.ability.AbilityConstant';
 import { Configuration } from '@ohos.app.ability.Configuration';
 import { abilityAccessCtrl, common, Permissions, PermissionRequestResult, UIAbility } from '@kit.AbilityKit';
 import { Environment } from '@kit.CoreFileKit';
+import { BackendManager } from '../BackendManager';
 
 const TAG: string = 'ElectermEntryAbility';
 
@@ -63,18 +64,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   async onDestroy(): Promise<void> {
-    // Index registered a cleanup callback (kills the node child process)
-    // in its LocalStorage when it appeared.
-    try {
-      const storage = LocalStorage.getShared();
-      const cleanup = storage.get<Object>('backendCleanup') as () => void;
-      if (cleanup) {
-        cleanup();
-        console.info(`[${TAG}] backend cleanup done`);
-      }
-    } catch (e) {
-      console.warn(`[${TAG}] backend cleanup failed: ${JSON.stringify(e)}`);
-    }
+    // Terminate the node child process so port 5577 is freed. If the child
+    // is already dead (crashed / exec failed) killNode just returns -1.
+    BackendManager.killBackend();
   }
 
   /**

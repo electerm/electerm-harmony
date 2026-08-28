@@ -11,17 +11,22 @@
  *
  * While the engine is starting (or failed to start) a native overlay is
  * shown; the Web component stays loaded with rawfile/loading.html behind it.
+ *
+ * All logging goes through hilog (visible in release-build hilog, unlike
+ * console.info which is filtered out) — `hdc hilog | grep electerm.Index`.
  */
 
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
 import { childProcessManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { BackendManager } from '../BackendManager';
 
 const TAG: string = 'electerm.Index';
+const DOMAIN: number = 0xE1EC;
 const BACKEND_PORT: number = 5577;
 const SERVER_URL: string = `http://127.0.0.1:${BACKEND_PORT}`;
 const POLL_INTERVAL_MS: number = 500;
@@ -39,14 +44,36 @@ struct Index {
     this.startBackend();
   }
 
+  /**
+   * Resolve the backend entry script inside the installed HAP.
+   * The HAP layout is entry/src/main/resources/resfile/electerm → installed
+   * at <bundleCodeDir>/entry/resources/resfile/electerm (note: "resources",
+   * plural — matches the packaged HAP contents). bundleCodeDir may or may not
+   * already include the module segment, so try both shapes and verify.
+   */
+  resolveScriptPath(bundleCodeDir: string): string {
+    const candidates: string[] = [
+      `${bundleCodeDir}/entry/resources/resfile/electerm/index.js`,
+      `${bundleCodeDir}/resources/resfile/electerm/index.js`
+    ];
+    for (let i = 0; i < candidates.length; i++) {
+      hilog.info(DOMAIN, TAG, 'script candidate: %{public}s', candidates[i]);
+      if (this.fileExists(candidates[i])) {
+        hilog.info(DOMAIN, TAG, 'using script: %{public}s', candidates[i]);
+        return candidates[i];
+      }
+      hilog.warn(DOMAIN, TAG, 'script candidate missing: %{public}s', candidates[i]);
+    }
+    return candidates[0]; // let the launcher report the failure
+  }
+
   /** Create the writable data dir and spawn the node backend. */
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
       const filesDir: string = context.filesDir;
       const dataDir: string = `${filesDir}/electerm-data`;
-      const bundleCodeDir: string = context.bundleCodeDir;
-      const scriptPath: string = `${bundleCodeDir}/entry/resource/resfile/electerm/index.js`;
+      const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
 
       // 1. writable data dir (db, ssh keys, logs — the resfile install dir
       //    the backend itself runs from is read-only)
@@ -63,13 +90,13 @@ struct Index {
       ].join('\n');
 
       this.statusMessage = 'Starting Node.js engine …';
-      console.info(`[${TAG}] starting native child process, params:\n${entryParams}`);
+      hilog.info(DOMAIN, TAG, 'starting native child process, params: %{public}s', entryParams);
       const pid: number = await childProcessManager.startNativeChildProcess(
         'libnode_launcher.so:Main',
         { entryParams: entryParams }
       );
       BackendManager.setPid(pid);
-      console.info(`[${TAG}] node child process started, pid=${pid}`);
+      hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
 
       // 3. wait for the HTTP server
       this.statusMessage = 'Starting engine …';
@@ -78,6 +105,7 @@ struct Index {
         this.bootFailed = true;
         this.statusMessage =
           'Engine failed to start. See electerm-data/node-boot.log';
+        this.logBootTail(dataDir);
         return;
       }
 
@@ -88,7 +116,30 @@ struct Index {
       const err = e as BusinessError;
       this.bootFailed = true;
       this.statusMessage = `Startup error: [${err.code}] ${err.message}`;
-      console.error(`[${TAG}] startBackend failed: ${JSON.stringify(e)}`);
+      hilog.error(DOMAIN, TAG, 'startBackend failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  /** Dump the launcher's boot log tail to hilog — the fastest way to see why
+   * exec failed when only hilog (no file pull) is available, e.g. cloud debug. */
+  logBootTail(dataDir: string): void {
+    try {
+      const text: string = fs.readTextSync(`${dataDir}/node-boot.log`);
+      const tail: string = text.length > 800
+        ? text.substring(text.length - 800)
+        : text;
+      hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'node-boot.log not readable: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  fileExists(path: string): boolean {
+    try {
+      const stat = fs.statSync(path);
+      return stat.isFile();
+    } catch {
+      return false;
     }
   }
 
