@@ -163,10 +163,23 @@ async function bundleBackend () {
 
 function writeNodeEntry () {
   const entry = `import { resolve } from 'node:path'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, appendFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const __d = fileURLToPath(new URL('.', import.meta.url))
+
+// Boot milestones are appended DIRECTLY to the launcher's node-boot.log —
+// file writes bypass stdout, so ArkWeb/chromium logging (which shares this
+// process's fd 1/2 with node) can never bury them. This is the primary
+// diagnostics channel on device.
+const __bootLog = resolve(process.env.ELECTERM_DATA_DIR || __d, 'node-boot.log')
+const boot = (msg) => {
+  try { appendFileSync(__bootLog, \`[backend] \${msg}\\n\`) } catch {}
+}
+process.on('uncaughtException', (e) => boot(\`uncaughtException: \${(e && e.stack) || e}\`))
+process.on('unhandledRejection', (e) => boot(\`unhandledRejection: \${(e && e.stack) || e}\`))
+process.on('exit', (code) => boot(\`node process exit, code=\${code}\`))
+boot('entry.js running')
 
 // The node binary is exec'd by the native launcher with cwd inherited from
 // the app process; electerm's runtime-constants.js reads "package.json" via

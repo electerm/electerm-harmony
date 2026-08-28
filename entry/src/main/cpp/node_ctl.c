@@ -62,15 +62,50 @@ static int g_pipeOut = -1; /* read end of the stdio→hilog pipe */
 
 static void logWrite(const char *fmt, ...);
 
+/* ArkWeb/chromium logs to the same process-level stdout/stderr we redirected
+ * for node — at thousands of lines it buries node's output in node-boot.log
+ * and in the on-screen overlay. Skip the known framework prefixes so what
+ * remains (node console output, asserts, stack traces) stays readable. */
+static int isFrameworkNoise(const char *s) {
+  static const char *pref[] = {
+    "[nweb",       "[render_",     "[browser_contents", "[arkweb_",
+    "[extension_u", "[res_",       "[frame_",           "[disk_cache",
+    "[sys_info_u", "[inputmethod", "[chrome",           "[content::",
+    "[media/",     "[gpu_",        "[vulkan",           "[webview",
+    "[crashpad",   "[mojo",        "[viz",              "[cc::",
+    "[net::",      "[base::",      "[ipc_",             "[tracing/",
+    "[skia",       "[snapshot",    "CefRender",         "PRPPreload",
+    "OnFirstScreenPaint", "[nwebspawn", "[sandbox", "[audio_",
+    NULL
+  };
+  for (int i = 0; pref[i]; i++) {
+    if (strncmp(s, pref[i], strlen(pref[i])) == 0) return 1;
+  }
+  static const char *frag[] = {
+    "web render log", "SubmitCompositorFrame", "LocalSurfaceId",
+    "OnScaleInited", "invokeVisualStateCallback", "OnPageVisible",
+    "OldPageNoLongerRendered", "SetUseSpecifiedDeadline", "cloud control",
+    "cloud_control", "safe browsing", "safe_browsing", "ua config",
+    "version.txt open failed", "SIGSYS needs to be reserved",
+    "Starting update check", "Finished update check", NULL
+  };
+  for (int i = 0; frag[i]; i++) {
+    if (strstr(s, frag[i])) return 1;
+  }
+  return 0;
+}
+
 /* Stream everything written to the app's stdout/stderr (fd 1/2 are dup2'd
  * onto a pipe) into the boot log AND hilog, line by line. hilog truncates
  * single messages at ~140 bytes, so chunked/tail dumps can't carry node's
- * abort text — a live line-sized reader can. */
+ * abort text — a live line-sized reader can. ArkWeb framework noise is
+ * filtered (see isFrameworkNoise). */
 static void *stdioReaderThread(void *p) {
   (void)p;
   char buf[2048];
   char line[480];
   size_t linelen = 0;
+  long suppressed = 0;
   for (;;) {
     ssize_t r = read(g_pipeOut, buf, sizeof(buf));
     if (r < 0 && errno == EINTR) continue;
@@ -80,7 +115,15 @@ static void *stdioReaderThread(void *p) {
       if (c == '\n' || linelen >= sizeof(line) - 1) {
         line[linelen] = '\0';
         if (linelen > 0) {
-          logWrite("[io] %.470s", line);
+          if (isFrameworkNoise(line)) {
+            suppressed++;
+            if (suppressed % 1000 == 0) {
+              logWrite("[io] … %ld framework log lines suppressed",
+                       suppressed);
+            }
+          } else {
+            logWrite("[io] %.470s", line);
+          }
         }
         linelen = 0;
       } else if (c != '\r' && c != '\0') {
@@ -236,22 +279,58 @@ static const char *syscallName(int sc) {
   }
 }
 
+/* Async-signal-safe log line for use INSIDE signal handlers. The handler
+ * must not call printf-family/vsnprintf/OH_LOG_Print: those take libc
+ * locks, and when the trapped thread already holds one (device-proven
+ * 2026-08-28: second seccomp trap fired mid-stdio on the node thread →
+ * strlen SEGV inside the handler's own formatting) the handler crashes.
+ * Compose with fixed strings + manual decimal only; write(2) is safe. */
+static void safeAppend(char *b, size_t cap, size_t *n, const char *s) {
+  while (*s && *n < cap) {
+    b[(*n)++] = *s++;
+  }
+}
+
+static void safeAppendInt(char *b, size_t cap, size_t *n, int v) {
+  char tmp[12];
+  int len = 0;
+  if (v < 0 && *n < cap) {
+    b[(*n)++] = '-';
+    v = -v;
+  }
+  do {
+    tmp[len++] = (char)('0' + (v % 10));
+    v /= 10;
+  } while (v > 0 && len < (int)sizeof(tmp));
+  while (len > 0 && *n < cap) {
+    b[(*n)++] = tmp[--len];
+  }
+}
+
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   (void)sig;
-  static int seen[32];
-  static int seenCount = 0;
+  static unsigned int seenBits[16]; /* 512 syscall numbers, logged once each */
   int sc = si->si_syscall;
-  int known = 0;
-  for (int i = 0; i < seenCount; i++) {
-    if (seen[i] == sc) {
-      known = 1;
-      break;
+  if (sc >= 0 && sc < 512) {
+    unsigned int bit = 1u << (sc & 31);
+    if (!(seenBits[sc >> 5] & bit)) {
+      seenBits[sc >> 5] |= bit;
+      char b[96];
+      size_t n = 0;
+      safeAppend(b, sizeof(b), &n, "[embed] SIGSYS: syscall ");
+      safeAppendInt(b, sizeof(b), &n, sc);
+      safeAppend(b, sizeof(b), &n, " (");
+      safeAppend(b, sizeof(b), &n, syscallName(sc));
+      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1\n");
+      if (g_logFd >= 0) {
+        ssize_t ign = write(g_logFd, b, n);
+        (void)ign;
+      }
+      /* fd 2 is the stdio pipe: the reader thread relays this line to
+       * hilog in NORMAL context (where printf locks are safe). */
+      ssize_t ign = write(2, b, n);
+      (void)ign;
     }
-  }
-  if (!known && seenCount < 32) {
-    seen[seenCount++] = sc;
-    logWrite("[embed] SIGSYS: syscall %d (%s) blocked by seccomp → ENOSYS",
-             sc, syscallName(sc));
   }
   ucontext_t *uc = (ucontext_t *)ctx;
   uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */

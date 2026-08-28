@@ -380,11 +380,8 @@ typedef int (*node_start_fn)(int argc, char *argv[]);
  * for at startup (membarrier, pkey_mprotect, perf_event_open, …) and the
  * default action kills the thread (device: signo 31, si_code SYS_SECCOMP).
  * V8/uv handle ENOSYS gracefully for all of those probes — they are
- * optional accelerations. So: catch SIGSYS, log which syscall was trapped,
- * skip the svc instruction, and return -ENOSYS from it. */
-
-static int g_sigsysSeen[32];
-static int g_sigsysSeenCount = 0;
+ * optional accelerations. So: catch SIGSYS, log which syscall was trapped
+ * (async-signal-safe), skip the svc instruction, and return -1 from it. */
 
 /* aarch64 (asm-generic) syscall numbers worth naming in the log — the
  * suspects an app seccomp policy actually fences off. */
@@ -420,20 +417,56 @@ static const char *syscallName(int sc) {
   }
 }
 
+/* Async-signal-safe log line for use INSIDE the signal handler — no
+ * printf-family/vsnprintf/logWrite: those take libc locks, and a trap that
+ * fires while the thread already holds one crashes the handler (see the
+ * node_ctl.c twin for the device-proven details). write(2) is safe. */
+static void safeAppend(char *b, size_t cap, size_t *n, const char *s) {
+  while (*s && *n < cap) {
+    b[(*n)++] = *s++;
+  }
+}
+
+static void safeAppendInt(char *b, size_t cap, size_t *n, int v) {
+  char tmp[12];
+  int len = 0;
+  if (v < 0 && *n < cap) {
+    b[(*n)++] = '-';
+    v = -v;
+  }
+  do {
+    tmp[len++] = (char)('0' + (v % 10));
+    v /= 10;
+  } while (v > 0 && len < (int)sizeof(tmp));
+  while (len > 0 && *n < cap) {
+    b[(*n)++] = tmp[--len];
+  }
+}
+
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   (void)sig;
+  static unsigned int seenBits[16]; /* 512 syscall numbers, logged once each */
   int sc = si->si_syscall; /* musl: #define si_syscall __si_fields.__sigsys.si_syscall */
-  int known = 0;
-  for (int i = 0; i < g_sigsysSeenCount; i++) {
-    if (g_sigsysSeen[i] == sc) {
-      known = 1;
-      break;
+  if (sc >= 0 && sc < 512) {
+    unsigned int bit = 1u << (sc & 31);
+    if (!(seenBits[sc >> 5] & bit)) {
+      seenBits[sc >> 5] |= bit;
+      char b[96];
+      size_t n = 0;
+      safeAppend(b, sizeof(b), &n, "[launcher] SIGSYS: syscall ");
+      safeAppendInt(b, sizeof(b), &n, sc);
+      safeAppend(b, sizeof(b), &n, " (");
+      safeAppend(b, sizeof(b), &n, syscallName(sc));
+      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1\n");
+      if (g_logFd >= 0) {
+        ssize_t ign = write(g_logFd, b, n);
+        (void)ign;
+      }
+      /* fd 2 is the boot log here (stdio was rebuilt onto it) — same file,
+       * shared offset, so this is belt-and-braces. */
+      ssize_t ign = write(2, b, n);
+      (void)ign;
     }
-  }
-  if (!known && g_sigsysSeenCount < 32) {
-    g_sigsysSeen[g_sigsysSeenCount++] = sc;
-    logWrite("[launcher] SIGSYS: syscall %d (%s) blocked by seccomp → ENOSYS",
-             sc, syscallName(sc));
   }
   ucontext_t *uc = (ucontext_t *)ctx;
   /* aarch64: the trapped instruction is the 4-byte `svc #0`; skip it and
