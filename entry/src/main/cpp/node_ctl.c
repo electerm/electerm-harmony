@@ -75,26 +75,53 @@ static void logWrite(const char *fmt, ...) {
                      "%{public}s", buf);
 }
 
-/* ── Crash markers — one boot-log line naming the killer signal, then the
- * default action (so system crash handling still runs). Without this an
- * abort() inside node just ends the log silently. ── */
-static void crashMarkerHandler(int sig) {
+/* ── Crash markers — name the killer signal in the boot log AND hilog (the
+ * process may die right after; hilog keeps the line). If the signal came
+ * from node's own thread, PARK that thread instead of dying: the app UI
+ * process survives, the ArkTS probe times out and the on-screen overlay
+ * shows the boot-log tail — instead of the app just closing. ── */
+static pid_t g_nodeTid = 0; /* tid of the node thread once launched */
+
+static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
+  (void)si;
+  (void)ctx;
   int saved = errno;
-  char b[64];
-  int n = snprintf(b, sizeof(b), "[embed] process dying: signal %d\n", sig);
-  if (n > 0 && g_logFd >= 0) {
-    ssize_t ign = write(g_logFd, b, (size_t)n);
-    (void)ign;
+  long tid = (long)syscall(__NR_gettid);
+  char b[128];
+  int n = snprintf(b, sizeof(b), "[embed] fatal: signal %d on tid %ld",
+                   sig, tid);
+  if (n > 0) {
+    if (g_logFd >= 0) {
+      ssize_t ign = write(g_logFd, b, (size_t)n);
+      ign = write(g_logFd, "\n", 1);
+      (void)ign;
+    }
+    (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.embed",
+                       "%{public}s", b);
   }
   errno = saved;
+  if (g_nodeTid > 0 && tid == (long)g_nodeTid) {
+    /* node's thread crashed — freeze it, keep the app alive. Never returns;
+     * if the crash corrupted a libc lock the UI may eventually freeze too,
+     * but the evidence is already on disk and in hilog. */
+    for (;;) {
+      pause();
+    }
+  }
   signal(sig, SIG_DFL);
   raise(sig);
 }
 
 static void installCrashMarkers(void) {
-  const int sigs[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGSYS};
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_sigaction = crashMarkerHandler;
+  sa.sa_flags = SA_SIGINFO;
+  const int sigs[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE};
   for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
-    signal(sigs[i], crashMarkerHandler);
+    if (sigaction(sigs[i], &sa, NULL) != 0) {
+      logWrite("[embed] sigaction(%d) failed: %s", sigs[i], strerror(errno));
+    }
   }
 }
 
@@ -237,6 +264,8 @@ static struct NodeThreadArgs g_nodeArgs;
  * NEVER _exit() here: this is the app's main process. */
 static void *nodeThreadMain(void *p) {
   struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
+  g_nodeTid = (pid_t)syscall(__NR_gettid);
+  logWrite("[embed] node thread tid=%ld, calling node::Start", (long)g_nodeTid);
   a->rc = a->start(2, a->argv);
   logWrite("[embed] node::Start returned %d (backend stopped)", a->rc);
   return NULL;
@@ -255,11 +284,13 @@ static const char *startEmbeddedNode(const char *params) {
   parseEntryParams(params, &cfg, extraEnv, &extraEnvCount);
 
   /* boot log — same file the child launcher uses, so the ArkTS overlay and
-   * hilog dump cover both paths. el2 junction fallback like the child. */
+   * hilog dump cover both paths. Truncated per attempt: the overlay only
+   * shows the last lines, and hilog keeps the history anyway. el2 junction
+   * fallback like the child. */
   if (cfg.dataDir[0]) {
     char logPath[MAX_LINE * 2];
     snprintf(logPath, sizeof(logPath), "%s/node-boot.log", cfg.dataDir);
-    g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    g_logFd = open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (g_logFd < 0) {
       snprintf(logPath, sizeof(logPath),
                "/data/storage/el2/base/files/electerm-data/node-boot.log");
