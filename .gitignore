@@ -2,6 +2,7 @@
 # Note: /build/ contains committed source (build scripts, vite config).
 # Only ignore HarmonyOS build outputs and electerm-web build artifacts.
 /build/outputs/
+/build/tools/
 /build/intermediates/
 /oh_modules/
 /entry/build/

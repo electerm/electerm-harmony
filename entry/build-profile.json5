@@ -17,6 +17,11 @@
             "enable": false
           }
         }
+      },
+      "nativeLib": {
+        "debugSymbol": {
+          "strip": false
+        }
       }
     }
   ],

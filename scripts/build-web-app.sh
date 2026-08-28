@@ -296,6 +296,73 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
+# --- Code-sign libnode.so -----------------------------------------------------
+# HarmonyOS XPM only lets signed code execute on device — execv of the
+# bundled node binary is refused with EACCES otherwise. binary-sign-tool
+# (official tool, openharmony/developtools_hapsigner dist) embeds a code
+# signature in the ELF. Cert mode reuses the same identity that signs the
+# APP (set KEYSTORE_PASSWORD/KEY_PASSWORD — CI does); otherwise self-sign.
+# NOTE: signs entry/libs/arm64-v8a/libnode.so IN PLACE — after a local
+# build restore the pristine copy with:
+#   git checkout -- entry/libs/arm64-v8a/libnode.so
+
+echo "==> Code-signing libnode.so ..."
+
+BINSIGN_JAR="${BINSIGN_JAR:-${PROJECT_ROOT}/build/tools/binary-sign-tool.jar}"
+BINSIGN_SHA256="d984474a09f6a1255ccde31f36e8a580be77aabd35b0ca2b3d94d1962ae3778d"
+if [ ! -f "${BINSIGN_JAR}" ]; then
+  mkdir -p "$(dirname "${BINSIGN_JAR}")"
+  echo "    Downloading binary-sign-tool.jar (developtools_hapsigner dist) ..."
+  curl -fsSL --retry 5 --retry-delay 3 -o "${BINSIGN_JAR}" \
+    "https://raw.githubusercontent.com/openharmony/developtools_hapsigner/master/dist/binary-sign-tool.jar"
+fi
+BINSIGN_ACTUAL=$(shasum -a 256 "${BINSIGN_JAR}" | cut -d' ' -f1)
+if [ "${BINSIGN_ACTUAL}" != "${BINSIGN_SHA256}" ]; then
+  echo "    ✗ binary-sign-tool.jar checksum mismatch: ${BINSIGN_ACTUAL}"
+  exit 1
+fi
+echo "    ✓ binary-sign-tool.jar ready"
+
+NODE_LIB="${PROJECT_ROOT}/entry/libs/arm64-v8a/libnode.so"
+NODE_LIB_SIGNED="$(mktemp -t libnode).signed"
+NODE_SIGNED=0
+
+if [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
+  echo "    Signing with the APP certificate ..."
+  if java -jar "${BINSIGN_JAR}" sign \
+      -keyAlias "${KEY_ALIAS}" \
+      -keyPwd "${KEY_PASSWORD}" \
+      -appCertFile "${CERT_PATH}" \
+      -inFile "${NODE_LIB}" \
+      -signAlg SHA256withECDSA \
+      -keystoreFile "${KEYSTORE_PATH}" \
+      -keystorePwd "${KEYSTORE_PASSWORD}" \
+      -outFile "${NODE_LIB_SIGNED}" >/dev/null 2>&1; then
+    mv -f "${NODE_LIB_SIGNED}" "${NODE_LIB}"
+    NODE_SIGNED=1
+    echo "    ✓ libnode.so cert-signed (APP identity)"
+  else
+    echo "    ⚠ cert-sign failed — falling back to self-sign"
+    rm -f "${NODE_LIB_SIGNED}"
+  fi
+fi
+
+if [ "${NODE_SIGNED}" = "0" ]; then
+  if java -jar "${BINSIGN_JAR}" sign \
+      -inFile "${NODE_LIB}" -outFile "${NODE_LIB_SIGNED}" \
+      -selfSign 1 >/dev/null 2>&1; then
+    mv -f "${NODE_LIB_SIGNED}" "${NODE_LIB}"
+    NODE_SIGNED=1
+    echo "    ✓ libnode.so self-signed"
+  else
+    echo "    ⚠ self-sign failed — shipping unsigned (device may refuse to exec)"
+  fi
+  rm -f "${NODE_LIB_SIGNED}"
+fi
+
+java -jar "${BINSIGN_JAR}" display-sign -inFile "${NODE_LIB}" 2>/dev/null \
+  | grep -E 'INFO - (verify|code signature)' | sed 's/^/    /' || true
+
 # --- Build the unsigned APP -------------------------------------------------
 
 echo "==> Building unsigned APP (${BUILD_MODE}) ..."
@@ -393,6 +460,18 @@ check_file() {
 }
 
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode.so" "libs/arm64-v8a/libnode.so"
+
+# The code signature must survive packaging (hvigor strip could drop the
+# non-alloc .codesign section — entry/build-profile.json5 disables strip).
+if [ "${NODE_SIGNED}" = "1" ]; then
+  if java -jar "${BINSIGN_JAR}" display-sign \
+      -inFile "${HAP_DIR}/libs/arm64-v8a/libnode.so" 2>/dev/null \
+      | grep -q "code signature is not found"; then
+    ERRORS="${ERRORS}\n  ✗ libnode.so code signature lost during packaging"
+  else
+    echo "  ✓ libnode.so code signature present in packed HAP"
+  fi
+fi
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode_launcher.so" "libs/arm64-v8a/libnode_launcher.so"
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode_ctl.so" "libs/arm64-v8a/libnode_ctl.so"
 check_file "${HAP_DIR}/resources/resfile/electerm/index.js" "resfile/electerm/index.js"
