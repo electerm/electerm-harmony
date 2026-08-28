@@ -205,17 +205,22 @@ static int fileExists(const char *path) {
 
 /* Find the system musl dynamic loader — first from /proc/self/maps (it
  * mapped us, so it is definitely present at that path), then well-known
- * locations. */
+ * locations. The path is the LAST whitespace-delimited token of the maps
+ * line — substring-searching for "ld-musl" and slicing from there drops
+ * the directory prefix (device round-trip taught us: "ld-musl-…so.1" alone
+ * execve's to ENOENT). */
 static int findLoader(char *out, size_t outSize) {
   FILE *f = fopen("/proc/self/maps", "r");
   if (f) {
     char line[MAX_LINE];
     while (fgets(line, sizeof(line), f)) {
-      char *hit = strstr(line, "ld-musl");
-      if (hit && strstr(hit, ".so")) {
-        char *nl = strchr(hit, '\n');
-        if (nl) *nl = '\0';
-        snprintf(out, outSize, "%s", hit);
+      char *nl = strchr(line, '\n');
+      if (nl) *nl = '\0';
+      char *sp = strrchr(line, ' ');
+      char *path = sp ? sp + 1 : line;
+      if (strstr(path, "ld-musl") && strstr(path, ".so") &&
+          access(path, F_OK) == 0) {
+        snprintf(out, outSize, "%s", path);
         fclose(f);
         return 0;
       }
@@ -353,6 +358,105 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
   pthread_join(th, &ret); /* nodeThreadMain _exits, so this returns on error only */
   (void)ret;
   logWrite("[launcher] node thread ended without _exit (rc=%d)", na.rc);
+  return -1;
+}
+
+/* ── Strategy 2: copy the signed node binary into the writable data dir,
+ * chmod +x there, and exec the copy ─────────────────────────────────────────
+ *
+ * Device log finding: the bundled libnode.so installs with mode 0644 (no
+ * execute bit) on a mount that is NOT noexec — execve then fails with
+ * EACCES for the plainest Unix reason, and the app cannot chmod a file it
+ * does not own inside el1/bundle. The el2 files dir IS app-owned: copy the
+ * (code-signed) binary there once, give it 0755, exec it. */
+
+static int copyFile(const char *src, const char *dst) {
+  int in = open(src, O_RDONLY);
+  if (in < 0) {
+    logWrite("[launcher] copy: open(%s) failed: %s", src, strerror(errno));
+    return -1;
+  }
+  int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+  if (out < 0) {
+    logWrite("[launcher] copy: open(%s) failed: %s", dst, strerror(errno));
+    close(in);
+    return -1;
+  }
+  char buf[262144];
+  ssize_t r;
+  while ((r = read(in, buf, sizeof(buf))) > 0) {
+    ssize_t off = 0;
+    while (off < r) {
+      ssize_t w = write(out, buf + off, (size_t)(r - off));
+      if (w < 0) {
+        logWrite("[launcher] copy: write failed: %s", strerror(errno));
+        close(in);
+        close(out);
+        return -1;
+      }
+      off += w;
+    }
+  }
+  int rc = 0;
+  if (r < 0) {
+    logWrite("[launcher] copy: read failed: %s", strerror(errno));
+    rc = -1;
+  }
+  close(in);
+  close(out);
+  return rc;
+}
+
+/* Returns only on failure (-1) — like every exec strategy, success never
+ * returns. */
+static int execFromDataDir(const char *nodePath, const char *dataDir,
+                           const char *script) {
+  char binDir[MAX_LINE * 2];
+  char dest[MAX_LINE * 2];
+  char tmp[MAX_LINE * 2];
+  snprintf(binDir, sizeof(binDir), "%s/bin", dataDir);
+  snprintf(dest, sizeof(dest), "%s/bin/node", dataDir);
+  snprintf(tmp, sizeof(tmp), "%s/bin/node.tmp", dataDir);
+
+  mkdir(binDir, 0755); /* ok if it exists */
+
+  /* copy only if missing or different size (96MB copy ~ a few seconds) */
+  struct stat ss, sd;
+  int needCopy = 1;
+  if (stat(dest, &sd) == 0 && stat(nodePath, &ss) == 0 &&
+      sd.st_size == ss.st_size) {
+    needCopy = 0;
+    logWrite("[launcher] el2 copy already present: %s", dest);
+  }
+  if (needCopy) {
+    logWrite("[launcher] copying %s → %s (%ld bytes)", nodePath, tmp,
+             (long)ss.st_size);
+    if (copyFile(nodePath, tmp) != 0) {
+      return -1;
+    }
+    if (rename(tmp, dest) != 0) {
+      logWrite("[launcher] rename failed: %s", strerror(errno));
+      unlink(tmp);
+      return -1;
+    }
+    logWrite("[launcher] copy complete");
+  }
+
+  if (chmod(dest, 0755) != 0) {
+    logWrite("[launcher] chmod(%s, 0755) failed: %s", dest, strerror(errno));
+  }
+  if (stat(dest, &sd) == 0) {
+    logWrite("[launcher] el2 node stat: mode=%o size=%ld", sd.st_mode,
+             (long)sd.st_size);
+    logMountFlagsFor(dest);
+  }
+  char arg0[MAX_LINE * 2];
+  snprintf(arg0, sizeof(arg0), "%s", dest);
+  char *const argv[] = {arg0, (char *)script, NULL};
+  logWrite("[launcher] execv(el2): %s %s", arg0, script);
+  execv(arg0, argv);
+  logWrite("[launcher] execv(el2) failed: errno=%d (%s)", errno,
+           strerror(errno));
   return -1;
 }
 
@@ -535,8 +639,19 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     _exit(0); /* unreachable — nodeThreadMain exits the process */
   }
 
+  /* 6b. STRATEGY 2 — the bundled file installs 0644 (no +x) and cannot be
+   *    chmod'd in el1; copy the signed binary into the app-owned el2 data
+   *    dir, chmod +x, exec the copy. */
+  if (cfg.dataDir[0]) {
+    if (execFromDataDir(nodePath, cfg.dataDir, cfg.script) == 0) {
+      _exit(0); /* unreachable */
+    }
+  }
+
   /* 7. exec ladder (kept for environments where exec is permitted). */
-  chmod(nodePath, 0755); /* no-op on the read-only bundle mount; logged above */
+  if (chmod(nodePath, 0755) != 0) {
+    logWrite("[launcher] chmod(bundle node) failed: %s", strerror(errno));
+  }
 
   char nodeArg0[MAX_LINE * 2];
   snprintf(nodeArg0, sizeof(nodeArg0), "%s", nodePath);
