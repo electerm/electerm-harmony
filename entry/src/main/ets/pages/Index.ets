@@ -236,7 +236,8 @@ struct Index {
   }
 
   /** Dump the last `n` chars of the boot log to hilog (periodic ring-buffer
-   * insurance — see waitForBackend). */
+   * insurance — see waitForBackend). hilog truncates a single message at
+   * ~140 bytes, so the tail goes out in 110-char chunks, each its own line. */
   logBootTailWindow(n: number): void {
     const text: string = this.readBootLog();
     if (!text) {
@@ -245,7 +246,14 @@ struct Index {
     const tail: string = text.length > n
       ? text.substring(text.length - n)
       : text;
-    hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
+    const parts: string[] = [];
+    for (let i = 0; i < tail.length; i += 110) {
+      parts.push(tail.substring(i, i + 110));
+    }
+    hilog.error(DOMAIN, TAG, 'node-boot.log tail ▼ %{public}d parts', parts.length.toString());
+    for (let i = 0; i < parts.length; i++) {
+      hilog.error(DOMAIN, TAG, 't%{public}d: %{public}s', i.toString(), parts[i]);
+    }
   }
 
   fileExists(path: string): boolean {

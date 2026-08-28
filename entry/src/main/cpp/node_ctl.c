@@ -57,6 +57,36 @@ typedef struct {
 static int g_logFd = -1;
 static char g_logPath[MAX_LINE * 2] = "";
 static int g_started = 0; /* startBackend may only run once per process */
+static int g_pipeOut = -1; /* read end of the stdio→hilog pipe */
+
+/* Stream everything written to the app's stdout/stderr (fd 1/2 are dup2'd
+ * onto a pipe) into the boot log AND hilog, line by line. hilog truncates
+ * single messages at ~140 bytes, so chunked/tail dumps can't carry node's
+ * abort text — a live line-sized reader can. */
+static void *stdioReaderThread(void *p) {
+  (void)p;
+  char buf[2048];
+  char line[480];
+  size_t linelen = 0;
+  for (;;) {
+    ssize_t r = read(g_pipeOut, buf, sizeof(buf));
+    if (r < 0 && errno == EINTR) continue;
+    if (r <= 0) break;
+    for (ssize_t i = 0; i < r; i++) {
+      char c = buf[i];
+      if (c == '\n' || linelen >= sizeof(line) - 1) {
+        line[linelen] = '\0';
+        if (linelen > 0) {
+          logWrite("[io] %.470s", line);
+        }
+        linelen = 0;
+      } else if (c != '\r' && c != '\0') {
+        line[linelen++] = c;
+      }
+    }
+  }
+  return NULL;
+}
 
 static void logWrite(const char *fmt, ...) {
   char buf[LOG_BUF_SIZE];
@@ -369,16 +399,36 @@ static const char *startEmbeddedNode(const char *params) {
     putenv(extraEnv[i]);
   }
 
-  /* fds 0/1/2 stay VALID (node's PlatformInit only fstats them) — but node's
-   * stderr must land in the boot log or abort()/assert messages vanish into
-   * the app's own stderr (/dev/null). Redirect 1/2 onto the log fd; the app
-   * runtime logs via hilog, not stdio, so nothing of value is lost. */
+  /* node's stderr must be observable or abort()/assert messages vanish:
+   * redirect fd 1/2 onto a pipe and stream it line-by-line to the boot log
+   * AND hilog (hilog truncates long messages, so file-only capture is not
+   * readable in cloud debug). The reader thread keeps draining so framework
+   * printf traffic (ArkWeb config spam) can never block a writer. */
   installCrashMarkers();
   installSigsysShim();
+  setenv("UV_USE_IO_URING", "0", 1); /* io_uring_setup is seccomp-trapped */
   if (g_logFd > 2) {
-    dup2(g_logFd, 1);
-    dup2(g_logFd, 2);
-    logWrite("[embed] stdout/stderr redirected to node-boot.log");
+    int fds[2];
+    if (pipe(fds) == 0) {
+      g_pipeOut = fds[0];
+      dup2(fds[1], 1);
+      dup2(fds[1], 2);
+      close(fds[1]);
+      pthread_t rd;
+      pthread_attr_t ra;
+      pthread_attr_init(&ra);
+      pthread_attr_setstacksize(&ra, 256 * 1024);
+      if (pthread_create(&rd, &ra, stdioReaderThread, NULL) == 0) {
+        pthread_detach(rd);
+        logWrite("[embed] stdio piped: reader streaming to boot log + hilog");
+      } else {
+        logWrite("[embed] reader thread failed: %s", strerror(errno));
+      }
+    } else {
+      dup2(g_logFd, 1);
+      dup2(g_logFd, 2);
+      logWrite("[embed] stdout/stderr redirected to node-boot.log");
+    }
   }
 
   if (cfg.dataDir[0] && chdir(cfg.dataDir) == 0) {
