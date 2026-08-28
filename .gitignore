@@ -55,3 +55,8 @@ entry/src/main/resources/rawfile
 /src/client/electerm-react/
 /data
 .workbuddy
+# --- Web (ArkWeb) build outputs ---
+# electerm-web app bundled into the entry module resfile by build/web/build.mjs
+/entry/src/main/resources/resfile/
+# node runtime download cache
+/.cache/

@@ -3,13 +3,25 @@
  * run functions in seprate process, avoid using electron.remote directly
  */
 
-const fs = require('./fs')
-const log = require('../common/log')
-const { Upgrade } = require('./download-upgrade')
-const { transferKeys } = require('./transfer')
-const fetch = require('./fetch')
-const sync = require('./sync')
-const {
+import { Sftp } from './session-sftp.js'
+import { Ftp } from './session-ftp.js'
+import { instSftpKeys } from '../common/constants.js'
+import {
+  sftp,
+  transfer,
+  onDestroySftp,
+  onDestroyTransfer
+} from './remote-common.js'
+import { Transfer, transferKeys } from './transfer.js'
+import { FtpTransfer } from './ftp-transfer.js'
+import { Upgrade } from './download-upgrade.js'
+import fs from './fs.js'
+import log from '../common/log.js'
+import fetch from './fetch.js'
+import sync from './sync.js'
+import { verify } from '../lib/jwt.js'
+import { runSync } from '../lib/run-sync.js'
+import {
   createTerm,
   testTerm,
   resize,
@@ -19,26 +31,157 @@ const {
   toggleTerminalLogTimestamp,
   setTerminalLogPath,
   startTerminalLogFile
-} = require('./terminal-api')
-const globalState = require('./global-state')
-const wsDec = require('./ws-dec')
+} from './terminal-api.js'
+import globalState from './global-state.js'
 
-const { tokenElecterm } = process.env
+const {
+  SERVER_USER
+} = process.env
 
-function verify (req) {
-  const { token: to } = req.query
-  if (to !== tokenElecterm) {
-    throw new Error('not valid request')
+/**
+ * add ws.s function
+ * @param {*} ws
+ */
+const wsDec = (ws) => {
+  ws.s = msg => {
+    try {
+      ws.send(JSON.stringify(msg))
+    } catch (e) {
+      log.error('ws send error')
+      log.error(e)
+    }
   }
-  if (process.env.requireAuth === 'yes' && !globalState.authed) {
-    throw new Error('auth required')
+  ws.on('error', log.error)
+  ws.once = (callack, id) => {
+    const func = (evt) => {
+      const arg = JSON.parse(evt.data)
+      if (id === arg.id) {
+        callack(arg)
+        ws.removeEventListener('message', func)
+      }
+    }
+    ws.addEventListener('message', func)
+  }
+  ws._socket.setKeepAlive(true, 30 * 1000)
+}
+
+export function verifyWs (req) {
+  const { token } = req.query
+  const data = verify(token)
+  if (SERVER_USER !== data.id) {
+    throw new Error('not valid request')
   }
 }
 
-const initWs = function (app) {
+export function initWs (app) {
+  // sftp function
+  app.ws('/sftp/:id', (ws, req) => {
+    verifyWs(req)
+    wsDec(ws)
+    const { id } = req.params
+    ws.on('close', () => {
+      onDestroySftp(id)
+    })
+    ws.on('message', (message) => {
+      const msg = JSON.parse(message)
+      const { action } = msg
+
+      if (action === 'sftp-new') {
+        const { id, terminalId, type } = msg
+        const Cls = type === 'ftp' ? Ftp : Sftp
+        sftp(id, new Cls({
+          uid: id,
+          terminalId,
+          type
+        }))
+      } else if (action === 'sftp-func') {
+        const { id, args, func, uid } = msg
+        const inst = sftp(id)
+        if (inst) {
+          if (!instSftpKeys.includes(func) || typeof inst[func] !== 'function') {
+            ws.s({
+              id: uid,
+              error: {
+                message: 'invalid sftp function: ' + func,
+                stack: ''
+              }
+            })
+            return
+          }
+          inst[func](...args)
+            .then(data => {
+              ws.s({
+                id: uid,
+                data
+              })
+            })
+            .catch(err => {
+              ws.s({
+                id: uid,
+                error: {
+                  message: err.message,
+                  stack: err.stack
+                }
+              })
+            })
+        }
+      } else if (action === 'sftp-destroy') {
+        const { id } = msg
+        ws.close()
+        onDestroySftp(id)
+      }
+    })
+    // end
+  })
+
+  // transfer function
+  app.ws('/transfer/:id', (ws, req) => {
+    verifyWs(req)
+    wsDec(ws)
+    const { id } = req.params
+    const { sftpId } = req.query
+    ws.on('close', () => {
+      onDestroyTransfer(id, sftpId)
+    })
+    ws.on('message', (message) => {
+      const msg = JSON.parse(message)
+      const { action } = msg
+
+      if (action === 'transfer-new') {
+        const { sftpId, id, isFtp } = msg
+        const session = sftp(sftpId)
+        const encode = session.initOptions?.encode || 'utf8'
+        const opts = Object.assign({}, msg, {
+          sftp: session.sftp,
+          conn: session.client,
+          ftpSession: isFtp ? session : null,
+          sftpId,
+          ws,
+          encode
+        })
+        const Cls = isFtp ? FtpTransfer : Transfer
+        transfer(id, sftpId, new Cls(opts))
+      } else if (action === 'transfer-func') {
+        const { id, func, args, sftpId } = msg
+        if (func === 'destroy') {
+          return onDestroyTransfer(id, sftpId)
+        }
+        if (!transferKeys.includes(func)) {
+          return
+        }
+        const tr = transfer(id, sftpId)
+        if (!tr || typeof tr[func] !== 'function') {
+          return
+        }
+        tr[func](...args)
+      }
+    })
+    // end
+  })
+
   // upgrade
   app.ws('/upgrade/:id', (ws, req) => {
-    verify(req)
+    verifyWs(req)
     wsDec(ws)
     const { id } = req.params
     ws.on('close', () => {
@@ -48,40 +191,46 @@ const initWs = function (app) {
       }
     })
     ws.on('message', async (message) => {
-      const msg = JSON.parse(message)
-      const { action } = msg
+      try {
+        const msg = JSON.parse(message)
+        const { action } = msg
 
-      if (action === 'upgrade-new') {
-        const { id } = msg
-        const opts = Object.assign({}, msg, {
-          ws
-        })
-        const inst = new Upgrade(opts)
-        globalState.setUpgradeInst(id, inst)
-        await inst.init()
-      } else if (action === 'upgrade-func') {
-        const { id, func, args } = msg
-        const inst = globalState.getUpgradeInst(id)
-        if (!inst) {
-          return
+        if (action === 'upgrade-new') {
+          const { id } = msg
+          const opts = Object.assign({}, msg, {
+            ws
+          })
+          const inst = new Upgrade(opts)
+          globalState.setUpgradeInst(id, inst)
+          await inst.init()
+        } else if (action === 'upgrade-func') {
+          const { id, func, args } = msg
+          const inst = globalState.getUpgradeInst(id)
+          if (!inst) {
+            return
+          }
+          if (!transferKeys.includes(func) || typeof inst[func] !== 'function') {
+            log.error('invalid upgrade function:', func)
+            return
+          }
+          inst[func](...args)
         }
-        if (!transferKeys.includes(func) || typeof inst[func] !== 'function') {
-          log.error('invalid upgrade function:', func)
-          return
-        }
-        inst[func](...args)
+      } catch (err) {
+        log.error('upgrade ws error', err)
       }
     })
+    // end
   })
 
   // common functions
   app.ws('/common/s', (ws, req) => {
-    verify(req)
+    verifyWs(req)
     wsDec(ws)
+    globalState.setCommonWs(ws)
     ws.on('message', async (message) => {
       try {
         const msg = JSON.parse(message)
-        const { action } = msg
+        const { action, body = {}, id } = msg
         if (action === 'fetch') {
           fetch(ws, msg)
         } else if (action === 'sync') {
@@ -89,6 +238,15 @@ const initWs = function (app) {
         } else if (action === 'fs') {
           fs(ws, msg)
         } else if (action === 'create-terminal') {
+          if (body.termType === 'ftp') {
+            ws.s({
+              id,
+              data: {
+                pid: 'ok'
+              }
+            })
+            return
+          }
           createTerm(ws, msg)
         } else if (action === 'test-terminal') {
           testTerm(ws, msg)
@@ -106,14 +264,13 @@ const initWs = function (app) {
           runCmd(ws, msg)
         } else if (action === 'exec-cmd') {
           execCmd(ws, msg)
+        } if (action === 'runSync') {
+          runSync(ws, msg)
         }
-      } catch (err) {
-        log.error('common ws error', err)
+      } catch (e) {
+        log.error(e)
       }
     })
   })
   // end
 }
-
-exports.verifyWs = verify
-exports.initWs = initWs

@@ -2,11 +2,12 @@
  * node fetch in server side
  */
 
-const { createProxyAgent } = require('../lib/proxy-agent')
+import rp from 'axios'
+import { createProxyAgent } from '../lib/proxy-agent.js'
+
+rp.defaults.proxy = false
 
 function fetch (options) {
-  const rp = require('axios')
-  rp.defaults.proxy = false
   return rp(options)
     .then((res) => {
       return res.data
@@ -18,12 +19,14 @@ function fetch (options) {
     })
 }
 
-async function wsFetchHandler (ws, msg) {
+export default async function wsFetchHandler (ws, msg) {
   const { id, options, proxy } = msg
   const agent = createProxyAgent(proxy)
   if (agent) {
     options.httpAgent = agent
     options.httpsAgent = agent
+  } else {
+    options.proxy = false
   }
   const res = await fetch(options)
   if (res.error) {
@@ -39,5 +42,3 @@ async function wsFetchHandler (ws, msg) {
     })
   }
 }
-
-module.exports = wsFetchHandler

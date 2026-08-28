@@ -1,0 +1,6 @@
+{
+  "name": "libnode_ctl",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Node.js child process control (kill by pid)"
+}

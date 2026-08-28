@@ -3,11 +3,11 @@
  * Supports XMODEM-CRC (128-byte) and XMODEM-1K (1024-byte) modes
  */
 
-const fs = require('fs')
-const path = require('path')
-const log = require('../common/log')
-const generate = require('../common/uid')
-const sanitizeFilename = require('../common/sanitize-filename')
+import fs from 'fs'
+import path from 'path'
+import log from '../common/log.js'
+import generate from '../common/uid.js'
+import sanitizeFilename from '../common/sanitize-filename.js'
 
 // XMODEM control characters
 const SOH = 0x01 // Start of 128-byte block
@@ -670,7 +670,7 @@ class XmodemSession {
           this.endSession()
           return
         }
-        // Re-read and resend the same block (keep sendBlock unchanged – same block#)
+        // Re-read and resend the same block (keep sendBlock unchanged – same block# must be retransmitted)
         this.sentBytes -= (this.use1K ? PACKET_SIZE_1K : PACKET_SIZE_128)
         if (this.sentBytes < 0) this.sentBytes = 0
         this.sendNextPacket()
@@ -932,7 +932,7 @@ class XmodemManager {
 
 const xmodemManager = new XmodemManager()
 
-module.exports = {
+export {
   XmodemSession,
   XmodemManager,
   xmodemManager,

@@ -1,4 +1,4 @@
-const { z } = require('../../lib/zod')
+import { z } from '../../lib/zod.js'
 
 function zodToJsonSchema (zodSchema) {
   if (!zodSchema) {
@@ -316,4 +316,4 @@ class StreamableHTTPServerTransport {
   }
 }
 
-module.exports = { StreamableHTTPServerTransport }
+export { StreamableHTTPServerTransport }

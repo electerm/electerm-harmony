@@ -1,14 +1,8 @@
 /**
  * read ssh config
  */
+import { loadAndConvert } from 'ssh-config-loader'
 
-// const { app } = require('electron')
-// const home = app.getPath('home')
-// const { resolve } = require('path')
-
-function loadSshConfig () {
-  const { loadAndConvert } = require('ssh-config-loader')
+export async function loadSshConfig () {
   return loadAndConvert()
 }
-
-module.exports = loadSshConfig

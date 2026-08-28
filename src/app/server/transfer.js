@@ -2,14 +2,15 @@
  * transfer class
  */
 
-const fs = require('original-fs')
-const tar = require('tar')
-const _ = require('../lib/lodash.js')
-const log = require('../common/log')
+import fs from 'fs'
+import _ from 'lodash'
+import log from '../common/log.js'
+import * as tar from 'tar'
+import { Transfer as Ssh2ScpTransfer } from 'ssh2-scp/transfer'
+import { FolderTransfer } from 'ssh2-scp/folder-transfer'
+import iconv from 'iconv-lite'
 
-const { FolderTransfer } = require('ssh2-scp/folder-transfer')
-
-class Transfer {
+export class Transfer {
   constructor ({
     remotePath,
     localPath,
@@ -32,20 +33,20 @@ class Transfer {
     this.sftpId = sftpId
     this.srcPath = isd ? remotePath : localPath
     this.dstPath = !isd ? remotePath : localPath
-    this.conn = conn
     this.pausing = false
     this.hadError = false
     this.isUpload = isd
-    this.isDirectory = isDirectory
     this.options = options
+    this.conn = conn
+    this.isDirectory = isDirectory
     this.concurrency = options.concurrency || 64
     this.chunkSize = options.chunkSize || 32768
     this.mode = options.mode
     this.encode = encode
-    this.onData = _.throttle((data) => {
+    this.onData = _.throttle((count) => {
       ws.s({
         id: 'transfer:data:' + id,
-        data
+        data: count
       })
     }, 3000)
     this.timers = {}
@@ -121,7 +122,7 @@ class Transfer {
         }
       }
       if (this.encode !== 'utf8') {
-        folderOpts.iconv = require('iconv-lite')
+        folderOpts.iconv = iconv
         folderOpts.encoding = this.encode
       }
       this.scpTransfer = new FolderTransfer(this.conn, tar, folderOpts)
@@ -143,7 +144,7 @@ class Transfer {
       const sshFs = type === 'download' ? this.src : this.dst
       const remotePath = type === 'download' ? this.srcPath : this.dstPath
       const localPath = type === 'download' ? this.dstPath : this.srcPath
-      const { Transfer: Ssh2ScpTransfer } = require('ssh2-scp/transfer')
+
       this.scpTransfer = new Ssh2ScpTransfer(sshFs, {
         type,
         remotePath,
@@ -467,11 +468,8 @@ class Transfer {
   // end
 }
 
-module.exports = {
-  Transfer,
-  transferKeys: [
-    'pause',
-    'resume',
-    'destroy'
-  ]
-}
+export const transferKeys = [
+  'pause',
+  'resume',
+  'destroy'
+]

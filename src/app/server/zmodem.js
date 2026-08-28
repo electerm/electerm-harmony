@@ -22,14 +22,14 @@
  *   failure, which is what restores normal terminal display.
  */
 
-const fs = require('fs')
-const path = require('path')
-const log = require('../common/log')
-const generate = require('../common/uid')
-const sanitizeFilename = require('../common/sanitize-filename')
+import fs from 'fs'
+import path from 'path'
+import log from '../common/log.js'
+import generate from '../common/uid.js'
+import sanitizeFilename from '../common/sanitize-filename.js'
 
 // Import zmodem2 (pure JS, no WASM)
-const { Sender, Receiver, SenderEvent, ReceiverEvent } = require('zmodem2')
+import { Sender, Receiver, SenderEvent, ReceiverEvent } from 'zmodem2'
 
 // Zmodem state constants
 const ZMODEM_STATE = {
@@ -1248,7 +1248,7 @@ class ZmodemManager {
 // Export singleton manager
 const zmodemManager = new ZmodemManager()
 
-module.exports = {
+export {
   ZmodemSession,
   ZmodemManager,
   zmodemManager,

@@ -1,7 +1,7 @@
-const os = require('os')
-// const path = require('path')
-const express = require('express')
-const uid = require('../common/uid')
+import os from 'os'
+// import path from 'path'
+import express from 'express'
+import uid from '../common/uid.js'
 
 const widgetInfo = {
   name: 'Static File Server',
@@ -188,7 +188,7 @@ function widgetRun (instanceConfig) {
   }
 }
 
-module.exports = {
+export {
   widgetInfo,
   widgetRun
 }

@@ -1,4 +1,4 @@
-exports.buildProxyString = function (obj) {
+export function buildProxyString (obj) {
   if (!obj.proxyIp) {
     return ''
   }

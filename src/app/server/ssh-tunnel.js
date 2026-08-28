@@ -1,6 +1,8 @@
-const log = require('../common/log')
+import log from '../common/log.js'
+import * as socks from 'socksv5-server'
+import net from 'net'
 
-function forwardRemoteToLocal ({
+export function forwardRemoteToLocal ({
   conn,
   sshTunnelRemotePort,
   sshTunnelLocalPort,
@@ -30,7 +32,7 @@ function forwardRemoteToLocal ({
 
       // Connect the local machine source stream to the local port
       // Create a NEW server connection for each forwarded connection
-      const server = require('net').connect(sshTunnelLocalPort, sshTunnelLocalHost)
+      const server = net.connect(sshTunnelLocalPort, sshTunnelLocalHost)
 
       // CRITICAL: Add error handling IMMEDIATELY before any async operations
       // This prevents unhandled errors from crashing the SSH session
@@ -75,7 +77,7 @@ function forwardRemoteToLocal ({
   })
 }
 
-function forwardLocalToRemote ({
+export function forwardLocalToRemote ({
   conn,
   sshTunnelRemotePort,
   sshTunnelLocalPort,
@@ -84,7 +86,7 @@ function forwardLocalToRemote ({
 }) {
   return new Promise((resolve, reject) => {
     const activeSockets = new Set()
-    const localServer = require('net').createServer((socket) => {
+    const localServer = net.createServer((socket) => {
       // ⬇️ 2. Add new sockets to the set and remove them when they close
       activeSockets.add(socket)
       socket.on('close', () => {
@@ -139,12 +141,11 @@ function forwardLocalToRemote ({
   })
 }
 
-function dynamicForward ({
+export function dynamicForward ({
   conn,
   sshTunnelLocalPort,
   sshTunnelLocalHost = '127.0.0.1'
 }) {
-  const socks = require('socksv5-server')
   return new Promise((resolve, reject) => {
     const dproxyServer = socks.createServer((info, accept, deny) => {
       conn.forwardOut(
@@ -201,7 +202,3 @@ function dynamicForward ({
     })
   })
 }
-
-exports.dynamicForward = dynamicForward
-exports.forwardLocalToRemote = forwardLocalToRemote
-exports.forwardRemoteToLocal = forwardRemoteToLocal

@@ -1,13 +1,18 @@
 /**
  * db loader
- * Uses nedb (pure JS, no native dependencies).
  */
 
-const { appPath, defaultUserName } = require('../common/app-props')
-const { safeEncrypt, safeDecrypt } = require('./safe-storage')
+let dbModule = null
 
-const encOpts = { enc: safeEncrypt, dec: safeDecrypt }
+async function getDbModule () {
+  if (!dbModule) {
+    // await performMigration()
+    dbModule = await import('./sqlite.js')
+  }
+  return dbModule
+}
 
-const { createDb } = require('./nedb')
-const db = createDb(appPath, defaultUserName, encOpts)
-module.exports = db
+export async function dbAction (...args) {
+  const db = await getDbModule()
+  return db.dbAction ? db.dbAction(...args) : db.default.dbAction(...args)
+}

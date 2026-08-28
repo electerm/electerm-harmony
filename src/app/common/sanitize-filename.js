@@ -34,7 +34,7 @@ const MAX_FILENAME_LENGTH = 255
 
 const REPLACEMENT_CHAR = '_'
 
-module.exports = function sanitizeFilename (name) {
+export default function sanitizeFilename (name) {
   if (!name || typeof name !== 'string') {
     return 'unnamed'
   }

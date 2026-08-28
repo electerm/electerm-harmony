@@ -7,12 +7,13 @@
  * Used by both VNC and RDP sessions.
  */
 
-const uid = require('../common/uid')
-const { session } = require('./session-ssh')
+import uid from '../common/uid.js'
+import { terminalSsh } from './session-ssh.js'
+import findFreePort from 'find-free-port'
 
 function getPort (fromPort = 12023) {
   return new Promise((resolve, reject) => {
-    require('find-free-port')(fromPort, '127.0.0.1', function (err, freePort) {
+    findFreePort(fromPort, '127.0.0.1', function (err, freePort) {
       if (err) {
         reject(err)
       } else {
@@ -26,11 +27,11 @@ function getPort (fromPort = 12023) {
  * Set up an SSH hop tunnel if connectionHoppings are configured.
  *
  * @param {object} initOptions - Session init options
- * @param {Array}  initOptions.connectionHoppings - Hop server definitions (mutated: last item is popped)
+ * @param {Array} initOptions.connectionHoppings - Hop server definitions (mutated: last item is popped)
  * @param {string} [initOptions.proxy] - Existing proxy URL to chain through
  * @returns {Promise<{ proxyUrl: string|null, ssh: object|null }>}
  *   proxyUrl - SOCKS5 URL to use for the final connection, or original proxy, or null
- *   ssh      - SSH session that must be killed on cleanup, or null
+ *   ssh - SSH session that must be killed on cleanup, or null
  */
 async function createHopProxy (initOptions) {
   const {
@@ -68,8 +69,8 @@ async function createHopProxy (initOptions) {
     ]
   }
 
-  const ssh = await session(initOpts)
+  const ssh = await terminalSsh(initOpts)
   return { proxyUrl: `socks5://127.0.0.1:${fp}`, ssh }
 }
 
-module.exports = { createHopProxy, getPort }
+export { createHopProxy, getPort }

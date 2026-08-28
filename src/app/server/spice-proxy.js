@@ -1,6 +1,6 @@
-const net = require('net')
-const log = require('../common/log')
-const proxySock = require('./socks')
+import net from 'net'
+import log from '../common/log.js'
+import proxySock from './socks.js'
 
 const LOG_PREFIX = '[SPICE-PROXY]'
 
@@ -211,7 +211,7 @@ function setupRelay (ws, tcpSocket, options = {}) {
   })
 }
 
-module.exports = {
+export {
   handleConnection,
   createTcpConnection,
   setupRelay

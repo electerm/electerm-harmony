@@ -2,9 +2,10 @@
  * handle sync with WebDAV server
  */
 
-const log = require('../common/log')
-const rp = require('axios')
-const { createProxyAgent } = require('../lib/proxy-agent')
+import log from '../common/log.js'
+import rp from 'axios'
+import https from 'https'
+import { createProxyAgent } from '../lib/proxy-agent.js'
 
 rp.defaults.proxy = false
 
@@ -12,26 +13,19 @@ rp.defaults.proxy = false
  * Create an axios client for WebDAV operations
  */
 function createClient (serverUrl, username, password, proxy, skipVerify = false) {
-  const https = require('https')
-
   const proxyAgent = createProxyAgent(proxy)
   let conf
   if (proxyAgent) {
     if (skipVerify) {
-      // apply skipVerify through the proxy
-      const Cls = proxy.startsWith('http')
-        ? require('https-proxy-agent').HttpsProxyAgent
-        : require('socks-proxy-agent').SocksProxyAgent
-      const agent = new Cls(proxy, { keepAlive: true, rejectUnauthorized: false })
+      // Apply skipVerify through the proxy tunnel as well.
+      const agent = createProxyAgent(proxy, { rejectUnauthorized: false })
       conf = { httpAgent: agent, httpsAgent: agent }
     } else {
       conf = { httpAgent: proxyAgent, httpsAgent: proxyAgent }
     }
   } else if (skipVerify) {
-    conf = {
-      httpAgent: new https.Agent({ rejectUnauthorized: false }),
-      httpsAgent: new https.Agent({ rejectUnauthorized: false })
-    }
+    const agent = new https.Agent({ rejectUnauthorized: false })
+    conf = { httpAgent: agent, httpsAgent: agent }
   } else {
     conf = { proxy: false }
   }
@@ -229,7 +223,7 @@ async function download (serverUrl, username, password, proxy, skipVerify) {
 async function doWebdavSync (func, args, token, proxy) {
   log.info(`[WebDAV] doWebdavSync: func=${func}`)
 
-  // token format: serverUrl####username####password
+  // token format: serverUrl####username####password####skipVerify
   const parts = token ? token.split('####') : []
   const serverUrl = parts[0] || ''
   const username = parts[1] || ''
@@ -265,4 +259,4 @@ async function doWebdavSync (func, args, token, proxy) {
   }
 }
 
-module.exports = doWebdavSync
+export { doWebdavSync }

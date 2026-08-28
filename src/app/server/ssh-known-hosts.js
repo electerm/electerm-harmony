@@ -1,8 +1,9 @@
-const crypto = require('crypto')
-const fs = require('fs')
-const os = require('os')
-const { dirname, join } = require('path')
-const { parseKey } = require('@electerm/ssh2/lib/protocol/keyParser.js')
+import crypto from 'crypto'
+import fs from 'fs'
+import os from 'os'
+import { dirname, join } from 'path'
+import keyParserModule from '@electerm/ssh2/lib/protocol/keyParser.js'
+const { parseKey } = keyParserModule
 
 function normalizeHost (host = '') {
   if (typeof host !== 'string') {
@@ -15,9 +16,6 @@ function normalizeHost (host = '') {
 }
 
 function getKnownHostsPath () {
-  // os.homedir() is overridden by bootstrap.js to return the app's
-  // sandbox data directory (DATA_PATH), so this resolves to
-  // <DATA_PATH>/.ssh/known_hosts.
   return join(os.homedir(), '.ssh', 'known_hosts')
 }
 
@@ -435,7 +433,7 @@ function createHostVerifier (options) {
   }
 }
 
-module.exports = {
+export {
   appendKnownHost,
   buildHostMismatchError,
   buildHostMismatchPrompt,

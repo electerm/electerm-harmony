@@ -1,5 +1,9 @@
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import { SocksProxyAgent } from 'socks-proxy-agent'
+import { getSystemCAsList } from './system-ca.js'
+
 // common proxy agent creator
-exports.createProxyAgent = (url = '') => {
+export const createProxyAgent = (url = '', options = {}) => {
   if (
     typeof url !== 'string' ||
     (!url.startsWith('http') && !url.startsWith('socks'))
@@ -7,9 +11,13 @@ exports.createProxyAgent = (url = '') => {
     return
   }
   const Cls = url.startsWith('http')
-    ? require('https-proxy-agent').HttpsProxyAgent
-    : require('socks-proxy-agent').SocksProxyAgent
+    ? HttpsProxyAgent
+    : SocksProxyAgent
+  const certs = getSystemCAsList()
+  const caOptions = certs.length ? { ca: certs } : {}
   return new Cls(url, {
-    keepAlive: true
+    keepAlive: true,
+    ...caOptions,
+    ...options
   })
 }

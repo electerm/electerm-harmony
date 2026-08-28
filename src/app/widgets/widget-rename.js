@@ -1,5 +1,26 @@
-const fs = require('fs').promises
-const path = require('path')
+import fs from 'fs'
+import path from 'path'
+
+const fsPromises = fs.promises
+const pathSeparatorPattern = /[\\/]/
+function resolveRenamePath (dir, newName) {
+  if (typeof newName !== 'string' || !newName.trim() || newName === '.' || newName === '..') {
+    throw new Error('Template produced an invalid file name')
+  }
+
+  if (pathSeparatorPattern.test(newName)) {
+    throw new Error('Template must not include path separators')
+  }
+
+  const newPath = path.resolve(dir, newName)
+  const relativePath = path.relative(dir, newPath)
+
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error('Template must keep files within the source directory')
+  }
+
+  return newPath
+}
 
 // Define defaults in one place
 const DEFAULTS = {
@@ -10,7 +31,6 @@ const DEFAULTS = {
   startNumber: 1,
   preserveCase: true
 }
-const pathSeparatorPattern = /[\\/]/
 
 const widgetInfo = {
   name: 'File Renamer',
@@ -60,7 +80,7 @@ const widgetInfo = {
 }
 
 async function getFiles (dir, fileTypes, includeSubfolders) {
-  const files = await fs.readdir(dir, { withFileTypes: true })
+  const files = await fsPromises.readdir(dir, { withFileTypes: true })
   let results = []
   for (const file of files) {
     const fullPath = path.join(dir, file.name)
@@ -77,7 +97,7 @@ async function getFiles (dir, fileTypes, includeSubfolders) {
 }
 
 async function processTemplate (template, filePath, index, startNumber, preserveCase) {
-  const stats = await fs.stat(filePath)
+  const stats = await fsPromises.stat(filePath)
   const parsedPath = path.parse(filePath)
   const date = new Date(stats.birthtime)
   const replacements = {
@@ -99,25 +119,6 @@ async function processTemplate (template, filePath, index, startNumber, preserve
     result = result.replace(new RegExp(`{${tag}(?::([^}]+))?}`, 'g'), (match, param) => func(param))
   }
   return result
-}
-
-function resolveRenamePath (dir, newName) {
-  if (typeof newName !== 'string' || !newName.trim() || newName === '.' || newName === '..') {
-    throw new Error('Template produced an invalid file name')
-  }
-
-  if (pathSeparatorPattern.test(newName)) {
-    throw new Error('Template must not include path separators')
-  }
-
-  const newPath = path.resolve(dir, newName)
-  const relativePath = path.relative(dir, newPath)
-
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    throw new Error('Template must keep files within the source directory')
-  }
-
-  return newPath
 }
 
 async function widgetRun (params = {}) {
@@ -151,7 +152,7 @@ async function widgetRun (params = {}) {
       const dir = path.dirname(filePath)
       const newName = await processTemplate(template, filePath, i, startNumber, preserveCase)
       const newPath = resolveRenamePath(dir, newName)
-      await fs.rename(filePath, newPath)
+      await fsPromises.rename(filePath, newPath)
 
       results.push({
         oldPath: filePath,
@@ -175,7 +176,7 @@ async function widgetRun (params = {}) {
   }
 }
 
-module.exports = {
+export {
   widgetInfo,
   widgetRun
 }

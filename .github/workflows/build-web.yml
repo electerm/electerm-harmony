@@ -1,0 +1,279 @@
+name: Build HarmonyOS Web APP (ArkWeb + on-device Node.js)
+
+# Web variant of the app — no electron-harmony runtime:
+#   ArkWeb (Web component) + hqzing/ohos-node running the electerm-web
+#   backend as a native child process (childProcessManager.startNativeChildProcess).
+#
+# Triggers on dev2 pushes. Uploads the signed .app as an artifact.
+
+on:
+  push:
+    branches:
+      - dev2
+  workflow_dispatch:
+
+# Cancel previous runs on the same branch
+concurrency:
+  group: build-web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # hqzing/ohos-node release used as the on-device Node.js runtime.
+  # Keep in sync with the default in scripts/prepare-node.sh.
+  NODE_VERSION: '24.19.0'
+
+jobs:
+  build:
+    # HarmonyOS Command Line Tools are x64-only.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout electerm-harmony
+        uses: actions/checkout@v4
+
+      # ── Setup Node.js (for building the web app) ─────────────────────────
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # ── Install system deps ───────────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            unzip \
+            jq \
+            xz-utils \
+            python3 \
+            make \
+            g++
+
+      # ── Setup JDK (for hap-sign-tool.jar) ────────────────────────────────
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # ── Step 1: Cache / download HarmonyOS Command Line Tools (~2 GB) ────
+      - name: Compute Command Line Tools cache key
+        id: cmdkey
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
+            echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
+            exit 1
+          fi
+          HASH="$(echo -n "${OHOS_CMDLINE_TOOLS_URL}" | md5sum | cut -d' ' -f1)"
+          echo "key=cmdline-tools-${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore HarmonyOS Command Line Tools cache
+        id: cmdline_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Download & extract HarmonyOS Command Line Tools
+        if: steps.cmdline_cache.outputs.cache-hit != 'true'
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cache
+          ZIP=".cache/commandline-tools.zip"
+          echo "Cache miss — downloading HarmonyOS Command Line Tools (~2 GB) ..."
+          curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+          echo "Verifying archive integrity ..."
+          if ! unzip -t "$ZIP" >/dev/null 2>&1; then
+            echo "::error::Downloaded archive is corrupt; retrying once without resume."
+            curl -L --retry 10 --retry-all-errors --retry-delay 5 \
+              -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+              -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+            unzip -t "$ZIP" >/dev/null 2>&1 || { echo "::error::Still corrupt after retry"; exit 1; }
+          fi
+          rm -rf .cache/commandline-tools
+          mkdir -p .cache/commandline-tools
+          unzip -o -q "$ZIP" -d .cache/commandline-tools
+          rm -f "$ZIP"
+          echo "Downloaded and extracted HarmonyOS Command Line Tools"
+
+      - name: Save HarmonyOS Command Line Tools cache
+        if: steps.cmdline_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Configure Command Line Tools environment
+        run: |
+          set -euo pipefail
+          COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
+          if [ ! -d "$COMMANDLINE_TOOLS" ]; then
+            COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
+          fi
+          # Fix: Project root package.json has "type": "module", which makes
+          # Node.js treat hvigorw.js as an ES module (breaks with "require is
+          # not defined"). Adding a CommonJS package.json to the tools dirs
+          # prevents Node from traversing up to the project root.
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/hvigor/package.json" 2>/dev/null || true
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/package.json"
+          echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
+          echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
+          echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
+          echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
+          echo "HarmonyOS Command Line Tools ready at $COMMANDLINE_TOOLS"
+
+      - name: Configure ohpm registry
+        run: |
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
+          ohpm --version || true
+
+      - name: Restore ohpm modules cache
+        id: ohpm_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-web-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+          restore-keys: |
+            ohpm-web-
+
+      # ── Step 2: Prepare the OpenHarmony Node.js runtime ───────────────────
+      #    hqzing/ohos-node prebuilt binary → entry/libs/arm64-v8a/libnode.so
+      - name: Restore Node runtime cache
+        id: node_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/node-runtime
+          key: ohos-node-${{ env.NODE_VERSION }}
+
+      - name: Prepare Node.js runtime (hqzing/ohos-node)
+        run: ./scripts/prepare-node.sh
+
+      - name: Save Node runtime cache
+        if: steps.node_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/node-runtime
+          key: ohos-node-${{ env.NODE_VERSION }}
+
+      # ── Step 3: Build web app (frontend + backend bundle → resfile) ──────
+      - name: Prepare web app
+        run: ./scripts/prepare-web.sh
+        env:
+          SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
+
+      # ── Step 4: Decode signing materials ────────────────────────────────
+      - name: Decode signing materials
+        env:
+          OHOS_KEYSTORE_B64: ${{ secrets.OHOS_KEYSTORE_B64 }}
+          OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
+          OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
+        run: |
+          mkdir -p signing
+          if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
+            echo "One or more signing material secrets are not set"
+            exit 1
+          fi
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
+
+          for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
+            if [ ! -s "${f}" ]; then
+              echo "::error::Failed to decode ${f} — check GitHub Secrets."
+              exit 1
+            fi
+            echo "  ✓ $(basename ${f}): $(du -h ${f} | cut -f1)"
+          done
+
+      # ── Step 5: Set bundle name from secret ──────────────────────────────
+      - name: Configure bundle name
+        env:
+          BUNDLE_NAME: ${{ secrets.OHOS_BUNDLE_NAME }}
+        run: |
+          if [ -n "${BUNDLE_NAME}" ]; then
+            sed -i "s/\"bundleName\": \".*\"/\"bundleName\": \"${BUNDLE_NAME}\"/" \
+              AppScope/app.json5
+            echo "Bundle name set to: ${BUNDLE_NAME}"
+          else
+            echo "Using default bundle name from app.json5"
+          fi
+          cat AppScope/app.json5
+
+      # ── Step 6: Build & sign the APP ─────────────────────────────────────
+      - name: Build HarmonyOS web app
+        run: ./scripts/build-web-app.sh --release
+        env:
+          COMMANDLINE_TOOLS: ${{ env.COMMANDLINE_TOOLS }}
+          OHOS_SDK_HOME: ${{ env.OHOS_SDK_HOME }}
+          KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+
+      - name: Save ohpm modules cache
+        if: steps.ohpm_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-web-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+
+      # ── Step 7: Upload artifact ──────────────────────────────────────────
+      - name: Find APP file
+        id: find_app
+        run: |
+          APP_FILE=$(find build/outputs -name "*.app" -type f | head -1)
+          if [ -z "${APP_FILE}" ]; then
+            echo "::error::No .app file found!"
+            exit 1
+          fi
+          APP_NAME=$(basename "${APP_FILE}")
+          ARTIFACT_NAME="${APP_NAME%.app}"
+          echo "app_path=${APP_FILE}" >> $GITHUB_OUTPUT
+          echo "app_name=${APP_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_name=${ARTIFACT_NAME}-web" >> $GITHUB_OUTPUT
+          echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
+
+      - name: Upload APP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.find_app.outputs.artifact_name }}
+          path: ${{ steps.find_app.outputs.app_path }}
+          retention-days: 30
+
+      # ── Summary ──────────────────────────────────────────────────────────
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary (web)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runtime | \`hqzing/ohos-node v24.19.0 (libnode.so)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web app | \`electerm-web backend + ArkWeb frontend\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| App version | \`$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo unknown)\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then
+            echo "| APP file | \`${{ steps.find_app.outputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| APP size | \`$(du -h ${{ steps.find_app.outputs.app_path }} | cut -f1)\` |" >> $GITHUB_STEP_SUMMARY
+          fi

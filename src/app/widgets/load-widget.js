@@ -1,11 +1,12 @@
 // load-widget.js
 
-const fs = require('fs')
-const path = require('path')
-// const log = require('../common/log')
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+// import log from '../common/log.js'
 
-// Store running widget instances
-const runningInstances = new Map()
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 const widgetIdPattern = /^[a-z0-9-]+$/
 
 function resolveWidgetPath (widgetId, widgetDirectory = __dirname) {
@@ -23,12 +24,16 @@ function resolveWidgetPath (widgetId, widgetDirectory = __dirname) {
   return widgetPath
 }
 
-function listWidgetsFromFolder (widgetDirectory = __dirname) {
+// Store running widget instances
+const runningInstances = new Map()
+
+async function listWidgetsFromFolder (widgetDirectory = __dirname) {
   const widgetFiles = fs.readdirSync(widgetDirectory).filter(file => file.startsWith('widget-') && file.endsWith('.js'))
   const res = []
   for (const file of widgetFiles) {
     try {
-      const widgetModule = require(path.join(widgetDirectory, file))
+      const widgetPath = path.join(widgetDirectory, file)
+      const widgetModule = await import(`file://${widgetPath}`)
       res.push({
         id: file.slice(7, -3),
         info: widgetModule.widgetInfo
@@ -41,8 +46,8 @@ function listWidgetsFromFolder (widgetDirectory = __dirname) {
   return res
 }
 
-function listWidgets () {
-  const widgets1 = listWidgetsFromFolder()
+async function listWidgets () {
+  const widgets1 = await listWidgetsFromFolder()
   return widgets1
   // if (process.versions.electron === undefined) {
   //   return widgets1
@@ -79,8 +84,9 @@ function hasRunningInstance (widgetId) {
   return false
 }
 
-function runWidget (widgetId, config) {
-  const widget = require(resolveWidgetPath(widgetId))
+async function runWidget (widgetId, config) {
+  const widgetPath = resolveWidgetPath(widgetId)
+  const widget = await import(`file://${widgetPath}`)
 
   const { type, singleInstance } = widget.widgetInfo
   if (type !== 'instance') {
@@ -187,7 +193,7 @@ function registerCleanupHandlers () {
 // Initialize cleanup handlers
 registerCleanupHandlers()
 
-module.exports = {
+export {
   listWidgets,
   runWidget,
   stopWidget,

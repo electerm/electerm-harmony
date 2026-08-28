@@ -1,25 +1,24 @@
 /**
  * terminal/sftp/serial class
  */
-const generate = require('../common/uid')
-const { createLogFileName } = require('../common/create-session-log-file-path')
-const SessionLog = require('./session-log')
-const time = require('../common/time.js')
-const globalState = require('./global-state')
-
-// const { MockBinding } = require('@serialport/binding-mock')
-// MockBinding.createPort('/dev/ROBOT', { echo: true, record: true })
+import uid from '../common/uid.js'
+import { createLogFileName } from '../common/create-session-log-file-path.js'
+import { SessionLog } from './session-log.js'
+import globalState from './global-state.js'
+import time from '../common/time.js'
+import path from 'path'
+import pkg from '@xterm/headless'
+const { Terminal } = pkg
 
 function createVtParser (cols = 4096) {
-  const { Terminal } = require('@xterm/headless')
   const term = new Terminal({ cols, rows: 50, allowProposedApi: true })
   return term
 }
 
-class TerminalBase {
+export class TerminalBase {
   constructor (initOptions, ws, isTest) {
     this.type = initOptions.termType || initOptions.type
-    this.pid = initOptions.uid || generate()
+    this.pid = initOptions.uid || uid()
     this.initOptions = initOptions
     if (initOptions.saveTerminalLogToFile) {
       this.sessionLogger = new SessionLog({
@@ -36,6 +35,8 @@ class TerminalBase {
     }
   }
 
+  cache = ''
+  prevNewLine = true
   _initVtParser () {
     this._vtTerm = createVtParser(this.initOptions.cols || 4096)
     this._vtLastRow = 0
@@ -54,65 +55,17 @@ class TerminalBase {
     })
   }
 
-  toggleTerminalLogTimestamp () {
-    this.initOptions.addTimeStampToTermLog = !this.initOptions.addTimeStampToTermLog
-  }
-
-  toggleTerminalLog () {
-    if (this.sessionLogger) {
-      this.sessionLogger.destroy()
-      delete this.sessionLogger
-      if (this._vtTerm) {
-        this._vtTerm.dispose()
-        delete this._vtTerm
+  parse (rawText) {
+    let result = ''
+    const len = rawText.length
+    for (let i = 0; i < len; i++) {
+      if (rawText[i] === '\b') {
+        result = result.slice(0, -1)
+      } else {
+        result += rawText[i]
       }
-    } else {
-      this.sessionLogger = new SessionLog({
-        logDir: this.initOptions.sessionLogPath,
-        fileName: createLogFileName(this.initOptions.logName)
-      })
-      this._initVtParser()
     }
-  }
-
-  setTerminalLogPath (logPath) {
-    if (!logPath) {
-      return
-    }
-    this.initOptions.sessionLogPath = logPath
-    if (this.sessionLogger) {
-      // Reopen the log under the new path
-      this.sessionLogger.destroy()
-      if (this._vtTerm) {
-        this._vtTerm.dispose()
-        delete this._vtTerm
-      }
-      this.sessionLogger = new SessionLog({
-        logDir: this.initOptions.sessionLogPath,
-        fileName: createLogFileName(this.initOptions.logName)
-      })
-      this._initVtParser()
-    }
-  }
-
-  startTerminalLogFile (logFilePath, addTimeStamp) {
-    if (!logFilePath) {
-      return
-    }
-    const { dirname, basename } = require('path')
-    const logDir = dirname(logFilePath)
-    const fileName = basename(logFilePath)
-    if (this.sessionLogger) {
-      this.sessionLogger.destroy()
-      delete this.sessionLogger
-    }
-    if (this._vtTerm) {
-      this._vtTerm.dispose()
-      delete this._vtTerm
-    }
-    this.initOptions.addTimeStampToTermLog = !!addTimeStamp
-    this.sessionLogger = new SessionLog({ logDir, fileName })
-    this._initVtParser()
+    return result
   }
 
   writeLog (data) {
@@ -130,6 +83,64 @@ class TerminalBase {
     } else {
       const normalized = String(data).replace(/\r(?!\n)/g, '\r\n')
       this._vtTerm.write(normalized)
+    }
+  }
+
+  toggleTerminalLogTimestamp () {
+    this.initOptions.addTimeStampToTermLog = !this.initOptions.addTimeStampToTermLog
+  }
+
+  setTerminalLogPath (logPath) {
+    if (!logPath) { return }
+    this.initOptions.sessionLogPath = logPath
+    if (this.sessionLogger) {
+      this.sessionLogger.destroy()
+      if (this._vtTerm) {
+        this._vtTerm.dispose()
+        delete this._vtTerm
+      }
+      this.sessionLogger = new SessionLog({
+        logDir: this.initOptions.sessionLogPath,
+        fileName: createLogFileName(this.initOptions.logName)
+      })
+      this._initVtParser()
+    }
+  }
+
+  startTerminalLogFile (logFilePath, addTimeStamp) {
+    if (!logFilePath) {
+      return
+    }
+    const { dirname, basename } = path
+    const logDir = dirname(logFilePath)
+    const fileName = basename(logFilePath)
+    if (this.sessionLogger) {
+      this.sessionLogger.destroy()
+      delete this.sessionLogger
+    }
+    if (this._vtTerm) {
+      this._vtTerm.dispose()
+      delete this._vtTerm
+    }
+    this.initOptions.addTimeStampToTermLog = !!addTimeStamp
+    this.sessionLogger = new SessionLog({ logDir, fileName })
+    this._initVtParser()
+  }
+
+  toggleTerminalLog () {
+    if (this.sessionLogger) {
+      this.sessionLogger.destroy()
+      delete this.sessionLogger
+      if (this._vtTerm) {
+        this._vtTerm.dispose()
+        delete this._vtTerm
+      }
+    } else {
+      this.sessionLogger = new SessionLog({
+        logDir: this.initOptions.sessionLogPath,
+        fileName: createLogFileName(this.initOptions.logName)
+      })
+      this._initVtParser()
     }
   }
 
@@ -154,5 +165,3 @@ class TerminalBase {
     globalState.removeSession(pid)
   }
 }
-
-exports.TerminalBase = TerminalBase

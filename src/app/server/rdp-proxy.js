@@ -1,12 +1,16 @@
-const net = require('net')
-const forge = require('node-forge')
-const log = require('../common/log')
-const proxySock = require('./socks')
+import net from 'net'
+import tls from 'tls'
+import log from '../common/log.js'
+import proxySock from './socks.js'
 
 // Debug prefix for all RDP proxy messages
 const LOG_PREFIX = '[RDP-PROXY]'
 
-// ── RDCleanPath ASN.1 DER Constants ──
+// We use Node.js built-in tls module with rejectUnauthorized: false
+// to accept self-signed RDP server certificates.
+// This works because electerm-web runs in standard Node.js (not Electron with BoringSSL).
+
+// RDCleanPath ASN.1 DER Constants
 const VERSION_1 = 3390 // 3389 + 1
 
 // ASN.1 tag constants
@@ -18,9 +22,7 @@ const TAG_UTF8STRING = 0x0c
 // Context-specific EXPLICIT tags used by RDCleanPath
 const TAG_CTX = (n) => 0xa0 + n
 
-// ────────────────────────────────────────────────────
 // ASN.1 DER Low-Level Helpers
-// ────────────────────────────────────────────────────
 
 /**
  * Encode ASN.1 DER length bytes.
@@ -141,9 +143,7 @@ function derDecodeChildren (buf) {
   return children
 }
 
-// ────────────────────────────────────────────────────
 // RDCleanPath PDU Parsing & Encoding
-// ────────────────────────────────────────────────────
 
 /**
  * Parse an RDCleanPath Request PDU from DER-encoded bytes.
@@ -229,7 +229,7 @@ function buildRDCleanPathResponse (serverAddr, x224Response, certChain) {
   // [6] x224_connection_pdu
   parts.push(derWrapContext(6, derEncodeOctetString(x224Response)))
 
-  // [7] server_cert_chain — SEQUENCE OF OCTET STRING
+  // [7] server_cert_chain - SEQUENCE OF OCTET STRING
   const certOctets = certChain.map((cert) => derEncodeOctetString(cert))
   const certSeq = derWrap(TAG_SEQUENCE, Buffer.concat(certOctets))
   parts.push(derWrapContext(7, certSeq))
@@ -269,9 +269,7 @@ function buildRDCleanPathError (errorCode, httpStatusCode) {
   return derWrap(TAG_SEQUENCE, Buffer.concat(parts))
 }
 
-// ────────────────────────────────────────────────────
 // Network: Destination Parsing
-// ────────────────────────────────────────────────────
 
 /**
  * Parse a destination string into { host, port }.
@@ -302,14 +300,7 @@ function parseDestination (destination) {
   return { host, port }
 }
 
-// ────────────────────────────────────────────────────
-// Network: TCP + X.224 + TLS (node-forge) + Cert Extraction
-// ────────────────────────────────────────────────────
-//
-// We use node-forge's pure-JS TLS implementation instead of Node's
-// built-in tls module. In Electron, Node's tls uses BoringSSL which
-// enforces strict KEY_USAGE_BIT_INCORRECT checks that reject typical
-// RDP server certificates. node-forge avoids this entirely.
+// Network: TCP + X.224 + TLS + Cert Extraction
 
 /**
  * Create a TCP connection (direct or through proxy)
@@ -332,22 +323,22 @@ async function createTcpConnection (host, port, options, x224Request, logPrefix)
       proxy: options.proxy
     })
     const tcpSocket = proxyResult.socket
-    log.debug(`${logPrefix} ✓ Proxy connection established`)
+    log.debug(`${logPrefix} Proxy connection established`)
 
     // Send X.224 Connection Request over proxied connection
     tcpSocket.write(x224Request, () => {
-      log.debug(`${logPrefix} ✓ Sent X.224 Connection Request (${x224Request.length} bytes)`)
+      log.debug(`${logPrefix} Sent X.224 Connection Request (${x224Request.length} bytes)`)
     })
     return tcpSocket
   }
 
   return new Promise((resolve, reject) => {
     const tcpSocket = net.createConnection({ host, port }, () => {
-      log.debug(`${logPrefix} ✓ TCP connection established`)
+      log.debug(`${logPrefix} TCP connection established`)
 
       // Send X.224 Connection Request over raw TCP
       tcpSocket.write(x224Request, () => {
-        log.debug(`${logPrefix} ✓ Sent X.224 Connection Request (${x224Request.length} bytes)`)
+        log.debug(`${logPrefix} Sent X.224 Connection Request (${x224Request.length} bytes)`)
       })
       resolve(tcpSocket)
     })
@@ -358,11 +349,11 @@ async function createTcpConnection (host, port, options, x224Request, logPrefix)
 }
 
 /**
- * Perform the RDCleanPath proxy handshake:
+ * Perform the RDP proxy handshake:
  * 1. TCP connect to RDP server (optionally through proxy)
  * 2. Send X.224 Connection Request (raw TCP)
  * 3. Read X.224 Connection Confirm (raw TCP)
- * 4. TLS handshake via node-forge (bypasses BoringSSL)
+ * 4. TLS handshake via Node.js tls module (with rejectUnauthorized: false)
  * 5. Extract server certificates
  *
  * @param {string} host
@@ -371,7 +362,7 @@ async function createTcpConnection (host, port, options, x224Request, logPrefix)
  * @param {object} options - Optional settings
  * @param {string} options.proxy - Proxy URL (e.g., 'socks5://127.0.0.1:1080' or 'http://proxy:8080')
  * @param {number} options.readyTimeout - Connection timeout in ms
- * @returns {Promise<{ x224Response: Buffer, certChain: Buffer[], forgeTls: object, tcpSocket: net.Socket }>}
+ * @returns {Promise<{ x224Response: Buffer, certChain: Buffer[], tlsSocket: tls.TLSSocket, tcpSocket: net.Socket }>}
  */
 async function performRDPHandshake (host, port, x224Request, options = {}) {
   const logPrefix = `${LOG_PREFIX} [${host}:${port}]`
@@ -400,7 +391,7 @@ async function performRDPHandshake (host, port, x224Request, options = {}) {
 
     // Step 3: Read X.224 Connection Confirm
     tcpSocket.once('data', (x224Response) => {
-      log.debug(`${logPrefix} ✓ Received X.224 Connection Confirm (${x224Response.length} bytes)`)
+      log.debug(`${logPrefix} Received X.224 Connection Confirm (${x224Response.length} bytes)`)
 
       if (x224Response.length === 0) {
         tcpSocket.destroy()
@@ -412,88 +403,50 @@ async function performRDPHandshake (host, port, x224Request, options = {}) {
       tcpSocket.removeAllListeners('error')
       tcpSocket.removeAllListeners('data')
 
-      // Step 4: TLS handshake via node-forge (pure JS — no BoringSSL)
-      log.debug(`${logPrefix} Starting TLS handshake via node-forge`)
+      // Step 4: TLS handshake via Node.js tls module
+      log.debug(`${logPrefix} Starting TLS handshake`)
 
-      // Capture the cert chain from the verify callback
-      let capturedCertChain = []
+      const tlsSocket = tls.connect({
+        socket: tcpSocket,
+        rejectUnauthorized: false // Accept self-signed RDP certificates
+      }, () => {
+        log.debug(`${logPrefix} TLS handshake completed`)
 
-      const forgeTls = forge.tls.createConnection({
-        server: false,
-        verify: function (connection, verified, depth, certs) {
-          // Accept all certificates (RDP servers use self-signed certs)
-          log.debug(`${logPrefix} TLS verify callback: depth=${depth}, verified=${verified}, certs=${certs.length}`)
-          // Capture the full chain on the first call (depth = deepest)
-          if (certs && certs.length > capturedCertChain.length) {
-            capturedCertChain = certs
-          }
-          return true
-        },
-        connected: function (connection) {
-          log.debug(`${logPrefix} ✓ node-forge TLS handshake completed`)
+        // The handshake-deadline timer set below (in the outer function)
+        // is a `net.Socket` idle-inactivity timer, not a one-shot deadline
+        // - it re-arms on every read/write and was never cleared once the
+        // handshake finished. Left alone, it destroys this same socket
+        // (reused for the whole session relay) after any 15s stretch with
+        // no bytes in either direction - e.g. a static remote desktop with
+        // no mouse/keyboard activity - killing otherwise-healthy sessions.
+        // Disable it now that the handshake is done; a real dead/half-open
+        // connection is instead caught by the TCP keepalive enabled below.
+        tcpSocket.setTimeout(0)
+        tcpSocket.setNoDelay(true)
+        tcpSocket.setKeepAlive(true, 10000)
 
-          // The handshake-deadline timer set below (in the outer function)
-          // is a `net.Socket` idle-inactivity timer, not a one-shot deadline
-          // - it re-arms on every read/write and was never cleared once the
-          // handshake finished. Left alone, it destroys this same socket
-          // (reused for the whole session relay) after any 15s stretch with
-          // no bytes in either direction - e.g. a static remote desktop with
-          // no mouse/keyboard activity - killing otherwise-healthy sessions.
-          // Disable it now that the handshake is done; a real dead/half-open
-          // connection is instead caught by the TCP keepalive enabled below.
-          tcpSocket.setTimeout(0)
-          tcpSocket.setNoDelay(true)
-          tcpSocket.setKeepAlive(true, 10000)
+        // Step 5: Extract certificate chain
+        const certChain = extractCertChain(tlsSocket)
+        log.debug(`${logPrefix} Extracted ${certChain.length} certificate(s)`)
 
-          // Step 5: Convert captured certificates to DER
-          const certChain = forgeCertsToDer(capturedCertChain)
-          log.debug(`${logPrefix} ✓ Extracted ${certChain.length} certificate(s) from forge`)
-
-          settle(null, {
-            x224Response: Buffer.from(x224Response),
-            certChain,
-            forgeTls,
-            tcpSocket
-          })
-        },
-        tlsDataReady: function (connection) {
-          // Encrypted data ready to send to the RDP server over TCP
-          const data = connection.tlsData.getBytes()
-          const buf = Buffer.from(data, 'binary')
-          try {
-            tcpSocket.write(buf)
-          } catch (err) {
-            log.error(`${logPrefix} Error writing TLS data to TCP: ${err.message}`)
-          }
-        },
-        dataReady: function (connection) {
-          // Decrypted data from RDP server — handled by setupForgeRelay
-        },
-        closed: function () {
-          log.debug(`${logPrefix} node-forge TLS connection closed`)
-        },
-        error: function (connection, error) {
-          log.error(`${logPrefix} node-forge TLS error: ${error.message}`)
-          settle(new Error(`TLS handshake failed: ${error.message}`))
-        }
+        settle(null, {
+          x224Response: Buffer.from(x224Response),
+          certChain,
+          tlsSocket,
+          tcpSocket
+        })
       })
 
-      // Feed received TCP data into forge TLS engine
-      tcpSocket.on('data', (data) => {
-        try {
-          forgeTls.process(data.toString('binary'))
-        } catch (err) {
-          log.error(`${logPrefix} forge process error: ${err.message}`)
-        }
+      tlsSocket.once('error', (err) => {
+        log.error(`${logPrefix} TLS error: ${err.message}`)
+        settle(new Error(`TLS handshake failed: ${err.message}`))
       })
 
-      tcpSocket.on('error', (err) => {
-        log.error(`${logPrefix} TCP error during TLS: ${err.message}`)
-        settle(new Error(`TCP error: ${err.message}`))
+      // Timeout for the TLS handshake
+      tlsSocket.setTimeout(15000, () => {
+        tlsSocket.destroy()
+        settle(new Error('TLS handshake timed out'))
       })
-
-      // Initiate the TLS handshake
-      forgeTls.handshake()
     })
 
     // Timeout for the whole handshake
@@ -505,86 +458,88 @@ async function performRDPHandshake (host, port, x224Request, options = {}) {
 }
 
 /**
- * Convert an array of node-forge certificate objects to DER-encoded Buffers.
+ * Extract the certificate chain from a TLS socket.
+ * Returns an array of DER-encoded certificates.
  */
-function forgeCertsToDer (certs) {
+function extractCertChain (tlsSocket) {
   const result = []
-  for (const cert of certs) {
-    try {
-      const asn1 = forge.pki.certificateToAsn1(cert)
-      const derBytes = forge.asn1.toDer(asn1).getBytes()
-      result.push(Buffer.from(derBytes, 'binary'))
-    } catch (e) {
-      log.error(`${LOG_PREFIX} Error converting cert to DER: ${e.message}`)
+  try {
+    const peerCert = tlsSocket.getPeerCertificate(true)
+    if (peerCert) {
+      // The 'raw' property contains the DER-encoded certificate
+      if (peerCert.raw) {
+        result.push(peerCert.raw)
+      }
+      // Check for issuer certificate in the chain
+      let cert = peerCert
+      while (cert.issuerCertificate && cert.issuerCertificate !== cert) {
+        if (cert.issuerCertificate.raw) {
+          result.push(cert.issuerCertificate.raw)
+        }
+        cert = cert.issuerCertificate
+      }
     }
+  } catch (e) {
+    log.error(`${LOG_PREFIX} Error extracting cert chain: ${e.message}`)
   }
   return result
 }
 
-// ────────────────────────────────────────────────────
-// Bidirectional Relay: WebSocket ↔ forge TLS ↔ TCP
-// ────────────────────────────────────────────────────
+// Bidirectional Relay: WebSocket <-> TLS Socket <-> TCP
 
 /**
- * Set up bidirectional relay between a WebSocket and a forge TLS connection.
+ * Set up bidirectional relay between a WebSocket and a TLS socket.
  *
- * Browser (WASM) → WebSocket → Proxy → forge TLS → TCP → RDP Server
- * RDP Server → TCP → forge TLS → Proxy → WebSocket → Browser (WASM)
+ * Browser (WASM) -> WebSocket -> Proxy -> TLS Socket -> TCP -> RDP Server
+ * RDP Server -> TCP -> TLS Socket -> Proxy -> WebSocket -> Browser (WASM)
  *
  * @param {WebSocket} ws - The WebSocket connection to the browser
- * @param {object} forgeTls - The node-forge TLS connection
+ * @param {tls.TLSSocket} tlsSocket - The TLS socket connected to RDP server
  * @param {net.Socket} tcpSocket - The underlying TCP socket
  */
-function setupForgeRelay (ws, forgeTls, tcpSocket) {
+function setupTlsRelay (ws, tlsSocket, tcpSocket) {
   let wsBytesForwarded = 0
   let tlsBytesForwarded = 0
 
   const logPrefix = `${LOG_PREFIX} [relay]`
 
-  // Override forge's dataReady to forward decrypted data to WebSocket
-  forgeTls.dataReady = function (connection) {
-    const data = connection.data.getBytes()
-    const buf = Buffer.from(data, 'binary')
-    tlsBytesForwarded += buf.length
+  // TLS Socket -> WebSocket (RDP server -> browser)
+  tlsSocket.on('data', (data) => {
+    tlsBytesForwarded += data.length
     try {
       if (ws.readyState === 1 /* OPEN */) {
-        ws.send(buf)
+        ws.send(data)
       }
     } catch (err) {
-      log.error(`${logPrefix} TLS→WS write error:`, err.message)
+      log.error(`${logPrefix} TLS->WS write error:`, err.message)
     }
-  }
+  })
 
-  // Override forge's closed/error for relay phase
-  forgeTls.closed = function () {
-    log.debug(`${logPrefix} forge TLS closed`)
-    cleanup('forge TLS')
-  }
-  forgeTls.error = function (connection, error) {
-    log.error(`${logPrefix} forge TLS error during relay: ${error.message}`)
-    cleanup('forge TLS (error)')
-  }
-
-  // WebSocket → forge TLS → TCP (browser → RDP server)
+  // WebSocket -> TLS Socket (browser -> RDP server)
   ws.on('message', (data) => {
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
     wsBytesForwarded += buf.length
     try {
-      forgeTls.prepare(buf.toString('binary'))
+      tlsSocket.write(buf)
     } catch (err) {
-      log.error(`${logPrefix} WS→TLS write error:`, err.message)
+      log.error(`${logPrefix} WS->TLS write error:`, err.message)
     }
   })
 
   // Cleanup on close
   const cleanup = (source) => {
-    log.debug(`${logPrefix} ${source} closed — WS→TLS: ${wsBytesForwarded} bytes, TLS→WS: ${tlsBytesForwarded} bytes`)
+    log.debug(`${logPrefix} ${source} closed - WS->TLS: ${wsBytesForwarded} bytes, TLS->WS: ${tlsBytesForwarded} bytes`)
     if (!tcpSocket.destroyed) tcpSocket.destroy()
-    try { forgeTls.close() } catch (_) {}
     if (ws.readyState === 1) {
       try { ws.close() } catch (_) {}
     }
   }
+
+  tlsSocket.on('end', () => cleanup('TLS'))
+  tlsSocket.on('error', (err) => {
+    log.error(`${logPrefix} TLS error:`, err.message)
+    cleanup('TLS (error)')
+  })
 
   tcpSocket.on('end', () => cleanup('TCP'))
   tcpSocket.on('error', (err) => {
@@ -599,9 +554,7 @@ function setupForgeRelay (ws, forgeTls, tcpSocket) {
   })
 }
 
-// ────────────────────────────────────────────────────
 // Main Handler: Process a WebSocket connection
-// ────────────────────────────────────────────────────
 
 /**
  * Handle a new WebSocket connection from the browser's WASM RDP client.
@@ -612,7 +565,7 @@ function setupForgeRelay (ws, forgeTls, tcpSocket) {
  * 3. TCP connect to RDP server, send X.224, receive X.224 confirm
  * 4. TLS handshake, extract server certificates
  * 5. Send RDCleanPath Response back to browser
- * 6. Bidirectional relay: WebSocket ↔ TLS
+ * 6. Bidirectional relay: WebSocket <-> TLS
  *
  * @param {WebSocket} ws - The WebSocket connection
  * @param {object} options - Optional settings
@@ -620,7 +573,7 @@ function setupForgeRelay (ws, forgeTls, tcpSocket) {
  * @param {number} options.readyTimeout - Connection timeout in ms
  */
 function handleConnection (ws, options = {}, bufferedMessages = []) {
-  log.debug(`${LOG_PREFIX} New WebSocket connection for RDCleanPath proxy`)
+  log.debug(`${LOG_PREFIX} New WebSocket connection for RDP proxy`)
 
   const handleFirstMessage = async (data) => {
     try {
@@ -629,14 +582,14 @@ function handleConnection (ws, options = {}, bufferedMessages = []) {
 
       // Step 1: Parse RDCleanPath request
       const request = parseRDCleanPathRequest(requestData)
-      log.debug(`${LOG_PREFIX} RDCleanPath Request → destination: ${request.destination}, proxyAuth: ${request.proxyAuth}`)
+      log.debug(`${LOG_PREFIX} RDCleanPath Request -> destination: ${request.destination}, proxyAuth: ${request.proxyAuth}`)
 
       // Step 2: Parse destination
       const { host, port } = parseDestination(request.destination)
       log.debug(`${LOG_PREFIX} Connecting to RDP server at ${host}:${port}`)
 
-      // Step 3-5: TCP + X.224 + TLS (node-forge) + Certs
-      const { x224Response, certChain, forgeTls, tcpSocket } = await performRDPHandshake(
+      // Step 3-5: TCP + X.224 + TLS + Certs
+      const { x224Response, certChain, tlsSocket, tcpSocket } = await performRDPHandshake(
         host,
         port,
         request.x224ConnectionRequest,
@@ -646,15 +599,15 @@ function handleConnection (ws, options = {}, bufferedMessages = []) {
       // Step 6: Build and send RDCleanPath response
       const serverAddr = `${host}:${port}`
       const responsePdu = buildRDCleanPathResponse(serverAddr, x224Response, certChain)
-      log.debug(`${LOG_PREFIX} ✓ Sending RDCleanPath response (${responsePdu.length} bytes) to browser`)
+      log.debug(`${LOG_PREFIX} Sending RDCleanPath response (${responsePdu.length} bytes) to browser`)
       ws.send(responsePdu)
 
-      log.debug(`${LOG_PREFIX} ✓ RDCleanPath handshake complete — starting bidirectional relay`)
+      log.debug(`${LOG_PREFIX} RDP proxy handshake complete - starting bidirectional relay`)
 
-      // Step 7: Bidirectional relay via node-forge
-      setupForgeRelay(ws, forgeTls, tcpSocket)
+      // Step 7: Bidirectional relay
+      setupTlsRelay(ws, tlsSocket, tcpSocket)
     } catch (err) {
-      log.error(`${LOG_PREFIX} RDCleanPath handshake error:`, err.message)
+      log.error(`${LOG_PREFIX} RDP proxy handshake error:`, err.message)
       log.error(`${LOG_PREFIX} Stack:`, err.stack)
 
       // Try to send error response to client
@@ -680,12 +633,16 @@ function handleConnection (ws, options = {}, bufferedMessages = []) {
   })
 }
 
-module.exports = {
+// Backward compatibility alias
+const setupForgeRelay = setupTlsRelay
+
+export {
   handleConnection,
   parseRDCleanPathRequest,
   buildRDCleanPathResponse,
   buildRDCleanPathError,
   parseDestination,
   performRDPHandshake,
-  setupForgeRelay
+  setupTlsRelay,
+  setupForgeRelay // backward compatibility
 }

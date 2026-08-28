@@ -2,25 +2,27 @@
  * log ssh output to file
  */
 
-const { resolve } = require('path')
-const { existsSync, mkdirSync, createWriteStream } = require('fs')
+import { resolve, dirname } from 'path'
+import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { cwd } from '../common/runtime-constants.js'
 
-function mkLogDir (logDir) {
-  try {
-    if (!existsSync(logDir)) {
-      mkdirSync(logDir)
-    }
-  } catch (e) {
-    console.debug('read default user name error')
+function mkdirP (resolvedPath) {
+  if (!existsSync(resolvedPath)) {
+    mkdirP(dirname(resolvedPath))
+    mkdirSync(resolvedPath)
   }
 }
 
-class SessionLog {
+const { DB_PATH } = process.env
+const dataPath = DB_PATH || resolve(cwd, 'data')
+
+export const logDir = resolve(dataPath, 'electerm_session_logs')
+
+export class SessionLog {
   constructor (options) {
-    this.options = options
     const { logDir } = options
     const logPath = resolve(logDir, options.fileName)
-    mkLogDir(logDir)
+    mkdirP(logDir)
     this.stream = createWriteStream(logPath, { flags: 'a' })
   }
 
@@ -32,5 +34,3 @@ class SessionLog {
     this.stream.destroy()
   }
 }
-
-module.exports = SessionLog

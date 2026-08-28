@@ -1,12 +1,12 @@
 /**
  * terminal/sftp/serial class
  */
-const _ = require('../lib/lodash.js')
-const log = require('../common/log')
-const { Telnet } = require('./telnet')
-const { TerminalBase } = require('./session-base')
-const globalState = require('./global-state')
-const iconv = require('iconv-lite')
+import _ from 'lodash'
+import log from '../common/log.js'
+import { Telnet } from './telnet.js'
+import { TerminalBase } from './session-base.js'
+import globalState from './global-state.js'
+import iconv from 'iconv-lite'
 
 // Encodings that are equivalent to UTF-8 (no conversion needed)
 const utf8Aliases = new Set(['utf-8', 'utf8', 'utf-8-strict'])
@@ -30,7 +30,7 @@ function stringToRegExp (regexString) {
 }
 
 class TerminalTelnet extends TerminalBase {
-  init = async () => {
+  async init () {
     const connection = new Telnet()
 
     const { initOptions } = this
@@ -76,10 +76,9 @@ class TerminalTelnet extends TerminalBase {
       return true
     }
     globalState.setSession(this.pid, this)
-    return Promise.resolve(this)
   }
 
-  resize = (cols, rows) => {
+  resize (cols, rows) {
     Object.assign(this.channel.options, {
       terminalWidth: cols,
       terminalHeight: rows
@@ -87,24 +86,29 @@ class TerminalTelnet extends TerminalBase {
     this.channel.sendWindowSize()
   }
 
-  on = (event, cb) => {
+  on (event, cb) {
     this.port.on(event, cb)
   }
 
-  write = (data) => {
+  write (data) {
     try {
       const encode = this.initOptions?.encode
       if (encode && !utf8Aliases.has(encode.toLowerCase()) && typeof data === 'string') {
         try {
           const buf = iconv.encode(data, encode)
           this.port.write(buf)
+          if (this.sessionLogger) {
+            this.sessionLogger.write(data)
+          }
           return
         } catch (e) {
           log.warn('iconv encode failed, falling back to raw write:', e.message)
         }
       }
       this.port.write(data)
-      // this.writeLog(data)
+      if (this.sessionLogger) {
+        this.sessionLogger.write(data)
+      }
     } catch (e) {
       log.error(e)
     }
@@ -119,7 +123,7 @@ class TerminalTelnet extends TerminalBase {
   }
 }
 
-exports.session = async function (initOptions, ws) {
+export const terminalTelnet = async function (initOptions, ws) {
   const term = new TerminalTelnet(initOptions, ws)
   await term.init()
   return term
@@ -129,7 +133,7 @@ exports.session = async function (initOptions, ws) {
  * test ssh connection
  * @param {object} options
  */
-exports.test = (options) => {
+export const testConnectionTelnet = (options) => {
   return (new TerminalTelnet(options, undefined, true))
     .init()
     .then(() => true)
@@ -137,3 +141,6 @@ exports.test = (options) => {
       return false
     })
 }
+
+export const terminal = terminalTelnet
+export const testConnection = testConnectionTelnet

@@ -1,13 +1,26 @@
 /**
  * app entry
  */
-const log = require('./common/log')
-const { createApp } = require('./lib/create-app')
-const globalState = require('./lib/glob-state')
 
-globalState.set('initTime', Date.now())
+import log from './common/log.js'
+import { createApp } from './server/server.js'
 
-log.debug('electerm start')
+process.on('uncaughtException', (err) => {
+  log.error('uncaughtException', err)
+})
+process.on('unhandledRejection', (err) => {
+  log.error('unhandledRejection', err)
+})
 
-const app = createApp()
-globalState.set('app', app)
+async function main () {
+  log.info('app start')
+  const app = await createApp()
+
+  const { HOST, PORT } = process.env
+
+  app.listen(PORT, HOST, () => {
+    log.info(`server runs on http://${HOST}:${PORT}`)
+  })
+}
+
+main()

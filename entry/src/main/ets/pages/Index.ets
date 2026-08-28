@@ -1,61 +1,186 @@
 /**
- * Index page — WebWindow host for the Electron 鸿蒙 runtime.
+ * Index page — ArkWeb host for the electerm web app.
  *
- * Uses the WebWindow component from web_engine, which manages the
- * XComponent surface and native context (libadapter.so). The Electron
- * runtime (libelectron.so) starts automatically and loads
- * resfile/resources/app/main.js.
+ * Startup sequence:
+ *   1. create the writable data dir (filesDir/electerm-data)
+ *   2. start the Node.js backend as a *native child process*
+ *      (libnode_launcher.so:Main → execv libnode.so index.js — the backend
+ *      serves the UI + SSH/SFTP/... API on http://127.0.0.1:5577)
+ *   3. poll the backend with plain HTTP until it answers
+ *   4. navigate the Web component from the local loading page to the backend
+ *
+ * While the engine is starting (or failed to start) a native overlay is
+ * shown; the Web component stays loaded with rawfile/loading.html behind it.
  */
 
-import { WebWindow } from 'web_engine';
-import { NativeContext } from 'web_engine/src/main/ets/interface/CommonInterface';
-import JsBindingUtils from 'web_engine/src/main/ets/utils/JsBindingUtils';
-import { ContextType } from 'web_engine/src/main/ets/common/Constants';
-import { uiObserver } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
+import { common } from '@kit.AbilityKit';
+import { childProcessManager } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import fs from '@ohos.file.fs';
+import http from '@ohos.net.http';
+import { BackendManager } from '../BackendManager';
 
-let storage = LocalStorage.getShared();
-@Entry(storage)
+const TAG: string = 'electerm.Index';
+const BACKEND_PORT: number = 5577;
+const SERVER_URL: string = `http://127.0.0.1:${BACKEND_PORT}`;
+const POLL_INTERVAL_MS: number = 500;
+const BOOT_TIMEOUT_MS: number = 90_000;
+
+@Entry
 @Component
 struct Index {
-  @LocalStorageLink('xcomponentId') xComponentId: string = '';
-  @LocalStorageProp('statusBarHeight') statusBarHeight: number = 0;
-  @State density: number = 0;
-  private nativeContext: NativeContext =
-    JsBindingUtils.getNativeContext(ContextType.kMainProcess);
+  controller: webview.WebviewController = new webview.WebviewController();
+  @State serverReady: boolean = false;
+  @State bootFailed: boolean = false;
+  @State statusMessage: string = 'Starting electerm …';
 
   aboutToAppear(): void {
-    uiObserver.on('densityUpdate', this.getUIContext(), (info: uiObserver.DensityInfo) => {
-      this.density = info.density;
+    this.startBackend();
+  }
+
+  /** Create the writable data dir and spawn the node backend. */
+  async startBackend(): Promise<void> {
+    try {
+      const context = getContext(this) as common.Context;
+      const filesDir: string = context.filesDir;
+      const dataDir: string = `${filesDir}/electerm-data`;
+      const bundleCodeDir: string = context.bundleCodeDir;
+      const scriptPath: string = `${bundleCodeDir}/entry/resource/resfile/electerm/index.js`;
+
+      // 1. writable data dir (db, ssh keys, logs — the resfile install dir
+      //    the backend itself runs from is read-only)
+      if (!this.dirExists(dataDir)) {
+        fs.mkdirSync(dataDir, true);
+      }
+
+      // 2. start the native child process
+      // entryParams is a plain "key=value\n" string parsed by node_launcher.c
+      const entryParams: string = [
+        `dataDir=${dataDir}`,
+        `script=${scriptPath}`,
+        `port=${BACKEND_PORT}`
+      ].join('\n');
+
+      this.statusMessage = 'Starting Node.js engine …';
+      console.info(`[${TAG}] starting native child process, params:\n${entryParams}`);
+      const pid: number = await childProcessManager.startNativeChildProcess(
+        'libnode_launcher.so:Main',
+        { entryParams: entryParams }
+      );
+      BackendManager.setPid(pid);
+      console.info(`[${TAG}] node child process started, pid=${pid}`);
+
+      // 3. wait for the HTTP server
+      this.statusMessage = 'Starting engine …';
+      const ok: boolean = await this.waitForBackend();
+      if (!ok) {
+        this.bootFailed = true;
+        this.statusMessage =
+          'Engine failed to start. See electerm-data/node-boot.log';
+        return;
+      }
+
+      // 4. load the real UI
+      this.serverReady = true;
+      this.controller.loadUrl(SERVER_URL);
+    } catch (e) {
+      const err = e as BusinessError;
+      this.bootFailed = true;
+      this.statusMessage = `Startup error: [${err.code}] ${err.message}`;
+      console.error(`[${TAG}] startBackend failed: ${JSON.stringify(e)}`);
+    }
+  }
+
+  dirExists(path: string): boolean {
+    try {
+      const stat = fs.statSync(path);
+      return stat.isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /** Poll http://127.0.0.1:5577 until it answers or BOOT_TIMEOUT_MS elapses. */
+  async waitForBackend(): Promise<boolean> {
+    const deadline: number = Date.now() + BOOT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await this.probe()) {
+        return true;
+      }
+      await this.sleep(POLL_INTERVAL_MS);
+    }
+    return false;
+  }
+
+  async probe(): Promise<boolean> {
+    const httpClient = http.createHttp();
+    try {
+      const response = await httpClient.request(SERVER_URL, {
+        method: http.RequestMethod.GET,
+        connectTimeout: 3000,
+        readTimeout: 3000,
+        usingCache: false
+      });
+      return response.responseCode >= 200 && response.responseCode < 500;
+    } catch {
+      return false;
+    } finally {
+      httpClient.destroy();
+    }
+  }
+
+  sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), ms);
     });
   }
 
-  aboutToDisappear(): void {
-    uiObserver.off('densityUpdate', this.getUIContext());
-  }
-
   onBackPress(): boolean {
-    // On 2-in-1/PC devices the system maps the ESC key to the back event.
-    // Only hand off to the last widget when one actually exists — otherwise
-    // the native adapter falls back to minimizing this window, which is not
-    // the expected behavior for a plain ESC key press.
-    if (this.nativeContext.GetLastActiveWidgetId()) {
-      this.nativeContext.OnBackToLastPage(this.xComponentId);
+    try {
+      if (this.controller.accessBackward()) {
+        this.controller.backward();
+        return true;
+      }
+    } catch {
+      // controller not attached yet — fall through
     }
-    return true;
+    return false;
   }
 
   build() {
-    Row() {
-      WebWindow()
+    Stack() {
+      Web({ src: $rawfile('loading.html'), controller: this.controller })
+        .width('100%')
+        .height('100%')
+        .javaScriptAccess(true)
+        .domStorageAccess(true)
+
+      if (!this.serverReady) {
+        Column({ space: 16 }) {
+          Text('electerm')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#cfd6e4')
+          if (!this.bootFailed) {
+            LoadingProgress()
+              .width(36)
+              .height(36)
+              .color('#4aa3ff')
+          }
+          Text(this.statusMessage)
+            .fontSize(13)
+            .fontColor(this.bootFailed ? '#e5484d' : '#8b93a7')
+            .textAlign(TextAlign.Center)
+            .padding({ left: 24, right: 24 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#15171a')
+      }
     }
     .width('100%')
     .height('100%')
-    .padding({
-      top: this.getStatusBarHeight(),
-    })
-  }
-
-  getStatusBarHeight(): number {
-    return this.getUIContext().px2vp(this.statusBarHeight);
   }
 }

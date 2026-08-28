@@ -205,4 +205,4 @@ const z = {
   }
 }
 
-module.exports = { z, ZodType }
+export { z, ZodType }

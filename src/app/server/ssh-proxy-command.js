@@ -15,9 +15,9 @@
  * loopback socketpair instead of patching a fake socket.
  */
 
-const { spawn } = require('child_process')
-const net = require('net')
-const log = require('../common/log')
+import { spawn } from 'child_process'
+import net from 'net'
+import log from '../common/log.js'
 
 // resolved lazily so tests (and users) can override via env at any time
 function getNetbirdBin () {
@@ -124,7 +124,7 @@ function bridgeChildStdio (child) {
         try {
           child.kill()
         } catch {
-
+          // ignore
         }
       }
       child.stdout.once('end', cleanup)
@@ -135,7 +135,7 @@ function bridgeChildStdio (child) {
         try {
           child.kill()
         } catch {
-
+          // ignore
         }
       })
     })
@@ -199,7 +199,7 @@ async function runProxyCommand (command, args, { onMessage } = {}) {
     try {
       child.stdin?.end()
     } catch {
-
+      // ignore
     }
     child.kill()
     bridge.close()
@@ -214,7 +214,7 @@ async function runProxyCommand (command, args, { onMessage } = {}) {
       try {
         child.stdin?.end()
       } catch {
-
+        // ignore
       }
       child.kill()
       bridge.close()
@@ -274,8 +274,10 @@ function clearDetectCache () {
   detectCache.clear()
 }
 
-exports.maybeProxyCommand = maybeProxyCommand
-exports.expandProxyCommand = expandProxyCommand
-exports.detectNetbird = detectNetbird
-exports.isNetbirdLikeHost = isNetbirdLikeHost
-exports.clearDetectCache = clearDetectCache
+export {
+  maybeProxyCommand,
+  expandProxyCommand,
+  detectNetbird,
+  isNetbirdLikeHost,
+  clearDetectCache
+}

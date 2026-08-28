@@ -2,6 +2,6 @@
  * functions to create ssh log of session
  */
 
-exports.createLogFileName = (id) => {
+export const createLogFileName = (id) => {
   return `${id}.log`
 }

@@ -64,11 +64,6 @@
         "name": "ohos.permission.ACCELEROMETER"
       }
     ],
-    "definePermissions": [
-      {
-        "name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
-      }
-    ],
     "abilities": [
       {
         "name": "EntryAbility",

@@ -4,7 +4,7 @@
  * Runs entirely in the frontend, uses MCP tools for execution
  */
 
-const uid = require('../common/uid')
+import uid from '../common/uid.js'
 
 const widgetInfo = {
   name: 'Batch Operation',
@@ -35,7 +35,7 @@ async function widgetRun (config) {
   }
 }
 
-module.exports = {
+export {
   widgetInfo,
   getDefaultConfig,
   widgetRun

@@ -1,12 +1,12 @@
 /**
  * Optimized Trzsz protocol handler for server-side terminal sessions
  */
-const fs = require('fs')
-const { open } = require('fs/promises')
-const path = require('path')
-const log = require('../common/log')
-const sanitizeFilename = require('../common/sanitize-filename')
-const { TrzszTransfer } = require('trzsz2')
+import fs from 'fs'
+import { open } from 'fs/promises'
+import path from 'path'
+import log from '../common/log.js'
+import sanitizeFilename from '../common/sanitize-filename.js'
+import { TrzszTransfer } from 'trzsz2'
 
 const TRZSZ_STATE = {
   IDLE: 'idle',
@@ -263,24 +263,13 @@ class TrzszSession {
     }
     const detected = this.detectTrzszStart(data)
     if (detected) {
-      // Extract any data AFTER the magic key line to feed to the buffer.
-      // The magic key itself is terminal output, NOT a protocol message —
-      // feeding it to the buffer pollutes recvLine's junk handling and can
-      // cause deadlocks or parse errors depending on \r\n patterns.
-      // This aligns with how TrzszFilter (reference impl) works: it never
-      // feeds the magic-key-containing output to addReceivedData.
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
-      const newlineIdx = buf.indexOf(10, detected.offset) // find \n ending magic key line
-      const trailing = (newlineIdx >= 0 && newlineIdx + 1 < buf.length)
-        ? buf.slice(newlineIdx + 1)
-        : null
       if (detected.type === 'receive') {
         this.startReceiver()
-        if (trailing) this.transfer.addReceivedData(trailing)
+        this.transfer.addReceivedData(data)
       } else if (detected.type === 'send') {
         this.createTransfer()
         this.state = TRZSZ_STATE.SENDING
-        if (trailing) this.transfer.addReceivedData(trailing)
+        this.transfer.addReceivedData(data)
         this.startUploadProcess()
       }
       return true
@@ -428,17 +417,19 @@ class TrzszSession {
         return
       }
 
-      // In binary mode, sendData passes Uint8Array directly.
-      // Convert to Buffer for reliable channel.write() compatibility.
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
-      if (
-        buf.length < 200 &&
-        (buf.indexOf(TRZSZ_SAVED_FILE_BUFFER) >= 0 ||
-        buf.indexOf(TRZSZ_SAVED_DIR_BUFFER) >= 0)
-      ) {
+      if (Buffer.isBuffer(data)) {
+        if (
+          data.length < 200 &&
+          (data.indexOf(TRZSZ_SAVED_FILE_BUFFER) >= 0 ||
+          data.indexOf(TRZSZ_SAVED_DIR_BUFFER) >= 0)
+        ) {
+          return
+        }
+        this.writeToTerminal(data)
         return
       }
-      this.writeToTerminal(buf)
+
+      this.writeToTerminal(data)
     }, false)
 
     return this.transfer
@@ -736,4 +727,4 @@ class TrzszManager {
   }
 }
 const trzszManager = new TrzszManager()
-module.exports = { trzszManager }
+export { trzszManager }

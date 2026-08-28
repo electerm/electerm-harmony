@@ -2,10 +2,12 @@
  * read themes from https://github.com/mbadolato/iTerm2-Color-Schemes/tree/master/electerm
  */
 
-exports.listItermThemes = async () => {
-  const all = require('@electerm/electerm-themes/dist/index.js')
+import log from '../common/log.js'
+
+export async function listItermThemes (ws, msg) {
+  const all = await import('@electerm/electerm-themes/dist/index.mjs').then(d => d.default)
   return Promise.all(all).catch(e => {
-    console.log(e)
+    log.error('list Iterm Themes error', e)
     return []
   })
 }

@@ -1,20 +1,29 @@
 /**
  * download upgrade class
+ *
+ * Ported from the desktop electerm source. Adapted for the
+ * electerm-android ESM backend:
+ *   - ESM imports
+ *   - message ids aligned with the @electerm/electerm-react client
+ *     contract (upgrade:data / upgrade:end / upgrade:err)
+ *   - `process.send` (Electron IPC) replaced with `showItemInFolder`
+ *     so it works under the on-device Node runtime
  */
 
-const fs = require('fs')
-const { resolve } = require('path')
-const _ = require('../lib/lodash.js')
-const rp = require('axios')
-const { packInfo, tempDir } = require('../common/runtime-constants')
-const installSrc = require('../lib/install-src')
-const { fsExport } = require('../lib/fs')
-const { createProxyAgent } = require('../lib/proxy-agent')
-const { openFile, rmrf } = fsExport
-const log = require('../common/log')
-const globalState = require('./global-state')
+import fs from 'fs'
+import { resolve } from 'path'
+import axios from 'axios'
+import _ from 'lodash'
+import { packInfo, tempDir } from '../common/runtime-constants.js'
+import installSrc from '../lib/install-src.js'
+import { fsExport } from '../lib/fs.js'
+import { createProxyAgent } from '../lib/proxy-agent.js'
+import { showItemInFolder } from '../lib/show-item-in-folder.js'
+import log from '../common/log.js'
+import globalState from './global-state.js'
 
-rp.defaults.proxy = false
+axios.defaults.proxy = false
+const { openFile, rmrf } = fsExport
 
 function getUrl (url, mirror) {
   if (mirror === 'gh-proxy') {
@@ -30,18 +39,15 @@ function getUrl (url, mirror) {
   }
 }
 
-function getReleaseInfo (
-  filter, releaseInfoUrl, agent
-) {
+function getReleaseInfo (filter, releaseInfoUrl, agent) {
   const conf = {
     url: releaseInfoUrl,
     timeout: 15000
   }
   if (agent) {
-    conf.httpAgent = agent
     conf.httpsAgent = agent
   }
-  return rp(conf)
+  return axios(conf)
     .then((res) => {
       return res.data
         .release
@@ -62,24 +68,15 @@ class Upgrade {
       proxy,
       mirror
     } = this.options
+    // register id early so destroy() works even if init() is aborted
+    this.id = id
     const agent = createProxyAgent(proxy)
     const releaseInfoUrl = `${packInfo.homepage}/data/electerm-github-release.json?_=${+new Date()}`
     const filter = r => {
-      return r.name.endsWith(installSrc)
+      return r.name.includes(installSrc)
     }
-    // if (isWin) {
-    //   filter = r => /electerm-\d+\.\d+\.\d+-win-x64\.tar\.gz/.test(r.name)
-    // } else if (isArm) {
-    //   filter = r => {
-    //     return /arm64\.dmg$/.test(r.name)
-    //   }
-    // } else if (isMac) {
-    //   filter = r => {
-    //     return /mac\.dmg$/.test(r.name)
-    //   }
-    // }
     const releaseInfo = await getReleaseInfo(filter, releaseInfoUrl, agent)
-      .catch(this.onError)
+      .catch(err => this.onError(err, id, ws))
     if (!releaseInfo) {
       return
     }
@@ -87,11 +84,9 @@ class Upgrade {
     const remotePath = getUrl(releaseInfo.browser_download_url, mirror)
     await rmrf(localPath).catch(log.error)
     const { size } = releaseInfo
-    this.id = id
     this.localPath = localPath
-    const readSteam = await rp({
+    const readSteam = await axios({
       url: remotePath,
-      httpAgent: agent,
       httpsAgent: agent,
       responseType: 'stream'
     })
@@ -149,21 +144,20 @@ class Upgrade {
   }
 
   onEnd (id, ws) {
-    if (!this.onDestroy) {
-      openFile(this.localPath)
-      process.send({
-        showFileInFolder: this.localPath
-      })
-      ws.s({
-        id: 'transfer:end:' + id,
-        data: this.dir
-      })
+    if (this.onDestroy) {
+      return
     }
+    openFile(this.localPath).catch(log.error)
+    // showItemInFolder(this.localPath).catch(log.error)
+    ws.s({
+      id: 'upgrade:end:' + id,
+      data: this.localPath
+    })
   }
 
   onError (err, id, ws) {
     ws.s({
-      wid: 'upgrade:err:' + id,
+      id: 'upgrade:err:' + id,
       error: {
         message: err.message,
         stack: err.stack
@@ -191,4 +185,4 @@ class Upgrade {
   // end
 }
 
-exports.Upgrade = Upgrade
+export { Upgrade }

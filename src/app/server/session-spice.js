@@ -1,13 +1,14 @@
-const log = require('../common/log')
-const { TerminalBase } = require('./session-base')
-const globalState = require('./global-state')
-const { handleConnection } = require('./spice-proxy')
+import log from '../common/log.js'
+import { TerminalBase } from './session-base.js'
+import globalState from './global-state.js'
+import { handleConnection } from './spice-proxy.js'
+import net from 'net'
+import proxySock from './socks.js'
 
 class TerminalSpice extends TerminalBase {
-  channelCounter = 0
-
   init = async () => {
     this.wsMap = new Map()
+    this.channelCounter = 0
     globalState.setSession(this.pid, this)
     return Promise.resolve(this)
   }
@@ -53,8 +54,6 @@ class TerminalSpice extends TerminalBase {
   }
 
   test = async () => {
-    const net = require('net')
-    const proxySock = require('./socks')
     const {
       host,
       port = 5900,
@@ -111,19 +110,27 @@ class TerminalSpice extends TerminalBase {
   }
 }
 
-exports.session = async function (initOptions, ws) {
+export const terminalSpice = async function (initOptions, ws) {
   const term = new TerminalSpice(initOptions, ws)
   await term.init()
   return term
 }
 
-exports.test = (options) => {
+/**
+ * test spice connection
+ * @param {object} options
+ */
+export const testConnectionSpice = (options) => {
   return (new TerminalSpice(options, undefined, true))
     .test()
-    .then(() => {
+    .then((res) => {
+      res.close()
       return true
     })
     .catch(() => {
       return false
     })
 }
+
+export const terminal = terminalSpice
+export const testConnection = testConnectionSpice

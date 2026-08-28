@@ -4,16 +4,21 @@
  * run every upgrade script one by one
  */
 
-const { packInfo } = require('../common/app-props')
+import { packInfo } from '../common/runtime-constants.js'
+import { resolve, dirname } from 'path'
+import fs from 'fs'
+import log from '../common/log.js'
+import compare from '../common/version-compare.js'
+import { dbAction } from '../lib/db.js'
+import _ from 'lodash'
+import initData from './init-nedb.js'
+import { updateDBVersion } from './version-upgrade.js'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
 const { version: packVersion } = packInfo
-const { resolve } = require('path')
-const fs = require('fs')
-const log = require('../common/log')
-const compare = require('../common/version-compare')
-const { dbAction } = require('../lib/db')
-const _ = require('../lib/lodash.js')
-const initData = require('./init-db')
-const { updateDBVersion } = require('./version-upgrade')
 const emptyVersion = '0.0.0'
 const versionQuery = {
   _id: 'version'
@@ -44,13 +49,14 @@ async function getUpgradeVersionList () {
     return compare(a, b)
   })
 }
+
 async function versionShouldUpgrade () {
   const dbVersion = await getDBVersion()
   log.info('database version:', dbVersion)
   return compare(dbVersion, packVersion) < 0
 }
 
-async function shouldUpgrade () {
+export async function checkDbUpgrade () {
   const shouldUpgradeVersion = await versionShouldUpgrade()
   if (!shouldUpgradeVersion) {
     return false
@@ -73,16 +79,13 @@ async function shouldUpgrade () {
   }
 }
 
-async function doUpgrade () {
+export async function doUpgrade () {
   const list = await getUpgradeVersionList()
   log.info('Upgrading...')
   for (const v of list) {
     const p = resolve(__dirname, v)
-    const run = require(p)
+    const run = import(p).then(d => d.default)
     await run()
   }
   log.info('Upgrade end')
 }
-
-exports.checkDbUpgrade = shouldUpgrade
-exports.doUpgrade = doUpgrade

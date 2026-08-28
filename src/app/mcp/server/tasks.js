@@ -19,7 +19,7 @@
  *   onSweep(task)  — clean up resources when a terminal task is swept
  */
 
-const uid = require('../../common/uid')
+import uid from '../../common/uid.js'
 
 const STATUS = {
   working: 'working',
@@ -215,4 +215,4 @@ class TaskManager {
   }
 }
 
-module.exports = { TaskManager, STATUS, TERMINAL_STATUSES }
+export { TaskManager, STATUS, TERMINAL_STATUSES }

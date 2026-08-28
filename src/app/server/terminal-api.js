@@ -2,14 +2,16 @@
  * run cmd with terminal
  */
 
-const { testConnection, terminal, terminals } = require('./session-process')
+import { terminals } from './remote-common.js'
+import { terminal, testConnection } from './session.js'
+import { isDev } from '../common/runtime-constants.js'
 
-async function runCmd (ws, msg) {
+export async function runCmd (ws, msg) {
   const { id, pid, cmd } = msg
   const term = terminals(pid)
   let txt = ''
   if (term) {
-    txt = await term.runCmd(cmd, id)
+    txt = await term.runCmd(cmd)
   }
   ws.s({
     id,
@@ -17,7 +19,12 @@ async function runCmd (ws, msg) {
   })
 }
 
-async function execCmd (ws, msg) {
+// Structured command execution: unlike runCmd, returns
+// { stdout, stderr, exitCode, timedOut } from a dedicated exec channel.
+// In electerm-web sessions live in-process (see remote-common.js), so the
+// session's execCommand(cmd, options) is called directly instead of going
+// through a child-process proxy.
+export async function execCmd (ws, msg) {
   const { id, pid, cmd, timeoutMs } = msg
   const term = terminals(pid)
   if (!term || typeof term.execCommand !== 'function') {
@@ -30,7 +37,7 @@ async function execCmd (ws, msg) {
     return
   }
   try {
-    const result = await term.execCommand(cmd, timeoutMs, id)
+    const result = await term.execCommand(cmd, { timeoutMs })
     ws.s({
       id,
       data: result
@@ -46,11 +53,11 @@ async function execCmd (ws, msg) {
   }
 }
 
-function resize (ws, msg) {
+export function resize (ws, msg) {
   const { id, pid, cols, rows } = msg
   const term = terminals(pid)
   if (term) {
-    term.resize(cols, rows, id)
+    term.resize(cols, rows)
   }
   ws.s({
     id,
@@ -58,11 +65,11 @@ function resize (ws, msg) {
   })
 }
 
-function toggleTerminalLog (ws, msg) {
+export function toggleTerminalLog (ws, msg) {
   const { id, pid } = msg
   const term = terminals(pid)
   if (term) {
-    term.toggleTerminalLog(id)
+    term.toggleTerminalLog()
   }
   ws.s({
     id,
@@ -70,11 +77,11 @@ function toggleTerminalLog (ws, msg) {
   })
 }
 
-function toggleTerminalLogTimestamp (ws, msg) {
+export function toggleTerminalLogTimestamp (ws, msg) {
   const { id, pid } = msg
   const term = terminals(pid)
   if (term) {
-    term.toggleTerminalLogTimestamp(id)
+    term.toggleTerminalLogTimestamp()
   }
   ws.s({
     id,
@@ -82,10 +89,42 @@ function toggleTerminalLogTimestamp (ws, msg) {
   })
 }
 
-function createTerm (ws, msg) {
+export function setTerminalLogPath (ws, msg) {
+  const { id, pid, logPath } = msg
+  const term = terminals(pid)
+  if (term) {
+    term.setTerminalLogPath(logPath)
+  }
+  ws.s({
+    id,
+    data: 'ok'
+  })
+}
+
+export function startTerminalLogFile (ws, msg) {
+  const { id, pid, logFilePath, addTimeStampToTermLog } = msg
+  const term = terminals(pid)
+  if (term) {
+    term.startTerminalLogFile(logFilePath, addTimeStampToTermLog)
+  }
+  ws.s({
+    id,
+    data: 'ok'
+  })
+}
+
+export function createTerm (ws, msg) {
   const { id, body } = msg
-  terminal(body, ws, id)
-    .then(data => {
+  terminal(body, ws)
+    .then(r => {
+      const data = isDev
+        ? {
+            pid: r.pid,
+            port: process.env.PORT
+          }
+        : {
+            pid: r.pid
+          }
       ws.s({
         id,
         data
@@ -102,9 +141,9 @@ function createTerm (ws, msg) {
     })
 }
 
-function testTerm (ws, msg) {
+export function testTerm (ws, msg) {
   const { id, body } = msg
-  testConnection(body, ws, id)
+  testConnection(body, ws)
     .then(data => {
       if (data) {
         ws.s({
@@ -131,37 +170,3 @@ function testTerm (ws, msg) {
       })
     })
 }
-
-function setTerminalLogPath (ws, msg) {
-  const { id, pid, logPath } = msg
-  const term = terminals(pid)
-  if (term) {
-    term.setTerminalLogPath(id, logPath)
-  }
-  ws.s({
-    id,
-    data: 'ok'
-  })
-}
-
-function startTerminalLogFile (ws, msg) {
-  const { id, pid, logFilePath, addTimeStampToTermLog } = msg
-  const term = terminals(pid)
-  if (term) {
-    term.startTerminalLogFile(id, logFilePath, addTimeStampToTermLog)
-  }
-  ws.s({
-    id,
-    data: 'ok'
-  })
-}
-
-exports.createTerm = createTerm
-exports.testTerm = testTerm
-exports.resize = resize
-exports.runCmd = runCmd
-exports.execCmd = execCmd
-exports.toggleTerminalLog = toggleTerminalLog
-exports.toggleTerminalLogTimestamp = toggleTerminalLogTimestamp
-exports.setTerminalLogPath = setTerminalLogPath
-exports.startTerminalLogFile = startTerminalLogFile

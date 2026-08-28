@@ -2,9 +2,9 @@
  * fs in child process
  */
 
-const { fsExport: fs } = require('../lib/fs')
+import { fsExport as fs } from '../lib/fs.js'
 
-function handleFs (ws, msg) {
+export default function handleFs (ws, msg) {
   const { id, args, func } = msg
   // only dispatch to fs helpers defined on the export itself, never to
   // anything reached through the prototype chain
@@ -34,5 +34,3 @@ function handleFs (ws, msg) {
       })
     })
 }
-
-module.exports = handleFs

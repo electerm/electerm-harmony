@@ -3,9 +3,14 @@
  * for sftp, terminal and transfer
  */
 
-const globalState = require('./global-state')
+// const _ = require('loadsh')
+import globalState from './global-state.js'
 
-function sftp (id, inst) {
+export function session (id) {
+  return globalState.getSession(id)
+}
+
+export function sftp (id, inst) {
   if (inst) {
     globalState.setSession(id, inst)
     return inst
@@ -13,7 +18,7 @@ function sftp (id, inst) {
   return globalState.getSession(id)
 }
 
-function terminals (id, inst) {
+export function terminals (id, inst) {
   if (inst) {
     globalState.setSession(id, inst)
     return inst
@@ -21,7 +26,7 @@ function terminals (id, inst) {
   return globalState.getSession(id)
 }
 
-function transfer (id, sftpId, inst) {
+export function transfer (id, sftpId, inst) {
   const ss = sftp(sftpId)
   if (!ss) {
     return
@@ -33,19 +38,16 @@ function transfer (id, sftpId, inst) {
   return ss.transfers[id]
 }
 
-function onDestroySftp (id) {
+export function onDestroySftp (id) {
   const inst = sftp(id)
   inst && inst.kill && inst.kill()
 }
 
-function onDestroyTransfer (id, sftpId) {
-  const sftpInst = sftp(sftpId)
-  const inst = transfer(id, sftpId)
-  inst && inst.destroy && inst.destroy()
-  sftpInst && delete sftpInst.transfers[id]
+export function onDestroyTerminal (id) {
+  onDestroySftp(id)
 }
 
-function cleanAllSessions () {
+export function cleanAllSessions () {
   const { sessions } = globalState.data
   for (const id in sessions) {
     const inst = sessions[id]
@@ -53,12 +55,9 @@ function cleanAllSessions () {
   }
 }
 
-module.exports = {
-  sftp,
-  transfer,
-  onDestroySftp,
-  onDestroyTerminal: onDestroySftp,
-  onDestroyTransfer,
-  terminals,
-  cleanAllSessions
+export function onDestroyTransfer (id, sftpId) {
+  const sftpInst = sftp(sftpId)
+  const inst = transfer(id, sftpId)
+  inst && inst.destroy && inst.destroy()
+  sftpInst && delete sftpInst.transfers[id]
 }

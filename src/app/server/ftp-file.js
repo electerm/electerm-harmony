@@ -1,6 +1,6 @@
-const { Readable, Writable } = require('stream')
+import { Readable, Writable } from 'stream'
 
-async function readRemoteFile (client, remotePath) {
+export async function readRemoteFile (client, remotePath) {
   return new Promise((resolve, reject) => {
     let data = ''
     const writable = new Writable({
@@ -16,7 +16,7 @@ async function readRemoteFile (client, remotePath) {
   })
 }
 
-async function writeRemoteFile (client, remotePath, str) {
+export async function writeRemoteFile (client, remotePath, str) {
   const readable = new Readable({
     read () {
       this.push(str)
@@ -25,9 +25,4 @@ async function writeRemoteFile (client, remotePath, str) {
   })
 
   return client.uploadFrom(readable, remotePath)
-}
-
-module.exports = {
-  readRemoteFile,
-  writeRemoteFile
 }
