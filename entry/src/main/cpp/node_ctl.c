@@ -27,6 +27,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -130,6 +131,48 @@ static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
     }
     (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.embed",
                        "%{public}s", b);
+  }
+  /* Capture the crashing thread's native stack. The abort text (e.g.
+   * "Assertion failed: fd > STDERR_FILENO ... uv__close") names the dying
+   * function but never its CALLER — that's the missing piece. libnode.so is
+   * unstripped, so dladdr often resolves real symbol names. Written to the
+   * boot log AND hilog (short lines survive hilog's ~140-byte truncation).
+   * Not strictly async-signal-safe, but the thread is about to park/die —
+   * a corrupted-stack failure here costs nothing the crash didn't already. */
+  {
+    void *bt[24];
+    int frames = backtrace(bt, 24);
+    for (int i = 0; i < frames; i++) {
+      Dl_info info;
+      char lb[192];
+      int ln;
+      if (dladdr(bt[i], &info) && info.dli_fname) {
+        const char *slash = strrchr(info.dli_fname, '/');
+        const char *base = slash ? slash + 1 : info.dli_fname;
+        ln = snprintf(lb, sizeof(lb), "[embed] bt[%d/%d] %s%s%+ld (%.40s)",
+                      i, frames,
+                      info.dli_sname ? info.dli_sname : "",
+                      info.dli_sname ? "+" : "",
+                      (long)((char *)bt[i] - (char *)info.dli_fbase),
+                      base);
+      } else {
+        ln = snprintf(lb, sizeof(lb), "[embed] bt[%d/%d] %p", i, frames,
+                      bt[i]);
+      }
+      if (ln <= 0) continue;
+      if (g_logFd >= 0) {
+        ssize_t ign = write(g_logFd, lb, (size_t)ln);
+        ign = write(g_logFd, "\n", 1);
+        (void)ign;
+      }
+      (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.embed",
+                         "%{public}s", lb);
+    }
+    if (g_logFd >= 0 && frames > 0) {
+      ssize_t ign = write(g_logFd, "[embed] backtrace symbols:\n", 27);
+      backtrace_symbols_fd(bt, frames, g_logFd);
+      (void)ign;
+    }
   }
   errno = saved;
   if (g_nodeTid > 0 && tid == (long)g_nodeTid) {
@@ -401,6 +444,37 @@ static const char *startEmbeddedNode(const char *params) {
     putenv(extraEnv[i]);
   }
 
+  /* Guarantee fds 0/1/2 are open before anything node-related runs. libuv's
+   * uv__close() asserts fd > STDERR_FILENO — if the app process was spawned
+   * with a closed std fd, pipe() below hands back fd 0/1, dup2() then
+   * no-ops (dup2(x,x)) and close() re-closes it, and every later cleanup
+   * path closes a std fd → assert. /dev/null onto any EBADF fd, and log
+   * the before/after so the device log shows the real fd layout. */
+  {
+    char fix[96];
+    int off = 0;
+    for (int fd = 0; fd <= 2; fd++) {
+      struct stat st;
+      if (fstat(fd, &st) == 0) continue;
+      int nfd = open("/dev/null", O_RDWR);
+      if (nfd < 0) {
+        logWrite("[embed] std fd %d closed, /dev/null open failed: %s", fd,
+                 strerror(errno));
+        continue;
+      }
+      if (nfd != fd) {
+        dup2(nfd, fd);
+        close(nfd);
+      }
+      off += snprintf(fix + off, sizeof(fix) - (size_t)off, " fd%d=/dev/null",
+                      fd);
+      if (off >= (int)sizeof(fix) - 16) break;
+    }
+    if (off > 0) {
+      logWrite("[embed] stdio repair:%s", fix);
+    }
+  }
+
   /* node's stderr must be observable or abort()/assert messages vanish:
    * redirect fd 1/2 onto a pipe and stream it line-by-line to the boot log
    * AND hilog (hilog truncates long messages, so file-only capture is not
@@ -412,6 +486,7 @@ static const char *startEmbeddedNode(const char *params) {
   if (g_logFd > 2) {
     int fds[2];
     if (pipe(fds) == 0) {
+      logWrite("[embed] stdio pipe: read=%d write=%d", fds[0], fds[1]);
       g_pipeOut = fds[0];
       dup2(fds[1], 1);
       dup2(fds[1], 2);
