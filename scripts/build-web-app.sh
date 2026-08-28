@@ -324,7 +324,8 @@ fi
 echo "    ✓ binary-sign-tool.jar ready"
 
 NODE_LIB="${PROJECT_ROOT}/entry/libs/arm64-v8a/libnode.so"
-NODE_LIB_SIGNED="$(mktemp -t libnode).signed"
+# plain mktemp (no -t template) — GNU mktemp rejects -t templates without X's
+NODE_LIB_SIGNED="$(mktemp).signed"
 NODE_SIGNED=0
 
 if [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
