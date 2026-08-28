@@ -67,6 +67,7 @@ typedef struct {
 } LauncherConfig;
 
 static int g_logFd = -1;
+static char g_logPath[MAX_LINE * 2] = ""; /* for the stdio rebuild below */
 
 /* Forward declaration — dladdr() below takes Main's address. */
 void Main(NativeChildProcess_Args args);
@@ -88,6 +89,80 @@ static void logWrite(const char *fmt, ...) {
   }
   (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.launcher",
                      "%{public}s", buf);
+}
+
+/* ── Crash markers: log which signal killed the child before dying ──
+ * (node's assert → abort() = SIGABRT; without this the boot log just ends). */
+static void crashMarkerHandler(int sig) {
+  int saved = errno;
+  char b[64];
+  int n = snprintf(b, sizeof(b), "[launcher] process dying: signal %d\n", sig);
+  if (n > 0) {
+    if (g_logFd >= 0) {
+      ssize_t ign = write(g_logFd, b, (size_t)n);
+      (void)ign;
+    } else if (g_logPath[0]) {
+      int fd = open(g_logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+      if (fd >= 0) {
+        ssize_t ign = write(fd, b, (size_t)n);
+        (void)ign;
+        close(fd);
+      }
+    }
+  }
+  errno = saved;
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+static void installCrashMarkers(void) {
+  const int sigs[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGSYS};
+  for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
+    signal(sigs[i], crashMarkerHandler);
+  }
+}
+
+/* ── Deterministic stdio for the embedded node runtime ──
+ *
+ * nodejs-mobile lesson + libuv's `assert(fd > STDERR_FILENO)` in uv__close:
+ * whatever fd state the nativespawn child is born with, node must see
+ * 0=/dev/null, 1=2=our log — every slot open, no aliasing with higher fds,
+ * so no uv handle can ever end up on fd 0/1/2 through a closed-then-reused
+ * slot. Also snapshots the inherited fd table into the boot log (answers
+ * "what was the child born with" for good). */
+static void setupStdioForNode(void) {
+  for (int fd = 0; fd <= 9; fd++) {
+    struct stat st;
+    if (fstat(fd, &st) == 0) {
+      const char *tag = "other";
+      if (S_ISCHR(st.st_mode)) tag = "chardev";
+      else if (S_ISREG(st.st_mode)) tag = "regular";
+      else if (S_ISFIFO(st.st_mode)) tag = "fifo/pipe";
+      else if (S_ISSOCK(st.st_mode)) tag = "socket";
+      logWrite("[launcher] fd %d open at birth: %s", fd, tag);
+    }
+  }
+
+  close(0);
+  close(1);
+  close(2);
+  if (g_logFd > 2) {
+    close(g_logFd); /* reopen below right on slot 1 */
+  }
+  g_logFd = -1;
+
+  int f0 = open("/dev/null", O_RDONLY); /* → 0 */
+  int f1 = g_logPath[0]
+               ? open(g_logPath, O_WRONLY | O_CREAT | O_APPEND, 0644)
+               : -1; /* → 1 */
+  int f2 = dup2(f1 >= 0 ? f1 : f0, 2); /* → 2 */
+  g_logFd = 1;
+  logWrite("[launcher] stdio rebuilt: f0=%d f1=%d f2=%d "
+           "(0=/dev/null, 1=2=%s)",
+           f0, f1, f2, g_logPath[0] ? g_logPath : "?");
+  (void)f0;
+  (void)f1;
+  (void)f2;
 }
 
 /* Parse "key=value\n" lines into the config struct. Unknown keys are
@@ -574,10 +649,15 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     char logPath[MAX_LINE * 2];
     snprintf(logPath, sizeof(logPath), "%s/node-boot.log", cfg.dataDir);
     g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (g_logFd < 0) {
+    if (g_logFd >= 0) {
+      snprintf(g_logPath, sizeof(g_logPath), "%s", logPath);
+    } else {
       snprintf(logPath, sizeof(logPath),
                "/data/storage/el2/base/files/electerm-data/node-boot.log");
       g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+      if (g_logFd >= 0) {
+        snprintf(g_logPath, sizeof(g_logPath), "%s", logPath);
+      }
     }
   }
   logWrite("[launcher] Main() entered, pid=%d", (int)getpid());
@@ -645,12 +725,12 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     putenv(extraEnv[i]);
   }
 
-  /* 4. Redirect stdout/stderr into the boot log so node console output and
-   *    crash messages are captured on device. */
-  if (g_logFd >= 0) {
-    dup2(g_logFd, 1);
-    dup2(g_logFd, 2);
-  }
+  /* 4. Rebuild stdio deterministically (0=/dev/null, 1=2=boot log) so node's
+   *    libuv can never see a closed/aliased fd 0/1/2 — the exact condition
+   *    behind libuv's `assert(fd > STDERR_FILENO)`. Also installs crash
+   *    markers: the boot log records which signal killed the child. */
+  setupStdioForNode();
+  installCrashMarkers();
 
   /* 5. Log the node file's mode + the mount flags of its directory —
    * noexec / code-integrity enforcement shows up here. */
