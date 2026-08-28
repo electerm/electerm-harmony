@@ -170,7 +170,7 @@ struct Index {
       const ok: boolean = await this.waitForBackend();
       if (!ok) {
         this.bootFailed = true;
-        const tail: string = this.readBootLogTailLines(8);
+        const tail: string = this.readBootLogTailLines(14);
         this.statusMessage = tail
           ? tail
           : 'Engine failed to start (no node-boot.log — child never ran?)';
@@ -232,14 +232,18 @@ struct Index {
   /** Dump the launcher's boot log tail to hilog — the fastest way to see why
    * exec failed when only hilog (no file pull) is available, e.g. cloud debug. */
   logBootTail(): void {
+    this.logBootTailWindow(2400);
+  }
+
+  /** Dump the last `n` chars of the boot log to hilog (periodic ring-buffer
+   * insurance — see waitForBackend). */
+  logBootTailWindow(n: number): void {
     const text: string = this.readBootLog();
     if (!text) {
-      hilog.error(DOMAIN, TAG,
-        'node-boot.log empty/missing at %{public}s — child never wrote anything', this.dataDir);
       return;
     }
-    const tail: string = text.length > 2400
-      ? text.substring(text.length - 2400)
+    const tail: string = text.length > n
+      ? text.substring(text.length - n)
       : text;
     hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
   }
@@ -281,6 +285,12 @@ struct Index {
           this.statusMessage = line;
           hilog.info(DOMAIN, TAG, 'boot: %{public}s', line);
         }
+        // Periodic tail dump: the cloud-debug hilog export grabs the OLDEST
+        // buffered lines, and ~1600 lines/s of system noise flushes the ring
+        // long before the 90s deadline — re-dumping the tail every ~2s keeps
+        // a copy of the boot ladder (and any crash marker) inside whatever
+        // window survives.
+        this.logBootTailWindow(1100);
       }
       await this.sleep(POLL_INTERVAL_MS);
     }
@@ -343,7 +353,7 @@ struct Index {
               .color('#4aa3ff')
           }
           Text(this.statusMessage)
-            .fontSize(13)
+            .fontSize(this.bootFailed ? 11 : 13)
             .fontColor(this.bootFailed ? '#e5484d' : '#8b93a7')
             .textAlign(TextAlign.Center)
             .padding({ left: 24, right: 24 })
