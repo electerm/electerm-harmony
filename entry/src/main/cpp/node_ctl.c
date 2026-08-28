@@ -255,7 +255,15 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   }
   ucontext_t *uc = (ucontext_t *)ctx;
   uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */
-  uc->uc_mcontext.regs[0] = (unsigned long)-ENOSYS;
+  /* Return EXACTLY -1, not -ENOSYS: OHOS musl's syscall() passes the raw
+   * x0 through WITHOUT the __syscall_ret(errno)-translation upstream musl
+   * does, so -38 leaks to callers as a bogus value. Device-proven: libuv's
+   * uv__iou_init() got ringfd=-38 from the seccomp-trapped io_uring_setup,
+   * sailed past its `if (ringfd == -1) return;` guard, failed mmap/epoll_ctl
+   * on the bogus fd, and its cleanup called uv__close(-38) → the very assert
+   * (fd > STDERR_FILENO) that killed the backend. */
+  uc->uc_mcontext.regs[0] = (unsigned long)-1;
+  errno = ENOSYS; /* TLS store — async-signal-safe; for errno-checking callers */
 }
 
 static void installSigsysShim(void) {

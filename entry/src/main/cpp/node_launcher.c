@@ -437,9 +437,15 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   }
   ucontext_t *uc = (ucontext_t *)ctx;
   /* aarch64: the trapped instruction is the 4-byte `svc #0`; skip it and
-   * put -ENOSYS in x0 (the syscall return register). */
+   * put the failure value in x0 (the syscall return register).
+   * Return EXACTLY -1, not -ENOSYS: OHOS musl's syscall() passes raw x0
+   * through without __syscall_ret errno-translation, so -38 leaks out as a
+   * bogus value — device-proven fatal in libuv uv__iou_init(): ringfd=-38
+   * passed its `== -1` guard, mmap/epoll_ctl failed, cleanup called
+   * uv__close(-38) → assert(fd > STDERR_FILENO) → abort. */
   uc->uc_mcontext.pc += 4;
-  uc->uc_mcontext.regs[0] = (unsigned long)-ENOSYS;
+  uc->uc_mcontext.regs[0] = (unsigned long)-1;
+  errno = ENOSYS; /* TLS store — async-signal-safe; for errno-checking callers */
 }
 
 static void installSigsysShim(void) {
