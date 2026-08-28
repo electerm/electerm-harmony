@@ -59,6 +59,8 @@ static char g_logPath[MAX_LINE * 2] = "";
 static int g_started = 0; /* startBackend may only run once per process */
 static int g_pipeOut = -1; /* read end of the stdio→hilog pipe */
 
+static void logWrite(const char *fmt, ...);
+
 /* Stream everything written to the app's stdout/stderr (fd 1/2 are dup2'd
  * onto a pipe) into the boot log AND hilog, line by line. hilog truncates
  * single messages at ~140 bytes, so chunked/tail dumps can't carry node's
