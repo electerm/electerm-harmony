@@ -332,7 +332,9 @@ if [ ! -f "${SIGN_TOOL_JAR}" ]; then
   exit 1
 fi
 
-SIGNED_APP="${UNSIGNED_APP%.app}-signed.app"
+# electerm-harmony-default-unsigned.app -> electerm-harmony-default-signed.app
+SIGNED_APP="${UNSIGNED_APP%.app}"
+SIGNED_APP="${SIGNED_APP%-unsigned}-signed.app"
 
 java -jar "${SIGN_TOOL_JAR}" sign-app \
   -mode localSign \
