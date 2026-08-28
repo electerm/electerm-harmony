@@ -44,6 +44,13 @@ npm ci --legacy-peer-deps --ignore-scripts || {
   npm install --legacy-peer-deps --ignore-scripts
 }
 
+# Copy @electerm/electerm-react's client sources into src/client/electerm-react
+# (gitignored generated dir the vite build imports from). This is the android
+# repo's build/bin/install.js step; run it directly — `npm run install` would
+# collide with npm's install lifecycle script.
+echo "    Installing electerm-react client sources ..."
+node build/bin/install.js
+
 # Build frontend + backend into entry resfile
 echo "    Building electerm web app ..."
 npm run build:web
