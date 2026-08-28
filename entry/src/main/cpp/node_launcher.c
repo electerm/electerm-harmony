@@ -201,6 +201,78 @@ static int fileExists(const char *path) {
   return access(path, F_OK) == 0;
 }
 
+/* Find the system musl dynamic loader — first from /proc/self/maps (it
+ * mapped us, so it is definitely present at that path), then well-known
+ * locations. */
+static int findLoader(char *out, size_t outSize) {
+  FILE *f = fopen("/proc/self/maps", "r");
+  if (f) {
+    char line[MAX_LINE];
+    while (fgets(line, sizeof(line), f)) {
+      char *hit = strstr(line, "ld-musl");
+      if (hit && strstr(hit, ".so")) {
+        char *nl = strchr(hit, '\n');
+        if (nl) *nl = '\0';
+        snprintf(out, outSize, "%s", hit);
+        fclose(f);
+        return 0;
+      }
+    }
+    fclose(f);
+  }
+  const char *fallbacks[] = {
+    "/lib/ld-musl-aarch64.so.1",
+    "/system/lib/ld-musl-aarch64.so.1",
+    "/system/lib64/ld-musl-aarch64.so.1",
+    NULL
+  };
+  for (int i = 0; fallbacks[i]; i++) {
+    if (fileExists(fallbacks[i])) {
+      snprintf(out, outSize, "%s", fallbacks[i]);
+      return 0;
+    }
+  }
+  return -1;
+}
+
+/* Log the mount that contains `path` (from /proc/self/mountinfo) so noexec
+ * and other enforcement is visible in the boot log. */
+static void logMountFlagsFor(const char *path) {
+  /* find the deepest mount point that prefixes path */
+  char best[MAX_LINE];
+  char bestLine[MAX_LINE * 2];
+  best[0] = '\0';
+  bestLine[0] = '\0';
+  FILE *f = fopen("/proc/self/mountinfo", "r");
+  if (!f) {
+    logWrite("[launcher] cannot open /proc/self/mountinfo: %s",
+             strerror(errno));
+    return;
+  }
+  char line[MAX_LINE * 2];
+  while (fgets(line, sizeof(line), f)) {
+    /* format: id parent maj:min root mountpoint options ... */
+    unsigned id, parent;
+    unsigned maj, min;
+    char root[MAX_LINE], mnt[MAX_LINE], opts[MAX_LINE];
+    if (sscanf(line, "%u %u %u:%u %s %s %s", &id, &parent, &maj, &min, root,
+               mnt, opts) != 7) {
+      continue;
+    }
+    if (strncmp(path, mnt, strlen(mnt)) == 0 &&
+        strlen(mnt) > strlen(best)) {
+      snprintf(best, sizeof(best), "%s", mnt);
+      snprintf(bestLine, sizeof(bestLine), "mount %s → options: %s", mnt, opts);
+    }
+  }
+  fclose(f);
+  if (best[0]) {
+    logWrite("[launcher] %s (for %s)", bestLine, path);
+  } else {
+    logWrite("[launcher] no mountinfo entry prefixes %s", path);
+  }
+}
+
 /* execveat on a memfd copy of the binary — the noexec-bypass fallback. */
 static int execFromMemfd(const char *binaryPath, char *const argv[],
                          char *const envp[]) {
@@ -346,9 +418,21 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     dup2(g_logFd, 2);
   }
 
-  /* 5. Ensure the executable bit is set (it should already be, but a
-   *    remounted/restored file could lose it) and exec. */
-  chmod(nodePath, 0755);
+  /* 5. Log the node file's mode + the mount flags of its directory —
+   * noexec / code-integrity enforcement shows up here. */
+  {
+    struct stat st;
+    if (stat(nodePath, &st) == 0) {
+      logWrite("[launcher] node stat: mode=%o size=%ld", st.st_mode,
+               (long)st.st_size);
+    } else {
+      logWrite("[launcher] node stat failed: %s", strerror(errno));
+    }
+    logMountFlagsFor(nodePath);
+  }
+
+  /* 6. exec. */
+  chmod(nodePath, 0755); /* no-op on the read-only bundle mount; logged above */
 
   char nodeArg0[MAX_LINE * 2];
   snprintf(nodeArg0, sizeof(nodeArg0), "%s", nodePath);
@@ -357,10 +441,29 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
   logWrite("[launcher] execv: %s %s", nodeArg0, cfg.script);
   execv(nodeArg0, argv);
   int execErr = errno;
-  logWrite("[launcher] execv failed: %s — trying memfd fallback",
+  logWrite("[launcher] execv failed: errno=%d (%s)", execErr,
            strerror(execErr));
 
-  /* 6. noexec fallback */
+  /* 6a. Loader-exec fallback: exec the SYSTEM dynamic loader (signed, on an
+   * exec mount) with the node binary as its program argument. The loader
+   * maps the binary itself — the same PROT_EXEC file mapping dlopen() uses,
+   * which demonstrably works for app .so files in this very process. This
+   * sidesteps execve() of an unsigned app file entirely. */
+  {
+    char loader[MAX_LINE];
+    if (findLoader(loader, sizeof(loader)) == 0) {
+      char *const largv[] = {loader, nodeArg0, cfg.script, NULL};
+      logWrite("[launcher] execv via loader: %s %s %s", loader, nodeArg0,
+               cfg.script);
+      execv(loader, largv);
+      logWrite("[launcher] loader execv failed: errno=%d (%s)", errno,
+               strerror(errno));
+    } else {
+      logWrite("[launcher] no dynamic loader found for fallback");
+    }
+  }
+
+  /* 6b. memfd fallback (noexec mounts) */
   if (execFromMemfd(nodeArg0, argv, NULL) == 0) {
     _exit(0); /* unreachable */
   }
