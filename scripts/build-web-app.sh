@@ -351,8 +351,10 @@ if [ ! -f "${SIGNED_APP}" ]; then
   exit 1
 fi
 
-mv -f "${SIGNED_APP}" "${UNSIGNED_APP}"
-APP_FILE="${UNSIGNED_APP}"
+# Keep only the signed APP (under a name that says so) so artifact
+# pickup (find … -name '*.app') can never grab the unsigned one.
+APP_FILE="${SIGNED_APP}"
+rm -f "${UNSIGNED_APP}"
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 
