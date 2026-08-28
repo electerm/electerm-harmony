@@ -34,6 +34,23 @@
 
 This project brings electerm to **HarmonyOS** using the [Electron Harmony OS runtime](https://gitcode.com/openharmony-sig/electron) (Chromium + Node.js).
 
+> **`dev2` branch — web variant (experimental).** A second build path with no
+> electron runtime at all, modelled on [electerm-android](https://github.com/electerm/electerm-android):
+> the UI is an **ArkWeb** `Web` component and the electerm-web backend runs as
+> an on-device **Node.js** process ([hqzing/ohos-node](https://github.com/hqzing/ohos-node)
+> binary, started via `childProcessManager.startNativeChildProcess`).
+> CI: `.github/workflows/build-web.yml` (push to `dev2`).
+>
+> ```
+> ArkWeb (frontend) ── http://127.0.0.1:5577 ──► Node.js backend (native child process)
+>    loads loading page                          serves UI + SSH/SFTP/telnet/ftp/RDP/VNC/Spice
+> ```
+>
+> The electerm app (frontend + backend bundle) is packaged in the HAP `resfile`
+> and read directly by the node process; the node binary is packaged as
+> `libs/arm64-v8a/libnode.so`. On-device boot diagnostics land in
+> `<filesDir>/electerm-data/node-boot.log`.
+
 ---
 
 [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/cn/app/electerm/id6792971552)
