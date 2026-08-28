@@ -40,6 +40,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,6 +49,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <ucontext.h>
 #include <unistd.h>
 #include <hilog/log.h>
 
@@ -299,6 +301,47 @@ static void logMountFlagsFor(const char *path) {
 
 typedef int (*node_start_fn)(int argc, char *argv[]);
 
+/* ── SIGSYS: the app sandbox's seccomp filter traps syscalls node/V8 probe
+ * for at startup (membarrier, pkey_mprotect, perf_event_open, …) and the
+ * default action kills the thread (device: signo 31, si_code SYS_SECCOMP).
+ * V8/uv handle ENOSYS gracefully for all of those probes — they are
+ * optional accelerations. So: catch SIGSYS, log which syscall was trapped,
+ * skip the svc instruction, and return -ENOSYS from it. */
+
+static int g_sigsysSeen[32];
+static int g_sigsysSeenCount = 0;
+
+static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
+  (void)sig;
+  int sc = si->si_syscall; /* musl: #define si_syscall __si_fields.__sigsys.si_syscall */
+  int known = 0;
+  for (int i = 0; i < g_sigsysSeenCount; i++) {
+    if (g_sigsysSeen[i] == sc) {
+      known = 1;
+      break;
+    }
+  }
+  if (!known && g_sigsysSeenCount < 32) {
+    g_sigsysSeen[g_sigsysSeenCount++] = sc;
+    logWrite("[launcher] SIGSYS: syscall %d blocked by seccomp → ENOSYS", sc);
+  }
+  ucontext_t *uc = (ucontext_t *)ctx;
+  /* aarch64: the trapped instruction is the 4-byte `svc #0`; skip it and
+   * put -ENOSYS in x0 (the syscall return register). */
+  uc->uc_mcontext.pc += 4;
+  uc->uc_mcontext.regs[0] = (unsigned long)-ENOSYS;
+}
+
+static void installSigsysShim(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_sigaction = sigsysHandler;
+  sa.sa_flags = SA_SIGINFO;
+  if (sigaction(SIGSYS, &sa, NULL) != 0) {
+    logWrite("[launcher] sigaction(SIGSYS) failed: %s", strerror(errno));
+  }
+}
+
 struct NodeThreadArgs {
   node_start_fn start;
   char *argv[3];
@@ -331,6 +374,10 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
     return -1;
   }
   logWrite("[launcher] node::Start resolved at %p", (void *)start);
+
+  /* seccomp shim BEFORE node runs: trapped syscalls become logged ENOSYS
+   * instead of a SIGSYS thread kill. */
+  installSigsysShim();
 
   /* argv must outlive the thread — static storage. */
   static char arg0[MAX_LINE * 2];
