@@ -31,6 +31,13 @@ const BACKEND_PORT: number = 5577;
 const SERVER_URL: string = `http://127.0.0.1:${BACKEND_PORT}`;
 const POLL_INTERVAL_MS: number = 500;
 const BOOT_TIMEOUT_MS: number = 90_000;
+/**
+ * Prefer the per-process el2 junction over the parent's filesDir string:
+ * /data/storage/el2/base/files points at the same storage but is mounted in
+ * EVERY process of the app (including the native child), while the
+ * sandbox-style absolute path the parent gets may not be.
+ */
+const EL2_FILES_DIR: string = '/data/storage/el2/base/files';
 
 @Entry
 @Component
@@ -39,6 +46,7 @@ struct Index {
   @State serverReady: boolean = false;
   @State bootFailed: boolean = false;
   @State statusMessage: string = 'Starting electerm …';
+  dataDir: string = '';
 
   aboutToAppear(): void {
     this.startBackend();
@@ -72,19 +80,22 @@ struct Index {
     try {
       const context = getContext(this) as common.Context;
       const filesDir: string = context.filesDir;
-      const dataDir: string = `${filesDir}/electerm-data`;
+      // el2 junction path (visible in the child too) when available
+      this.dataDir = this.dirExists(EL2_FILES_DIR)
+        ? `${EL2_FILES_DIR}/electerm-data`
+        : `${filesDir}/electerm-data`;
       const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
 
       // 1. writable data dir (db, ssh keys, logs — the resfile install dir
       //    the backend itself runs from is read-only)
-      if (!this.dirExists(dataDir)) {
-        fs.mkdirSync(dataDir, true);
+      if (!this.dirExists(this.dataDir)) {
+        fs.mkdirSync(this.dataDir, true);
       }
 
       // 2. start the native child process
       // entryParams is a plain "key=value\n" string parsed by node_launcher.c
       const entryParams: string = [
-        `dataDir=${dataDir}`,
+        `dataDir=${this.dataDir}`,
         `script=${scriptPath}`,
         `port=${BACKEND_PORT}`
       ].join('\n');
@@ -99,13 +110,14 @@ struct Index {
       hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
 
       // 3. wait for the HTTP server
-      this.statusMessage = 'Starting engine …';
       const ok: boolean = await this.waitForBackend();
       if (!ok) {
         this.bootFailed = true;
-        this.statusMessage =
-          'Engine failed to start. See electerm-data/node-boot.log';
-        this.logBootTail(dataDir);
+        const lastLine: string = this.readBootLogLastLine();
+        this.statusMessage = lastLine
+          ? `Engine failed: ${lastLine}`
+          : 'Engine failed to start (no node-boot.log — child never ran?)';
+        this.logBootTail();
         return;
       }
 
@@ -120,18 +132,48 @@ struct Index {
     }
   }
 
+  /** Read the launcher/node boot log (written by the child). */
+  readBootLog(): string {
+    if (!this.dataDir) {
+      return '';
+    }
+    try {
+      return fs.readTextSync(`${this.dataDir}/node-boot.log`);
+    } catch {
+      return '';
+    }
+  }
+
+  /** Last non-empty log line — shown in the overlay while booting so the
+   * failure reason is visible on a plain screen mirror (cloud debug). */
+  readBootLogLastLine(): string {
+    const text: string = this.readBootLog();
+    if (!text) {
+      return '';
+    }
+    const lines: string[] = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line: string = lines[i].trim();
+      if (line) {
+        return line.length > 160 ? `…${line.substring(line.length - 159)}` : line;
+      }
+    }
+    return '';
+  }
+
   /** Dump the launcher's boot log tail to hilog — the fastest way to see why
    * exec failed when only hilog (no file pull) is available, e.g. cloud debug. */
-  logBootTail(dataDir: string): void {
-    try {
-      const text: string = fs.readTextSync(`${dataDir}/node-boot.log`);
-      const tail: string = text.length > 800
-        ? text.substring(text.length - 800)
-        : text;
-      hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
-    } catch (e) {
-      hilog.error(DOMAIN, TAG, 'node-boot.log not readable: %{public}s', JSON.stringify(e));
+  logBootTail(): void {
+    const text: string = this.readBootLog();
+    if (!text) {
+      hilog.error(DOMAIN, TAG,
+        'node-boot.log empty/missing at %{public}s — child never wrote anything', this.dataDir);
+      return;
     }
+    const tail: string = text.length > 800
+      ? text.substring(text.length - 800)
+      : text;
+    hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
   }
 
   fileExists(path: string): boolean {
@@ -152,12 +194,25 @@ struct Index {
     }
   }
 
-  /** Poll http://127.0.0.1:5577 until it answers or BOOT_TIMEOUT_MS elapses. */
+  /** Poll http://127.0.0.1:5577 until it answers or BOOT_TIMEOUT_MS elapses.
+   * While waiting, surface the child's latest boot-log line in the overlay so
+   * a stuck boot is diagnosable from the screen alone. */
   async waitForBackend(): Promise<boolean> {
     const deadline: number = Date.now() + BOOT_TIMEOUT_MS;
+    let tick: number = 0;
+    let shownLine: string = '';
     while (Date.now() < deadline) {
       if (await this.probe()) {
         return true;
+      }
+      tick++;
+      if (tick % 4 === 0) { // every ~2s
+        const line: string = this.readBootLogLastLine();
+        if (line && line !== shownLine) {
+          shownLine = line;
+          this.statusMessage = line;
+          hilog.info(DOMAIN, TAG, 'boot: %{public}s', line);
+        }
       }
       await this.sleep(POLL_INTERVAL_MS);
     }
