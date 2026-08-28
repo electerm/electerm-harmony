@@ -75,6 +75,34 @@ struct Index {
     return candidates[0]; // let the launcher report the failure
   }
 
+  /**
+   * Resolve libnode.so in the app's native libs dir and log the dir listing —
+   * this tells us from the parent side whether the installer actually
+   * extracted the 92MB node binary. Empty string when not found.
+   */
+  resolveNodePath(bundleCodeDir: string): string {
+    const libsDirs: string[] = [
+      `${bundleCodeDir}/entry/libs/arm64-v8a`,
+      `${bundleCodeDir}/libs/arm64-v8a`
+    ];
+    for (let i = 0; i < libsDirs.length; i++) {
+      const libsDir: string = libsDirs[i];
+      try {
+        const names: string[] = fs.listFileSync(libsDir);
+        hilog.info(DOMAIN, TAG, 'libs dir %{public}s → %{public}s', libsDir, names.join(', '));
+        const nodePath: string = `${libsDir}/libnode.so`;
+        if (this.fileExists(nodePath)) {
+          hilog.info(DOMAIN, TAG, 'using node: %{public}s', nodePath);
+          return nodePath;
+        }
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'libs dir not listable: %{public}s (%{public}s)',
+          libsDir, JSON.stringify(e));
+      }
+    }
+    return '';
+  }
+
   /** Create the writable data dir and spawn the node backend. */
   async startBackend(): Promise<void> {
     try {
@@ -85,6 +113,7 @@ struct Index {
         ? `${EL2_FILES_DIR}/electerm-data`
         : `${filesDir}/electerm-data`;
       const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
+      const nodePath: string = this.resolveNodePath(context.bundleCodeDir);
 
       // 1. writable data dir (db, ssh keys, logs — the resfile install dir
       //    the backend itself runs from is read-only)
@@ -94,11 +123,15 @@ struct Index {
 
       // 2. start the native child process
       // entryParams is a plain "key=value\n" string parsed by node_launcher.c
-      const entryParams: string = [
+      const paramLines: string[] = [
         `dataDir=${this.dataDir}`,
         `script=${scriptPath}`,
         `port=${BACKEND_PORT}`
-      ].join('\n');
+      ];
+      if (nodePath) {
+        paramLines.push(`node=${nodePath}`);
+      }
+      const entryParams: string = paramLines.join('\n');
 
       this.statusMessage = 'Starting Node.js engine …';
       hilog.info(DOMAIN, TAG, 'starting native child process, params: %{public}s', entryParams);

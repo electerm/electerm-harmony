@@ -5,30 +5,37 @@
  * ArkTS cannot exec() a binary. It starts this library as a *native child
  * process* via childProcessManager.startNativeChildProcess(
  *   'libnode_launcher.so:Main', { entryParams }) — the system forks a child
- * (through appspawn), loads this .so into it and calls Main() below.
+ * (through nativespawn), loads this .so into it and calls Main() below.
  *
  * Main() then:
  *   1. parses the entryParams string ("key=value" lines — plain text, no
- *      JSON parser needed);
+ *      JSON parser needed); recognized keys: dataDir, script, node, port,
+ *      secret (unknown keys are exported as env vars for the node process);
  *   2. locates the node binary (installed as libnode.so in the app's native
- *      lib dir, discovered via /proc/self/maps where this very library was
- *      loaded from, plus fallback candidates);
+ *      lib dir): parent-provided "node=" path, then dladdr() on this very
+ *      function, then every mapped-.so directory from /proc/self/maps, then
+ *      the el1/bundle junction layout;
  *   3. redirects stdout/stderr to a boot log for on-device debugging;
  *   4. execv()s node with the electerm entry script.
  *
- * If execv fails (e.g. the lib dir turns out to be noexec) a memfd fallback
- * is attempted: the binary is copied into an anonymous executable memory
- * file and execveat()d — bypassing mount noexec flags entirely.
+ * If execv fails (e.g. the lib dir turns out to be noexec or the binary is
+ * blocked by code-integrity checks) a memfd fallback is attempted: the
+ * binary is copied into an anonymous executable memory file and execveat()d
+ * — bypassing mount noexec flags entirely.
  *
- * Every step is logged to <dataDir>/node-boot.log (plus the errno of any
- * failure), so `hdc file recv` of that one file answers "why is the engine
- * not starting" on a real device.
+ * Every step is logged BOTH to <dataDir>/node-boot.log AND to hilog
+ * (tag electerm.launcher, error level so release builds keep it) — so the
+ * boot sequence is visible even when the log file cannot be pulled.
+ *
+ * Exit codes: 40 script missing · 41 node binary not found · 42 all exec
+ * strategies failed.
  */
 
 #include <stdbool.h> /* native_child_process.h uses `bool` */
 
 #include "AbilityKit/native_child_process.h"
 
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -40,20 +47,28 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <hilog/log.h>
 
 #define LOG_BUF_SIZE 4096
 #define MAX_ENV_VARS 32
 #define MAX_LINE 1024
+#define MAX_CANDIDATES 12
 
 typedef struct {
-  char dataDir[MAX_LINE];   /* writable app data dir (el2 filesDir) */
+  char dataDir[MAX_LINE];    /* writable app data dir (el2 filesDir) */
   char script[MAX_LINE * 2]; /* path to resfile/electerm/index.js */
+  char node[MAX_LINE * 2];   /* optional parent-provided libnode.so path */
   char port[16];
-  char secret[MAX_LINE];   /* SERVER_SECRET */
+  char secret[MAX_LINE];     /* SERVER_SECRET */
 } LauncherConfig;
 
 static int g_logFd = -1;
 
+/* Forward declaration — dladdr() below takes Main's address. */
+void Main(NativeChildProcess_Args args);
+
+/* Every message goes to the boot log file AND hilog (error level: release
+ * builds keep it, and `hdc hilog` shows it under electerm.launcher). */
 static void logWrite(const char *fmt, ...) {
   char buf[LOG_BUF_SIZE];
   va_list ap;
@@ -61,13 +76,14 @@ static void logWrite(const char *fmt, ...) {
   int n = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
   va_end(ap);
   if (n < 0) return;
-  buf[n] = '\n';
+  buf[n] = '\0';
   if (g_logFd >= 0) {
-    ssize_t ignored = write(g_logFd, buf, (size_t)n + 1);
+    ssize_t ignored = write(g_logFd, buf, (size_t)n);
+    ignored = write(g_logFd, "\n", 1);
     (void)ignored;
   }
-  /* also surface in hilog (stderr was dup2'd to the log file, so keep a
-   * copy on fd 1 before redirection happens via this early path) */
+  (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.launcher",
+                     "%{public}s", buf);
 }
 
 /* Parse "key=value\n" lines into the config struct. Unknown keys are
@@ -79,6 +95,7 @@ static void parseEntryParams(const char *params, LauncherConfig *cfg,
   snprintf(cfg->port, sizeof(cfg->port), "5577");
   cfg->dataDir[0] = '\0';
   cfg->script[0] = '\0';
+  cfg->node[0] = '\0';
   cfg->secret[0] = '\0';
 
   char line[MAX_LINE];
@@ -101,6 +118,8 @@ static void parseEntryParams(const char *params, LauncherConfig *cfg,
       snprintf(cfg->dataDir, sizeof(cfg->dataDir), "%s", value);
     } else if (strcmp(key, "script") == 0) {
       snprintf(cfg->script, sizeof(cfg->script), "%s", value);
+    } else if (strcmp(key, "node") == 0) {
+      snprintf(cfg->node, sizeof(cfg->node), "%s", value);
     } else if (strcmp(key, "port") == 0) {
       snprintf(cfg->port, sizeof(cfg->port), "%s", value);
     } else if (strcmp(key, "secret") == 0) {
@@ -111,65 +130,75 @@ static void parseEntryParams(const char *params, LauncherConfig *cfg,
   }
 }
 
-/* Find the directory this library was loaded from by scanning
- * /proc/self/maps for "libnode_launcher.so" — the sibling libnode.so lives
- * in the same (executable) native lib dir. */
-static int findSelfDir(char *out, size_t outSize) {
-  FILE *f = fopen("/proc/self/maps", "r");
-  if (!f) return -1;
-  char line[MAX_LINE];
-  while (fgets(line, sizeof(line), f)) {
-    char *hit = strstr(line, "libnode_launcher.so");
-    if (hit) {
-      /* trim trailing newline */
-      char *nl = strchr(hit, '\n');
-      if (nl) *nl = '\0';
-      char *slash = strrchr(hit, '/');
-      if (slash) {
-        *slash = '\0';
-        snprintf(out, outSize, "%s", hit);
-        fclose(f);
-        return 0;
-      }
+static void addCandidate(char (*candidates)[MAX_LINE * 2], int *n,
+                         const char *dir, const char *tag) {
+  if (*n >= MAX_CANDIDATES) return;
+  if (!dir || !dir[0]) return;
+  /* dedupe */
+  char path[MAX_LINE * 2];
+  snprintf(path, sizeof(path), "%s/libnode.so", dir);
+  for (int i = 0; i < *n; i++) {
+    if (strcmp(candidates[i], path) == 0) return;
+  }
+  snprintf(candidates[(*n)], MAX_LINE * 2, "%s", path);
+  logWrite("[launcher] candidate(%s): %s", tag, candidates[(*n)]);
+  (*n)++;
+}
+
+/* Directory this library was loaded from, via the dynamic linker — the most
+ * reliable source (works even if /proc is restricted). */
+static void selfDirViaDladdr(char *out, size_t outSize) {
+  out[0] = '\0';
+  Dl_info info;
+  if (dladdr((void *)&Main, &info) && info.dli_fname && info.dli_fname[0]) {
+    logWrite("[launcher] dladdr dli_fname: %s", info.dli_fname);
+    const char *slash = strrchr(info.dli_fname, '/');
+    if (slash) {
+      snprintf(out, outSize, "%.*s", (int)(slash - info.dli_fname),
+               info.dli_fname);
     }
+  } else {
+    logWrite("[launcher] dladdr failed: %s", dlerror() ? dlerror() : "?");
+  }
+}
+
+/* Collect the directory of every mapped .so that looks like an app native
+ * lib (path contains "arm64"). The child process loads several .so from the
+ * app libs dir; any of their directories may hold libnode.so. */
+static int collectMapDirs(char (*candidates)[MAX_LINE * 2], int *n) {
+  FILE *f = fopen("/proc/self/maps", "r");
+  if (!f) {
+    logWrite("[launcher] cannot open /proc/self/maps: %s", strerror(errno));
+    return -1;
+  }
+  char line[MAX_LINE];
+  int found = 0;
+  while (fgets(line, sizeof(line), f)) {
+    char *sp = strchr(line, ' ');
+    while (sp && *sp == ' ') sp++;
+    if (!sp) continue;
+    char *nm = sp;
+    /* skip perms/offset/dev columns to the pathname */
+    for (int col = 0; col < 4 && nm; nm = strchr(nm, ' '), col++) {
+      if (nm) nm++;
+    }
+    if (!nm || *nm != '/') continue;
+    char *nl = strchr(nm, '\n');
+    if (nl) *nl = '\0';
+    if (!strstr(nm, ".so")) continue;
+    if (!strstr(nm, "arm64")) continue;
+    char *slash = strrchr(nm, '/');
+    if (!slash) continue;
+    *slash = '\0';
+    addCandidate(candidates, n, nm, "maps");
+    found++;
   }
   fclose(f);
-  return -1;
+  return found;
 }
 
 static int fileExists(const char *path) {
   return access(path, F_OK) == 0;
-}
-
-/* Build the candidate node binary paths. Returns the number of candidates
- * actually appended. */
-static int buildNodeCandidates(char (*candidates)[MAX_LINE * 2],
-                               int maxCandidates) {
-  int n = 0;
-  char selfDir[MAX_LINE];
-  char bundleDir[MAX_LINE * 2];
-
-  if (findSelfDir(selfDir, sizeof(selfDir)) == 0) {
-    snprintf(candidates[n++], MAX_LINE * 2, "%s/libnode.so", selfDir);
-    logWrite("[launcher] self dir: %s", selfDir);
-  } else {
-    logWrite("[launcher] could not locate self dir via /proc/self/maps");
-  }
-
-  /* Fallbacks based on the standard install layout */
-  const char *bundleCodeDir = getenv("ELECTERM_BUNDLE_CODE_DIR");
-  if (bundleCodeDir && bundleCodeDir[0]) {
-    snprintf(bundleDir, sizeof(bundleDir), "%s", bundleCodeDir);
-  } else {
-    snprintf(bundleDir, sizeof(bundleDir), "/data/storage/el1/bundle");
-  }
-  if (n < maxCandidates)
-    snprintf(candidates[n++], MAX_LINE * 2, "%s/entry/libs/arm64-v8a/libnode.so", bundleDir);
-  if (n < maxCandidates)
-    snprintf(candidates[n++], MAX_LINE * 2, "%s/entry/libs/arm64/libnode.so", bundleDir);
-  if (n < maxCandidates)
-    snprintf(candidates[n++], MAX_LINE * 2, "%s/libs/arm64-v8a/libnode.so", bundleDir);
-  return n;
 }
 
 /* execveat on a memfd copy of the binary — the noexec-bypass fallback. */
@@ -241,7 +270,7 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (g_logFd < 0) {
       snprintf(logPath, sizeof(logPath),
-               "/data/storage/el2/base/electerm-data/node-boot.log");
+               "/data/storage/el2/base/files/electerm-data/node-boot.log");
       g_logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
     }
   }
@@ -249,23 +278,51 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
   logWrite("[launcher] entryParams: %s", params);
 
   if (!cfg.script[0] || !fileExists(cfg.script)) {
-    logWrite("[launcher] FATAL: script missing: %s", cfg.script);
+    logWrite("[launcher] FATAL: script missing: %s (errno=%d %s)", cfg.script,
+             errno, strerror(errno));
     _exit(40);
   }
 
   /* 2. Locate node */
-  char candidates[6][MAX_LINE * 2];
-  int nCand = buildNodeCandidates(candidates, 6);
+  char candidates[MAX_CANDIDATES][MAX_LINE * 2];
+  int nCand = 0;
+
+  if (cfg.node[0] && nCand < MAX_CANDIDATES) {
+    /* parent-provided full path, used verbatim */
+    snprintf(candidates[nCand], MAX_LINE * 2, "%s", cfg.node);
+    logWrite("[launcher] candidate(parent): %s", candidates[nCand]);
+    nCand++;
+  }
+  {
+    char selfDir[MAX_LINE];
+    selfDirViaDladdr(selfDir, sizeof(selfDir));
+    addCandidate(candidates, &nCand, selfDir, "dladdr");
+  }
+  collectMapDirs(candidates, &nCand);
+  {
+    const char *bundleDir = getenv("ELECTERM_BUNDLE_CODE_DIR");
+    if (!bundleDir || !bundleDir[0]) bundleDir = "/data/storage/el1/bundle";
+    char dir[MAX_LINE * 2];
+    snprintf(dir, sizeof(dir), "%s/entry/libs/arm64-v8a", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/entry/libs/arm64", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/libs/arm64-v8a", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
+  }
+
   const char *nodePath = NULL;
   for (int i = 0; i < nCand; i++) {
     if (fileExists(candidates[i])) {
       nodePath = candidates[i];
       break;
     }
-    logWrite("[launcher] candidate not found: %s", candidates[i]);
+    logWrite("[launcher] candidate not found: %s (errno=%d)", candidates[i],
+             errno);
   }
   if (!nodePath) {
-    logWrite("[launcher] FATAL: no libnode.so candidate exists");
+    logWrite("[launcher] FATAL: no libnode.so candidate exists (tried %d)",
+             nCand);
     _exit(41);
   }
   logWrite("[launcher] node binary: %s", nodePath);
