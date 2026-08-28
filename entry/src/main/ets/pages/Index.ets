@@ -3,9 +3,11 @@
  *
  * Startup sequence:
  *   1. create the writable data dir (filesDir/electerm-data)
- *   2. start the Node.js backend as a *native child process*
- *      (libnode_launcher.so:Main → execv libnode.so index.js — the backend
- *      serves the UI + SSH/SFTP/... API on http://127.0.0.1:5577)
+ *   2. start the Node.js backend — primarily IN-PROCESS in this app
+ *      process (libnode_ctl.so startBackend → dlopen libnode.so →
+ *      node::Start; the electron-harmony pattern), falling back to a
+ *      *native child process* (libnode_launcher.so:Main). The backend
+ *      serves the UI + SSH/SFTP/... API on http://127.0.0.1:5577
  *   3. poll the backend with plain HTTP until it answers
  *   4. navigate the Web component from the local loading page to the backend
  *
@@ -23,6 +25,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
+import { startBackend } from 'libnode_ctl.so';
 import { BackendManager } from '../BackendManager';
 
 const TAG: string = 'electerm.Index';
@@ -134,13 +137,34 @@ struct Index {
       const entryParams: string = paramLines.join('\n');
 
       this.statusMessage = 'Starting Node.js engine …';
-      hilog.info(DOMAIN, TAG, 'starting native child process, params: %{public}s', entryParams);
-      const pid: number = await childProcessManager.startNativeChildProcess(
-        'libnode_launcher.so:Main',
-        { entryParams: entryParams }
-      );
-      BackendManager.setPid(pid);
-      hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
+      hilog.info(DOMAIN, TAG, 'backend params: %{public}s', entryParams);
+
+      // Primary path: run node IN the main app process (dlopen libnode.so +
+      // node::Start via libnode_ctl.so — the electron-harmony / nodejs-mobile
+      // pattern). The nativespawn child runs under a stricter seccomp filter
+      // whose event-loop syscall blocks kill libuv there; the main process
+      // runs libuv-class loops of its own (NETSTACK/curl), so node lives here.
+      let startedInProcess: boolean = false;
+      try {
+        const rc: string = startBackend(entryParams);
+        startedInProcess = rc === 'ok';
+        hilog.info(DOMAIN, TAG, 'in-process startBackend → %{public}s', rc);
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'in-process startBackend threw: %{public}s', JSON.stringify(e));
+      }
+
+      if (startedInProcess) {
+        BackendManager.setInProcess();
+        hilog.info(DOMAIN, TAG, 'node running in-process (main app process)');
+      } else {
+        // Fallback: native child process (libnode_launcher.so:Main).
+        const pid: number = await childProcessManager.startNativeChildProcess(
+          'libnode_launcher.so:Main',
+          { entryParams: entryParams }
+        );
+        BackendManager.setPid(pid);
+        hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
+      }
 
       // 3. wait for the HTTP server
       const ok: boolean = await this.waitForBackend();
@@ -214,8 +238,8 @@ struct Index {
         'node-boot.log empty/missing at %{public}s — child never wrote anything', this.dataDir);
       return;
     }
-    const tail: string = text.length > 800
-      ? text.substring(text.length - 800)
+    const tail: string = text.length > 2400
+      ? text.substring(text.length - 2400)
       : text;
     hilog.error(DOMAIN, TAG, 'node-boot.log tail: %{public}s', tail);
   }

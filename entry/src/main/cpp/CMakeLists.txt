@@ -8,7 +8,8 @@ add_library(node_launcher SHARED node_launcher.c)
 # builds even when the boot-log file cannot be pulled (cloud debug)
 target_link_libraries(node_launcher PUBLIC libchild_process.so libhilog_ndk.z.so)
 
-# libnode_ctl.so — NAPI module for the main (ArkTS) process: kill the node
-# child by pid on app destroy.
+# libnode_ctl.so — NAPI module for the main (ArkTS) process: run node
+# IN-PROCESS (dlopen libnode.so + node::Start — the electron-harmony /
+# nodejs-mobile pattern) and kill the spawned child by pid on app destroy.
 add_library(node_ctl SHARED node_ctl.c)
-target_link_libraries(node_ctl PUBLIC libace_napi.z.so)
+target_link_libraries(node_ctl PUBLIC libace_napi.z.so libhilog_ndk.z.so)
