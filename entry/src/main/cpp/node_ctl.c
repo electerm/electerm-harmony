@@ -369,11 +369,17 @@ static const char *startEmbeddedNode(const char *params) {
     putenv(extraEnv[i]);
   }
 
-  /* DO NOT touch stdio here: fds 0/1/2 belong to the app process and are
-   * all valid (node's PlatformInit only fstats them). The boot log keeps a
-   * private fd > 2. */
+  /* fds 0/1/2 stay VALID (node's PlatformInit only fstats them) — but node's
+   * stderr must land in the boot log or abort()/assert messages vanish into
+   * the app's own stderr (/dev/null). Redirect 1/2 onto the log fd; the app
+   * runtime logs via hilog, not stdio, so nothing of value is lost. */
   installCrashMarkers();
   installSigsysShim();
+  if (g_logFd > 2) {
+    dup2(g_logFd, 1);
+    dup2(g_logFd, 2);
+    logWrite("[embed] stdout/stderr redirected to node-boot.log");
+  }
 
   if (cfg.dataDir[0] && chdir(cfg.dataDir) == 0) {
     logWrite("[embed] cwd: %s", cfg.dataDir);
