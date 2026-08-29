@@ -280,7 +280,7 @@ static int fileExists(const char *path) {
   return access(path, F_OK) == 0;
 }
 
-/* Find the system musl dynamic loader — first from /proc/self/maps (it
+/* Find the system musl  dynamic loader — first from /proc/self/maps (it
  * mapped us, so it is definitely present at that path), then well-known
  * locations. The path is the LAST whitespace-delimited token of the maps
  * line — substring-searching for "ld-musl" and slicing from there drops
