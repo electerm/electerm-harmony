@@ -333,7 +333,14 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
     }
   }
   ucontext_t *uc = (ucontext_t *)ctx;
+#if defined(__aarch64__)
   uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */
+  uc->uc_mcontext.regs[0] = (unsigned long)-1;
+#elif defined(__x86_64__)
+  /* On x86_64, skip the syscall instruction and set return to -1 */
+  uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  uc->uc_mcontext.gregs[REG_RAX] = (unsigned long)-1;
+#endif
   /* Return EXACTLY -1, not -ENOSYS: OHOS musl's syscall() passes the raw
    * x0 through WITHOUT the __syscall_ret(errno)-translation upstream musl
    * does, so -38 leaks to callers as a bogus value. Device-proven: libuv's
@@ -341,7 +348,6 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
    * sailed past its `if (ringfd == -1) return;` guard, failed mmap/epoll_ctl
    * on the bogus fd, and its cleanup called uv__close(-38) → the very assert
    * (fd > STDERR_FILENO) that killed the backend. */
-  uc->uc_mcontext.regs[0] = (unsigned long)-1;
   errno = ENOSYS; /* TLS store — async-signal-safe; for errno-checking callers */
 }
 
@@ -500,7 +506,11 @@ static const char *startEmbeddedNode(const char *params) {
     addCandidate(candidates, &nCand, dir, "el1");
     snprintf(dir, sizeof(dir), "%s/entry/libs/arm64", bundleDir);
     addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/entry/libs/x86_64", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
     snprintf(dir, sizeof(dir), "%s/libs/arm64-v8a", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/libs/x86_64", bundleDir);
     addCandidate(candidates, &nCand, dir, "el1");
   }
 

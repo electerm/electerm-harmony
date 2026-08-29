@@ -265,7 +265,7 @@ static int collectMapDirs(char (*candidates)[MAX_LINE * 2], int *n) {
     char *nl = strchr(nm, '\n');
     if (nl) *nl = '\0';
     if (!strstr(nm, ".so")) continue;
-    if (!strstr(nm, "arm64")) continue;
+    if (!strstr(nm, "arm64") && !strstr(nm, "x86_64")) continue;
     char *slash = strrchr(nm, '/');
     if (!slash) continue;
     *slash = '\0';
@@ -476,8 +476,13 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
    * bogus value — device-proven fatal in libuv uv__iou_init(): ringfd=-38
    * passed its `== -1` guard, mmap/epoll_ctl failed, cleanup called
    * uv__close(-38) → assert(fd > STDERR_FILENO) → abort. */
+#if defined(__aarch64__)
   uc->uc_mcontext.pc += 4;
   uc->uc_mcontext.regs[0] = (unsigned long)-1;
+#elif defined(__x86_64__)
+  uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  uc->uc_mcontext.gregs[REG_RAX] = (unsigned long)-1;
+#endif
   errno = ENOSYS; /* TLS store — async-signal-safe; for errno-checking callers */
 }
 
@@ -767,7 +772,11 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     addCandidate(candidates, &nCand, dir, "el1");
     snprintf(dir, sizeof(dir), "%s/entry/libs/arm64", bundleDir);
     addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/entry/libs/x86_64", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
     snprintf(dir, sizeof(dir), "%s/libs/arm64-v8a", bundleDir);
+    addCandidate(candidates, &nCand, dir, "el1");
+    snprintf(dir, sizeof(dir), "%s/libs/x86_64", bundleDir);
     addCandidate(candidates, &nCand, dir, "el1");
   }
 
