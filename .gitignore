@@ -55,3 +55,8 @@ entry/src/main/resources/rawfile
 /src/client/electerm-react/
 /data
 .workbuddy
+entry/src/main/resources/resfile
+local.properties
+build/tools
+entry/oh_modules
+entry/.cxx
