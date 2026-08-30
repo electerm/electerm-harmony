@@ -418,6 +418,39 @@ static void safeAppendInt(char *b, size_t cap, size_t *n, int v) {
   }
 }
 
+/* Same contract as safeAppendInt, for addresses. Hand-rolled because
+ * snprintf is off-limits in a signal handler (see the note above). */
+static void safeAppendHex(char *b, size_t cap, size_t *n, unsigned long v) {
+  int started = 0;
+  for (int shift = 60; shift >= 0; shift -= 4) {
+    unsigned int d = (unsigned int)((v >> shift) & 0xFu);
+    if (d == 0 && !started && shift != 0) continue;
+    started = 1;
+    if (*n >= cap) return;
+    b[(*n)++] = (char)(d < 10 ? ('0' + d) : ('a' + (d - 10)));
+  }
+  if (!started && *n < cap) {
+    b[(*n)++] = '0';
+  }
+}
+
+/* Is there an aarch64 `svc #0` (encoded 0xd4000001) at `pc`?
+ *
+ * Deciding whether to skip the trapped instruction by comparing the signal
+ * frame's PC with si_addr does NOT work: both values come from the same
+ * pt_regs, so they agree whether or not the kernel already advanced past
+ * the syscall. Device-verified 2026-08-31: the delta was 0, which is
+ * consistent with BOTH "PC on the svc" and "PC already past it".
+ * Looking at the instruction encoding is the only way to tell. */
+static int pcIsSvcInsn(unsigned long pc) {
+  if (pc == 0 || (pc & 3U) != 0) {
+    return 0;
+  }
+  unsigned int insn = 0;
+  memcpy(&insn, (const void *)pc, sizeof(insn));
+  return (insn & 0xffe0001fu) == 0xd4000001u;
+}
+
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
   static unsigned int seenBits[16]; /* 512 syscall numbers, logged once each */
 
@@ -430,61 +463,72 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
     return;
   }
 
+  ucontext_t *uc = (ucontext_t *)ctx;
+  unsigned long callAddr = (unsigned long)(uintptr_t)si->si_addr;
+  unsigned long pc = 0;
+#if defined(__aarch64__)
+  pc = uc->uc_mcontext.pc;
+#elif defined(__x86_64__)
+  pc = (unsigned long)uc->uc_mcontext.gregs[REG_RIP];
+#endif
+  int onSvc = pcIsSvcInsn(pc);
+
   int sc = si->si_syscall;
   if (sc >= 0 && sc < 512) {
     unsigned int bit = 1u << (sc & 31);
     if (!(seenBits[sc >> 5] & bit)) {
       seenBits[sc >> 5] |= bit;
-      char b[96];
+      char b[192];
       size_t n = 0;
       safeAppend(b, sizeof(b), &n, "[embed] SIGSYS: syscall ");
       safeAppendInt(b, sizeof(b), &n, sc);
       safeAppend(b, sizeof(b), &n, " (");
       safeAppend(b, sizeof(b), &n, syscallName(sc));
-      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1\n");
+      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1");
+      safeAppend(b, sizeof(b), &n, " pc=0x");
+      safeAppendHex(b, sizeof(b), &n, pc);
+      safeAppend(b, sizeof(b), &n, " call=0x");
+      safeAppendHex(b, sizeof(b), &n, callAddr);
+      safeAppend(b, sizeof(b), &n, " d=");
+      safeAppendInt(b, sizeof(b), &n, (int)(long)(pc - callAddr));
+      safeAppend(b, sizeof(b), &n, " onsvc=");
+      safeAppendInt(b, sizeof(b), &n, onSvc);
+      safeAppend(b, sizeof(b), &n, "\n");
       /* Raw write() to the boot-log FILE only.
        *
-       * This used to also write(2, b, n) — fd 2 is the stdio pipe shared
-       * with ArkWeb/Chromium. That pipe can be full (Chromium floods it),
-       * and write() on a full pipe BLOCKS; blocking inside a signal
-       * handler on a thread that already holds libc locks is how the node
-       * thread ended up faulting (SEGV in strlen) instead of getting a
-       * clean -1. The reader thread now surfaces these lines to hilog in
-       * normal context, where locks are actually safe. */
+       * No logWrite() here. logWrite() is vsnprintf + OH_LOG_Print, and
+       * both take libc locks. Calling them from this handler is
+       * device-proven to crash the trapped thread: on 2026-08-31 the run
+       * that logged pc/call_addr via logWrite() died with
+       *   SIGSEGV code=1 addr=0x0 pc=<musl> lr=<garbage>
+       * immediately after the handler returned. Compose with fixed strings
+       * and hand-rolled number formatting, then a bare write(2) — that is
+       * the only thing allowed here.
+       *
+       * This also used to write to fd 2, the stdio pipe shared with
+       * ArkWeb/Chromium. That pipe can be full (Chromium floods it) and
+       * write() on a full pipe BLOCKS — inside a signal handler, fatal.
+       * The reader thread picks the line up from the boot log and relays it
+       * to hilog in normal context, where locks are actually safe. */
       if (g_logFd >= 0) {
         ssize_t ign = write(g_logFd, b, n);
         (void)ign;
       }
     }
   }
-  ucontext_t *uc = (ucontext_t *)ctx;
-  /* si_addr is the address of the trapping instruction for a SIGSYS
-   * (Linux aliases si_call_addr onto si_addr). Compare it with the signal
-   * frame's PC instead of blindly skipping the svc:
-   *
-   * the handler must skip the trapped syscall instruction so execution
-   * resumes after it, but whether the kernel delivered the signal with the
-   * PC still ON the svc or already advanced past it is NOT portable. Adding
-   * 4 when the PC has already moved skips a real instruction and resumes
-   * mid-stream — a very good way to turn a handled trap into a SIGSEGV a
-   * few instructions later, which is what we have been seeing.
-   */
-  unsigned long callAddr = (unsigned long)(uintptr_t)(si ? si->si_addr : 0);
 #if defined(__aarch64__)
-  logWrite("[embed] SIGSYS pc=0x%lx call_addr=0x%lx (delta %ld)",
-           uc->uc_mcontext.pc, callAddr,
-           (long)(uc->uc_mcontext.pc - callAddr));
-  if (callAddr == 0 || uc->uc_mcontext.pc == callAddr) {
+  if (onSvc) {
     uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */
   }
   uc->uc_mcontext.regs[0] = (unsigned long)-1;
 #elif defined(__x86_64__)
-  logWrite("[embed] SIGSYS rip=0x%lx call_addr=0x%lx (delta %ld)",
-           (unsigned long)uc->uc_mcontext.gregs[REG_RIP], callAddr,
-           (long)((unsigned long)uc->uc_mcontext.gregs[REG_RIP] - callAddr));
-  if (callAddr == 0 ||
-      (unsigned long)uc->uc_mcontext.gregs[REG_RIP] == callAddr) {
-    uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  /* x86-64 `syscall` is 0f 05. */
+  if (pc != 0) {
+    unsigned char c[2] = {0, 0};
+    memcpy(c, (const void *)pc, 2);
+    if (c[0] == 0x0fu && c[1] == 0x05u) {
+      uc->uc_mcontext.gregs[REG_RIP] += 2;
+    }
   }
   uc->uc_mcontext.gregs[REG_RAX] = (unsigned long)-1;
 #endif
@@ -876,8 +920,13 @@ static const char *startEmbeddedNode(const char *params) {
    * before the crash instead of an unexplained SIGSEGV inside node::Start.
    */
   {
+    unsigned char iouParams[128];
+    memset(iouParams, 0, sizeof(iouParams));
+    /* Log BEFORE the call too: if the trap handling kills us, "calling"
+     * is the marker that proves the syscall is where we died. */
+    logWrite("[embed] io_uring preflight: calling syscall(425)");
     errno = 0;
-    long rc = syscall(425 /* __NR_io_uring_setup */, 8, (void *)0);
+    long rc = syscall(425 /* __NR_io_uring_setup */, 8, iouParams);
     int preErrno = errno;
     logWrite("[embed] io_uring preflight: rc=%ld errno=%d (%s)",
              rc, preErrno, rc == -1 ? strerror(preErrno) : "not trapped");

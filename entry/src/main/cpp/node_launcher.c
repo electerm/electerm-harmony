@@ -443,21 +443,56 @@ static void safeAppendInt(char *b, size_t cap, size_t *n, int v) {
   }
 }
 
+/* Is there an aarch64 `svc #0` (encoded 0xd4000001) at `pc`?
+ *
+ * Do NOT decide this by comparing the signal frame's PC with si_addr: both
+ * come from the same pt_regs, so they agree whether or not the kernel has
+ * already advanced past the trapped instruction, and skipping an
+ * already-advanced PC resumes mid-stream. Read the encoding instead.
+ * (Same fix as node_ctl.c — the in-process path hit exactly this.) */
+static int pcIsSvcInsn(unsigned long pc) {
+  if (pc == 0 || (pc & 3U) != 0) {
+    return 0;
+  }
+  unsigned int insn = 0;
+  memcpy(&insn, (const void *)pc, sizeof(insn));
+  return (insn & 0xffe0001fu) == 0xd4000001u;
+}
+
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
-  (void)sig;
   static unsigned int seenBits[16]; /* 512 syscall numbers, logged once each */
+
+  /* Only emulate a real seccomp trap: a SIGSYS from raise()/kill() has no
+   * syscall context, and rewriting the register file for it corrupts
+   * whatever thread happened to be running. */
+  if (!si || !ctx || si->si_code != 1 /* SYS_SECCOMP */) {
+    signal(sig, SIG_DFL);
+    raise(sig);
+    return;
+  }
+
   int sc = si->si_syscall; /* musl: #define si_syscall __si_fields.__sigsys.si_syscall */
   if (sc >= 0 && sc < 512) {
     unsigned int bit = 1u << (sc & 31);
     if (!(seenBits[sc >> 5] & bit)) {
       seenBits[sc >> 5] |= bit;
-      char b[96];
+      char b[160];
       size_t n = 0;
+      /* safeAppend/safeAppendInt only — NO logWrite(). logWrite() is
+       * vsnprintf + hilog IPC; both take libc locks, and calling them from
+       * this handler is device-proven to kill the trapped thread (the
+       * in-process path died with SIGSEGV addr=0x0 that way). */
       safeAppend(b, sizeof(b), &n, "[launcher] SIGSYS: syscall ");
       safeAppendInt(b, sizeof(b), &n, sc);
       safeAppend(b, sizeof(b), &n, " (");
       safeAppend(b, sizeof(b), &n, syscallName(sc));
-      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1\n");
+      safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1");
+#if defined(__aarch64__)
+      safeAppend(b, sizeof(b), &n, " onsvc=");
+      safeAppendInt(b, sizeof(b), &n,
+                    pcIsSvcInsn(((ucontext_t *)ctx)->uc_mcontext.pc));
+#endif
+      safeAppend(b, sizeof(b), &n, "\n");
       if (g_logFd >= 0) {
         ssize_t ign = write(g_logFd, b, n);
         (void)ign;
@@ -469,18 +504,27 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
     }
   }
   ucontext_t *uc = (ucontext_t *)ctx;
-  /* aarch64: the trapped instruction is the 4-byte `svc #0`; skip it and
-   * put the failure value in x0 (the syscall return register).
+  /* Skip the trapped instruction ONLY if it really is the syscall, and put
+   * the failure value in x0 (the syscall return register).
    * Return EXACTLY -1, not -ENOSYS: OHOS musl's syscall() passes raw x0
    * through without __syscall_ret errno-translation, so -38 leaks out as a
    * bogus value — device-proven fatal in libuv uv__iou_init(): ringfd=-38
    * passed its `== -1` guard, mmap/epoll_ctl failed, cleanup called
    * uv__close(-38) → assert(fd > STDERR_FILENO) → abort. */
 #if defined(__aarch64__)
-  uc->uc_mcontext.pc += 4;
+  if (pcIsSvcInsn(uc->uc_mcontext.pc)) {
+    uc->uc_mcontext.pc += 4;
+  }
   uc->uc_mcontext.regs[0] = (unsigned long)-1;
 #elif defined(__x86_64__)
-  uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  unsigned long pc = (unsigned long)uc->uc_mcontext.gregs[REG_RIP];
+  if (pc != 0) {
+    unsigned char c[2] = {0, 0};
+    memcpy(c, (const void *)pc, 2);
+    if (c[0] == 0x0fu && c[1] == 0x05u) {
+      uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+    }
+  }
   uc->uc_mcontext.gregs[REG_RAX] = (unsigned long)-1;
 #endif
   errno = ENOSYS; /* TLS store — async-signal-safe; for errno-checking callers */
