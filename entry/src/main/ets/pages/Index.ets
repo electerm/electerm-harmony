@@ -62,14 +62,20 @@ struct Index {
   @State bootFailed: boolean = false;
   @State statusMessage: string = 'Starting electerm …';
   dataDir: string = '';
+  /** Result of the last HTTP probe — shown on the overlay so a screenshot
+   * reveals whether anything is listening on 127.0.0.1:5577 at all. */
+  lastProbeError: string = '';
+  /** Last line of node-boot.log, refreshed at 0.5 Hz (file I/O on the UI thread). */
+  lastBootLine: string = '';
 
   aboutToAppear(): void {
-    // Defer the boot by a frame. aboutToAppear() runs BEFORE the first
-    // render, so anything started synchronously here delays the very
-    // overlay that is supposed to tell the user the engine is starting.
-    setTimeout(() => {
-      this.startBackend();
-    }, 50);
+    // Called directly, NOT via setTimeout: the only thing that used to make
+    // this slow was the synchronous dlopen of libnode.so, and that now runs
+    // on a background thread. A timer adds a failure mode we cannot observe
+    // (if it never fires the overlay sits on its default message forever with
+    // zero log output) and buys nothing.
+    this.statusMessage = 'Preparing …';
+    this.startBackend();
   }
 
   /**
@@ -160,8 +166,10 @@ struct Index {
       }
       const entryParams: string = paramLines.join('\n');
 
-      this.statusMessage = 'Starting Node.js engine …';
+      this.statusMessage = 'Preparing data dir …';
       hilog.info(DOMAIN, TAG, 'backend params: %{public}s', entryParams);
+      hilog.info(DOMAIN, TAG, 'script=%{public}s node=%{public}s', scriptPath,
+        nodePath !== '' ? nodePath : '(not found)');
 
       // Primary path: run node IN the main app process (dlopen libnode.so +
       // node::Start via libnode_ctl.so — the electron-harmony / nodejs-mobile
@@ -185,6 +193,7 @@ struct Index {
 
       if (launchedInProcess) {
         BackendManager.setInProcess();
+        this.statusMessage = 'Loading engine (libnode.so) …';
         hilog.info(DOMAIN, TAG, 'node running in-process (background thread)');
 
         // 3. wait for the HTTP server, bailing out early on a hard failure
@@ -202,6 +211,7 @@ struct Index {
       }
 
       // Fallback: native child process (libnode_launcher.so:Main).
+      this.statusMessage = 'In-process engine failed — starting child process …';
       const pid: number = await childProcessManager.startNativeChildProcess(
         'libnode_launcher.so:Main',
         { entryParams: entryParams }
@@ -331,17 +341,18 @@ struct Index {
    * instead of after the whole timeout, so we can fall back to the native
    * child process instead of staring at a spinner. */
   async waitForBackend(timeoutMs: number, checkStatus: boolean): Promise<boolean> {
-    const deadline: number = Date.now() + timeoutMs;
+    const startedAt: number = Date.now();
+    const deadline: number = startedAt + timeoutMs;
     let tick: number = 0;
-    let shownLine: string = '';
     while (Date.now() < deadline) {
       if (await this.probe()) {
         return true;
       }
+      let status: string = '';
       if (checkStatus) {
-        const st: string = getBackendStatus();
-        if (st.startsWith('failed:')) {
-          const reason: string = st.substring('failed:'.length).replace('err:', '');
+        status = getBackendStatus();
+        if (status.startsWith('failed:')) {
+          const reason: string = status.substring('failed:'.length).replace('err:', '');
           hilog.error(DOMAIN, TAG, 'bootstrap failed: %{public}s', reason);
           this.bootFailed = true;
           this.statusMessage = `Engine failed to start: ${reason}`;
@@ -349,21 +360,33 @@ struct Index {
           return false;
         }
       }
-      tick++;
+
+      // Always refresh the overlay, and always log — including when
+      // node-boot.log is EMPTY. An empty boot log means the native side never
+      // wrote a line, which is itself the single most useful fact to know,
+      // and the old code logged nothing at all in that case (logBootTailWindow
+      // returns early on empty input). hilog is ring-buffered away under
+      // cloud-debug system noise far faster than it can be exported, so the
+      // SCREEN is the primary diagnostic channel and must never go static.
+      const secs: number = Math.round((Date.now() - startedAt) / 1000);
+      const parts: string[] = [`Starting engine … ${secs}s`, `probe: ${this.lastProbeError}`];
+      if (checkStatus) {
+        parts.push(`backend: ${status !== '' ? status : 'unknown'}`);
+      }
+      if (this.lastBootLine) {
+        parts.push(this.lastBootLine);
+      }
+      this.statusMessage = parts.join('\n');
+
       if (tick % 4 === 0) { // every ~2s
-        const line: string = this.readBootLogLastLine();
-        if (line && line !== shownLine) {
-          shownLine = line;
-          this.statusMessage = line;
-          hilog.info(DOMAIN, TAG, 'boot: %{public}s', line);
-        }
-        // Periodic tail dump: the cloud-debug hilog export grabs the OLDEST
-        // buffered lines, and ~1600 lines/s of system noise flushes the ring
-        // long before the 90s deadline — re-dumping the tail every ~2s keeps
-        // a copy of the boot ladder (and any crash marker) inside whatever
-        // window survives.
+        // Reading the boot log is file I/O on the UI thread — keep it at
+        // 0.5 Hz and reuse the cached line for the per-tick overlay refresh.
+        this.lastBootLine = this.readBootLogLastLine();
+        hilog.info(DOMAIN, TAG, 'waiting %{public}ds probe=%{public}s status=%{public}s boot=%{public}s',
+          secs.toString(), this.lastProbeError, status, this.lastBootLine);
         this.logBootTailWindow(1100);
       }
+      tick++;
       await this.sleep(POLL_INTERVAL_MS);
     }
     return false;
@@ -378,8 +401,11 @@ struct Index {
         readTimeout: 3000,
         usingCache: false
       });
+      this.lastProbeError = `HTTP ${response.responseCode}`;
       return response.responseCode >= 200 && response.responseCode < 500;
-    } catch {
+    } catch (e) {
+      const err = e as BusinessError;
+      this.lastProbeError = `[${err.code}] ${err.message}`;
       return false;
     } finally {
       httpClient.destroy();
