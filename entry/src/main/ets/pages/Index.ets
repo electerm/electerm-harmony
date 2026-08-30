@@ -25,7 +25,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
-import { startBackend } from 'libnode_ctl.so';
+import { startBackend, getBackendStatus } from 'libnode_ctl.so';
 import { BackendManager } from '../BackendManager';
 
 const TAG: string = 'electerm.Index';
@@ -33,7 +33,19 @@ const DOMAIN: number = 0xE1EC;
 const BACKEND_PORT: number = 5577;
 const SERVER_URL: string = `http://127.0.0.1:${BACKEND_PORT}`;
 const POLL_INTERVAL_MS: number = 500;
-const BOOT_TIMEOUT_MS: number = 90_000;
+/**
+ * How long to wait for the backend before giving up on a boot strategy.
+ *
+ * This used to be 90s. A dead backend therefore pinned the app on the boot
+ * overlay for a minute and a half — indistinguishable from "stuck on the
+ * splash screen", which is exactly the bug report. The in-process path
+ * reports hard failures (missing script / no libnode.so / dlopen failure)
+ * within a few hundred ms via getBackendStatus(), so a short timeout loses
+ * nothing and turns a hang into a readable error.
+ */
+const BOOT_TIMEOUT_MS: number = 20_000;
+/** Never read more than this from node-boot.log — this runs on the UI thread. */
+const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
 /**
  * Prefer the per-process el2 junction over the parent's filesDir string:
  * /data/storage/el2/base/files points at the same storage but is mounted in
@@ -52,7 +64,12 @@ struct Index {
   dataDir: string = '';
 
   aboutToAppear(): void {
-    this.startBackend();
+    // Defer the boot by a frame. aboutToAppear() runs BEFORE the first
+    // render, so anything started synchronously here delays the very
+    // overlay that is supposed to tell the user the engine is starting.
+    setTimeout(() => {
+      this.startBackend();
+    }, 50);
   }
 
   /**
@@ -131,7 +148,7 @@ struct Index {
         fs.mkdirSync(this.dataDir, true);
       }
 
-      // 2. start the native child process
+      // 2. start the backend
       // entryParams is a plain "key=value\n" string parsed by node_launcher.c
       const paramLines: string[] = [
         `dataDir=${this.dataDir}`,
@@ -151,30 +168,48 @@ struct Index {
       // pattern). The nativespawn child runs under a stricter seccomp filter
       // whose event-loop syscall blocks kill libuv there; the main process
       // runs libuv-class loops of its own (NETSTACK/curl), so node lives here.
-      let startedInProcess: boolean = false;
+      //
+      // startBackend() RETURNS IMMEDIATELY — the dlopen of the ~120MB
+      // libnode.so and node::Start happen on a background thread. Doing them
+      // inline here blocked the UI thread long enough that the Index page
+      // never painted: the window sat on its splash screen until the
+      // APP_INPUT_BLOCK watchdog fired and the ANR dialog killed the app.
+      let launchedInProcess: boolean = false;
       try {
         const rc: string = startBackend(entryParams);
-        startedInProcess = rc === 'ok';
+        launchedInProcess = !rc.startsWith('err:');
         hilog.info(DOMAIN, TAG, 'in-process startBackend → %{public}s', rc);
       } catch (e) {
         hilog.error(DOMAIN, TAG, 'in-process startBackend threw: %{public}s', JSON.stringify(e));
       }
 
-      if (startedInProcess) {
+      if (launchedInProcess) {
         BackendManager.setInProcess();
-        hilog.info(DOMAIN, TAG, 'node running in-process (main app process)');
-      } else {
-        // Fallback: native child process (libnode_launcher.so:Main).
-        const pid: number = await childProcessManager.startNativeChildProcess(
-          'libnode_launcher.so:Main',
-          { entryParams: entryParams }
-        );
-        BackendManager.setPid(pid);
-        hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
+        hilog.info(DOMAIN, TAG, 'node running in-process (background thread)');
+
+        // 3. wait for the HTTP server, bailing out early on a hard failure
+        const ok: boolean = await this.waitForBackend(BOOT_TIMEOUT_MS, true);
+        if (ok) {
+          // 4. load the real UI
+          this.serverReady = true;
+          this.controller.loadUrl(SERVER_URL);
+          return;
+        }
+        // The in-process node thread is detached — if it is merely slow
+        // rather than dead, it may still bind the port later; either way the
+        // next bind attempt just fails and the child takes over.
+        hilog.error(DOMAIN, TAG, 'in-process backend never answered — trying native child process');
       }
 
-      // 3. wait for the HTTP server
-      const ok: boolean = await this.waitForBackend();
+      // Fallback: native child process (libnode_launcher.so:Main).
+      const pid: number = await childProcessManager.startNativeChildProcess(
+        'libnode_launcher.so:Main',
+        { entryParams: entryParams }
+      );
+      BackendManager.setPid(pid);
+      hilog.info(DOMAIN, TAG, 'node child process started, pid=%{public}d', pid);
+
+      const ok: boolean = await this.waitForBackend(BOOT_TIMEOUT_MS, false);
       if (!ok) {
         this.bootFailed = true;
         const tail: string = this.readBootLogTailLines(14);
@@ -185,7 +220,6 @@ struct Index {
         return;
       }
 
-      // 4. load the real UI
       this.serverReady = true;
       this.controller.loadUrl(SERVER_URL);
     } catch (e) {
@@ -196,13 +230,20 @@ struct Index {
     }
   }
 
-  /** Read the launcher/node boot log (written by the child). */
+  /** Read the launcher/node boot log (written by the child).
+   * Size-guarded: this runs on the UI thread on every poll tick, and a
+   * runaway writer would otherwise turn each read into a UI stall. */
   readBootLog(): string {
     if (!this.dataDir) {
       return '';
     }
+    const path: string = `${this.dataDir}/node-boot.log`;
     try {
-      return fs.readTextSync(`${this.dataDir}/node-boot.log`);
+      const stat = fs.statSync(path);
+      if (stat.size > MAX_BOOT_LOG_BYTES) {
+        return '';
+      }
+      return fs.readTextSync(path);
     } catch {
       return '';
     }
@@ -281,16 +322,32 @@ struct Index {
     }
   }
 
-  /** Poll http://127.0.0.1:5577 until it answers or BOOT_TIMEOUT_MS elapses.
+  /** Poll http://127.0.0.1:5577 until it answers or `timeoutMs` elapses.
    * While waiting, surface the child's latest boot-log line in the overlay so
-   * a stuck boot is diagnosable from the screen alone. */
-  async waitForBackend(): Promise<boolean> {
-    const deadline: number = Date.now() + BOOT_TIMEOUT_MS;
+   * a stuck boot is diagnosable from the screen alone.
+   *
+   * When `checkStatus` is set (in-process boot only), getBackendStatus() is
+   * consulted every tick: a hard bootstrap failure is known in milliseconds
+   * instead of after the whole timeout, so we can fall back to the native
+   * child process instead of staring at a spinner. */
+  async waitForBackend(timeoutMs: number, checkStatus: boolean): Promise<boolean> {
+    const deadline: number = Date.now() + timeoutMs;
     let tick: number = 0;
     let shownLine: string = '';
     while (Date.now() < deadline) {
       if (await this.probe()) {
         return true;
+      }
+      if (checkStatus) {
+        const st: string = getBackendStatus();
+        if (st.startsWith('failed:')) {
+          const reason: string = st.substring('failed:'.length).replace('err:', '');
+          hilog.error(DOMAIN, TAG, 'bootstrap failed: %{public}s', reason);
+          this.bootFailed = true;
+          this.statusMessage = `Engine failed to start: ${reason}`;
+          this.logBootTail();
+          return false;
+        }
       }
       tick++;
       if (tick % 4 === 0) { // every ~2s

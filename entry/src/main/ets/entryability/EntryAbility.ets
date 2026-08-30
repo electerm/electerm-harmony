@@ -39,12 +39,14 @@ export default class EntryAbility extends UIAbility {
   onConfigurationUpdate(config: Configuration) {
   }
 
-  async onWindowStageCreate(windowStage: window.WindowStage) {
-    // Request permissions up front. Index requests them again via
-    // its own context when it needs to write user-visible files; a
-    // granted permission here just avoids the dialogs appearing later.
-    await this.requestAllPermissions();
-
+  onWindowStageCreate(windowStage: window.WindowStage) {
+    // loadContent FIRST, permissions AFTER.
+    //
+    // Awaiting requestPermissionsFromUser() before loadContent() means the
+    // window shows nothing but its splash until the user answers the dialog.
+    // On an unattended device (cloud debugging / 云调试, CI smoke runs) nobody
+    // taps "Allow", so the app sat on the splash screen indefinitely and the
+    // input-dispatch watchdog eventually killed it as APP_INPUT_BLOCK.
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         console.error(`[${TAG}] Failed to load content: ${JSON.stringify(err)}`);
@@ -52,6 +54,11 @@ export default class EntryAbility extends UIAbility {
       }
       console.info(`[${TAG}] content loaded`);
     });
+
+    // Request permissions in the background. Index requests them again via
+    // its own context when it needs to write user-visible files; a granted
+    // permission here just avoids the dialogs appearing later.
+    this.requestAllPermissions();
   }
 
   onWindowStageDestroy() {

@@ -812,7 +812,14 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
     setenv("SERVER_SECRET", cfg.secret, 1);
   }
   for (int i = 0; i < extraEnvCount; i++) {
-    putenv(extraEnv[i]);
+    /* setenv() COPIES. putenv() stores a pointer into `extraEnv`, a stack
+     * array of the enclosing frame — fine across an immediate execve (the
+     * kernel copies the strings) but a use-after-return for anything that
+     * reads environ later in this process. */
+    char *eq = strchr(extraEnv[i], '=');
+    if (!eq) continue;
+    *eq = '\0';
+    setenv(extraEnv[i], eq + 1, 1);
   }
 
   /* 4. Rebuild stdio deterministically (0=/dev/null, 1=2=boot log) so node's

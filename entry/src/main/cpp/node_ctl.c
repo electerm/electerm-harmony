@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -46,6 +47,11 @@
 #define MAX_ENV_VARS 32
 #define MAX_LINE 1024
 #define MAX_CANDIDATES 12
+
+/* F_SETPIPE_SZ — present in the OHOS NDK headers on newer SDKs only. */
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ 1031
+#endif
 
 typedef struct {
   char dataDir[MAX_LINE];    /* writable app data dir (el2 filesDir) */
@@ -59,6 +65,41 @@ static int g_logFd = -1;
 static char g_logPath[MAX_LINE * 2] = "";
 static int g_started = 0; /* startBackend may only run once per process */
 static int g_pipeOut = -1; /* read end of the stdio→hilog pipe */
+
+/* ── Launch status plumbing ──────────────────────────────────────────────
+ * The expensive work (dlopen of the ~120MB libnode.so with RTLD_NOW, dlsym,
+ * node::Start) runs on a background thread, so startBackend() returns as
+ * soon as that thread exists. The ArkTS side polls getBackendStatus() while
+ * it probes http://127.0.0.1:5577, so a HARD failure (script missing, no
+ * libnode.so, dlopen/dlsym failed) is detectable in milliseconds instead of
+ * after the whole boot timeout — and the page can then fall back to the
+ * native child process instead of sitting on the splash screen.
+ * ──────────────────────────────────────────────────────────────────────── */
+#define ST_LAUNCHING 1
+#define ST_RUNNING 2
+#define ST_FAILED 3
+
+static volatile int g_status = 0; /* 0 = not started */
+static char g_statusDetail[160] = ""; /* written BEFORE g_status is set */
+
+static void setStatus(int code, const char *detail) {
+  if (detail && detail[0]) {
+    snprintf(g_statusDetail, sizeof(g_statusDetail), "%s", detail);
+  } else {
+    g_statusDetail[0] = '\0';
+  }
+  __atomic_store_n(&g_status, code, __ATOMIC_RELEASE);
+}
+
+static int getStatusCode(void) {
+  return __atomic_load_n(&g_status, __ATOMIC_ACQUIRE);
+}
+
+static unsigned long nowMs(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (unsigned long)ts.tv_sec * 1000UL + (unsigned long)(ts.tv_nsec / 1000000);
+}
 
 static void logWrite(const char *fmt, ...);
 
@@ -95,17 +136,33 @@ static int isFrameworkNoise(const char *s) {
   return 0;
 }
 
-/* Stream everything written to the app's stdout/stderr (fd 1/2 are dup2'd
- * onto a pipe) into the boot log AND hilog, line by line. hilog truncates
- * single messages at ~140 bytes, so chunked/tail dumps can't carry node's
- * abort text — a live line-sized reader can. ArkWeb framework noise is
- * filtered (see isFrameworkNoise). */
+/* Drain the app's stdout/stderr (fd 1/2 are dup2'd onto a pipe) — FAST and
+ * BOUNDED. This is the single most important invariant in the file.
+ *
+ * The pipe is fed by EVERYTHING in the process, not just node: ArkWeb /
+ * Chromium logs thousands of lines per second to the same fd 1/2. Doing any
+ * per-line work that costs more than a memcmp — an OH_LOG_Print (an IPC to
+ * hilogd), an snprintf, a formatted write — lets the pipe fill up. The next
+ * writer then BLOCKS: Chromium's logging thread, node's abort(), or a
+ * signal handler. With Chromium's IO thread blocked the Web component never
+ * paints, which is exactly how the app used to sit on its splash screen
+ * until the ANR watchdog killed it.
+ *
+ * So the reader:
+ *   1. always drains (never lets a writer block) — an 8KB read per loop;
+ *   2. filters framework noise with cheap strncmp/strstr only;
+ *   3. writes surviving lines to the boot log with a raw write() (one
+ *      syscall per line, no formatting, no locks);
+ *   4. hilog's at a hard rate limit with a fixed total budget.
+ */
 static void *stdioReaderThread(void *p) {
   (void)p;
-  char buf[2048];
+  char buf[8192];
   char line[480];
   size_t linelen = 0;
-  long suppressed = 0;
+  long hilogBudget = 400; /* total hilog lines we will ever emit */
+  unsigned long lastHilogMs = 0;
+
   for (;;) {
     ssize_t r = read(g_pipeOut, buf, sizeof(buf));
     if (r < 0 && errno == EINTR) continue;
@@ -116,13 +173,24 @@ static void *stdioReaderThread(void *p) {
         line[linelen] = '\0';
         if (linelen > 0) {
           if (isFrameworkNoise(line)) {
-            suppressed++;
-            if (suppressed % 1000 == 0) {
-              logWrite("[io] … %ld framework log lines suppressed",
-                       suppressed);
-            }
+            /* dropped on the floor — the only correct thing to do with
+             * thousands of Chromium lines a second. */
           } else {
-            logWrite("[io] %.470s", line);
+            /* Raw write: no vsnprintf, no libc stdio locks. */
+            if (g_logFd >= 0) {
+              ssize_t ign = write(g_logFd, line, linelen);
+              ign = write(g_logFd, "\n", 1);
+              (void)ign;
+            }
+            if (hilogBudget > 0) {
+              unsigned long now = nowMs();
+              if (now - lastHilogMs >= 250) { /* max ~4 hilog IPCs per second */
+                lastHilogMs = now;
+                hilogBudget--;
+                (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC,
+                                   "electerm.embed", "[io] %.470s", line);
+              }
+            }
           }
         }
         linelen = 0;
@@ -308,8 +376,17 @@ static void safeAppendInt(char *b, size_t cap, size_t *n, int v) {
 }
 
 static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
-  (void)sig;
   static unsigned int seenBits[16]; /* 512 syscall numbers, logged once each */
+
+  /* Only emulate a real seccomp trap. A SIGSYS delivered by raise()/kill()
+   * carries no syscall context (si_code <= 0) and rewriting the register
+   * file for it corrupts whichever thread happened to be running. */
+  if (!si || !ctx || si->si_code != 1 /* SYS_SECCOMP */) {
+    signal(sig, SIG_DFL);
+    raise(sig);
+    return;
+  }
+
   int sc = si->si_syscall;
   if (sc >= 0 && sc < 512) {
     unsigned int bit = 1u << (sc & 31);
@@ -322,14 +399,19 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
       safeAppend(b, sizeof(b), &n, " (");
       safeAppend(b, sizeof(b), &n, syscallName(sc));
       safeAppend(b, sizeof(b), &n, ") blocked by seccomp -> -1\n");
+      /* Raw write() to the boot-log FILE only.
+       *
+       * This used to also write(2, b, n) — fd 2 is the stdio pipe shared
+       * with ArkWeb/Chromium. That pipe can be full (Chromium floods it),
+       * and write() on a full pipe BLOCKS; blocking inside a signal
+       * handler on a thread that already holds libc locks is how the node
+       * thread ended up faulting (SEGV in strlen) instead of getting a
+       * clean -1. The reader thread now surfaces these lines to hilog in
+       * normal context, where locks are actually safe. */
       if (g_logFd >= 0) {
         ssize_t ign = write(g_logFd, b, n);
         (void)ign;
       }
-      /* fd 2 is the stdio pipe: the reader thread relays this line to
-       * hilog in NORMAL context (where printf locks are safe). */
-      ssize_t ign = write(2, b, n);
-      (void)ign;
     }
   }
   ucontext_t *uc = (ucontext_t *)ctx;
@@ -427,24 +509,63 @@ struct NodeThreadArgs {
 
 static struct NodeThreadArgs g_nodeArgs;
 
-/* node::Start returning is abnormal (the server should run forever) — log
- * it and let the thread end; the ArkTS probe timeout surfaces the failure.
- * NEVER _exit() here: this is the app's main process. */
-static void *nodeThreadMain(void *p) {
-  struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
-  g_nodeTid = (pid_t)syscall(__NR_gettid);
-  logWrite("[embed] node thread tid=%ld, calling node::Start", (long)g_nodeTid);
-  a->rc = a->start(3, a->argv);
-  logWrite("[embed] node::Start returned %d (backend stopped)", a->rc);
+static const char *startEmbeddedNode(const char *params);
+
+/* ── Bootstrap thread ──
+ *
+ * Everything expensive happens HERE and never on the caller's thread:
+ *   dlopen(libnode.so, RTLD_NOW) relocates every symbol of a ~120MB
+ *   library, dlsym, and node::Start (which itself runs the whole server).
+ *
+ * pages/Index calls the NAPI startBackend() from aboutToAppear() — i.e. on
+ * the ArkTS UI thread. Doing the dlopen there blocked the UI thread for as
+ * long as the relocation took, so the Index page never painted: the window
+ * stayed on its splash screen until the APP_INPUT_BLOCK watchdog fired and
+ * the system ANR dialog killed the app. That is the reported symptom.
+ */
+static void *bootstrapMain(void *arg) {
+  char *params = (char *)arg;
+  startEmbeddedNode(params);
+  free(params);
   return NULL;
 }
 
-static const char *startEmbeddedNode(const char *params) {
-  static char errBuf[256];
+static const char *startBackendAsync(const char *params) {
+  static char errBuf[128];
 
   if (g_started) {
     return "err:already started";
   }
+  g_started = 1;
+
+  char *copy = strdup(params ? params : "");
+  if (!copy) {
+    snprintf(errBuf, sizeof(errBuf), "err:out of memory");
+    setStatus(ST_FAILED, errBuf);
+    return errBuf;
+  }
+
+  setStatus(ST_LAUNCHING, "bootstrap thread starting");
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  /* node::Start wants a big stack (V8 + the deep C++ bootstrap). */
+  pthread_attr_setstacksize(&attr, 32 * 1024 * 1024);
+  pthread_t th;
+  int prc = pthread_create(&th, &attr, bootstrapMain, copy);
+  pthread_attr_destroy(&attr);
+  if (prc != 0) {
+    free(copy);
+    logWrite("[embed] bootstrap pthread_create failed: %s", strerror(prc));
+    snprintf(errBuf, sizeof(errBuf), "err:pthread_create failed");
+    setStatus(ST_FAILED, errBuf);
+    return errBuf;
+  }
+  pthread_detach(th);
+  return "launching";
+}
+
+static const char *startEmbeddedNode(const char *params) {
+  static char errBuf[256];
 
   char extraEnv[MAX_ENV_VARS][MAX_LINE];
   int extraEnvCount = 0;
@@ -473,6 +594,7 @@ static const char *startEmbeddedNode(const char *params) {
   if (!cfg.script[0] || access(cfg.script, F_OK) != 0) {
     logWrite("[embed] FATAL: script missing: %s", cfg.script);
     snprintf(errBuf, sizeof(errBuf), "err:script missing");
+    setStatus(ST_FAILED, errBuf);
     return errBuf;
   }
 
@@ -525,6 +647,7 @@ static const char *startEmbeddedNode(const char *params) {
   if (!nodePath) {
     logWrite("[embed] FATAL: no libnode.so candidate exists (tried %d)", nCand);
     snprintf(errBuf, sizeof(errBuf), "err:no libnode.so");
+    setStatus(ST_FAILED, errBuf);
     return errBuf;
   }
   logWrite("[embed] node binary: %s", nodePath);
@@ -542,7 +665,15 @@ static const char *startEmbeddedNode(const char *params) {
    * flags via NODE_OPTIONS (rejected) or argv ("bad option"). The fix
    * must be applied at Node.js build time (configure flags). */
   for (int i = 0; i < extraEnvCount; i++) {
-    putenv(extraEnv[i]);
+    /* setenv() COPIES the value. putenv() would store a pointer into
+     * `extraEnv`, a stack array of THIS frame — and since node now runs on
+     * a thread that outlives startBackend, that stack is long gone by the
+     * time libuv/node reads it. getenv() would then strlen() recycled
+     * stack memory: a SEGV from inside uv_loop_init. */
+    char *eq = strchr(extraEnv[i], '=');
+    if (!eq) continue;
+    *eq = '\0';
+    setenv(extraEnv[i], eq + 1, 1);
   }
 
   /* Guarantee fds 0/1/2 are open before anything node-related runs. libuv's
@@ -587,7 +718,13 @@ static const char *startEmbeddedNode(const char *params) {
   if (g_logFd > 2) {
     int fds[2];
     if (pipe(fds) == 0) {
-      logWrite("[embed] stdio pipe: read=%d write=%d", fds[0], fds[1]);
+      /* 1MB, up from the default 64KB: ArkWeb/Chromium shares this pipe and
+       * logs thousands of lines per second. A 64KB buffer fills in
+       * milliseconds whenever the reader is descheduled, and every writer
+       * that hits a full pipe blocks. */
+      int pipeSz = fcntl(fds[0], F_SETPIPE_SZ, 1024 * 1024);
+      logWrite("[embed] stdio pipe: read=%d write=%d size=%d", fds[0], fds[1],
+               pipeSz);
       g_pipeOut = fds[0];
       dup2(fds[1], 1);
       dup2(fds[1], 2);
@@ -625,6 +762,7 @@ static const char *startEmbeddedNode(const char *params) {
       const char *e2 = dlerror();
       logWrite("[embed] dlopen failed: %s / %s", e1 ? e1 : "-", e2 ? e2 : "-");
       snprintf(errBuf, sizeof(errBuf), "err:dlopen failed");
+      setStatus(ST_FAILED, errBuf);
       return errBuf;
     }
   }
@@ -634,6 +772,7 @@ static const char *startEmbeddedNode(const char *params) {
   if (!start || (e && e[0])) {
     logWrite("[embed] dlsym(node::Start) failed: %s", e ? e : "null sym");
     snprintf(errBuf, sizeof(errBuf), "err:node::Start not found");
+    setStatus(ST_FAILED, errBuf);
     return errBuf;
   }
   logWrite("[embed] node::Start resolved at %p", (void *)start);
@@ -653,20 +792,20 @@ static const char *startEmbeddedNode(const char *params) {
   g_nodeArgs.argv[2] = arg2;
   g_nodeArgs.argv[3] = NULL;
 
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 32 * 1024 * 1024); /* node wants a big stack */
-  pthread_t th;
-  int prc = pthread_create(&th, &attr, nodeThreadMain, &g_nodeArgs);
-  if (prc != 0) {
-    logWrite("[embed] pthread_create failed: %s", strerror(prc));
-    snprintf(errBuf, sizeof(errBuf), "err:pthread_create failed");
-    return errBuf;
-  }
-  pthread_detach(th);
-  g_started = 1;
-  logWrite("[embed] node thread launched in main app process");
-  return "ok";
+  /* Run node::Start on THIS thread — we are already the detached bootstrap
+   * thread with a 32MB stack, so there is no reason to hand off again.
+   *
+   * node::Start returning is abnormal (the server should run forever); log
+   * it and let the thread end. NEVER _exit() here: this is the app's own
+   * process. */
+  g_nodeTid = (pid_t)syscall(__NR_gettid);
+  setStatus(ST_RUNNING, "node::Start");
+  logWrite("[embed] bootstrap tid=%ld, calling node::Start", (long)g_nodeTid);
+  int rc = start(3, g_nodeArgs.argv);
+  logWrite("[embed] node::Start returned %d (backend stopped)", rc);
+  snprintf(errBuf, sizeof(errBuf), "err:node::Start returned %d", rc);
+  setStatus(ST_FAILED, errBuf);
+  return errBuf;
 }
 
 /* ── NAPI surface ── */
@@ -681,10 +820,40 @@ static napi_value StartBackend(napi_env env, napi_callback_info info) {
     size_t copied = 0;
     napi_get_value_string_utf8(env, args[0], params, sizeof(params), &copied);
   }
-  const char *result = startEmbeddedNode(params);
+  const char *result = startBackendAsync(params);
 
   napi_value napiResult = NULL;
   napi_create_string_utf8(env, result, NAPI_AUTO_LENGTH, &napiResult);
+  return napiResult;
+}
+
+/* Report how the background bootstrap is doing. The ArkTS page polls this
+ * while probing the HTTP port:
+ *   "idle"            — startBackend() was never called
+ *   "launching:<msg>" — bootstrap thread alive, still resolving/dlopen-ing
+ *   "running:<msg>"   — node::Start entered (thread is the backend)
+ *   "failed:<msg>"    — hard failure, the backend will NEVER answer
+ */
+static napi_value GetBackendStatus(napi_env env, napi_callback_info info) {
+  (void)info;
+  int code = getStatusCode();
+  char out[192];
+  switch (code) {
+    case ST_RUNNING:
+      snprintf(out, sizeof(out), "running:%s", g_statusDetail);
+      break;
+    case ST_FAILED:
+      snprintf(out, sizeof(out), "failed:%s", g_statusDetail);
+      break;
+    case ST_LAUNCHING:
+      snprintf(out, sizeof(out), "launching:%s", g_statusDetail);
+      break;
+    default:
+      snprintf(out, sizeof(out), "idle");
+      break;
+  }
+  napi_value napiResult = NULL;
+  napi_create_string_utf8(env, out, NAPI_AUTO_LENGTH, &napiResult);
   return napiResult;
 }
 
@@ -716,7 +885,8 @@ EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor desc[] = {
       {"killNode", NULL, KillNode, NULL, NULL, NULL, napi_default, NULL},
-      {"startBackend", NULL, StartBackend, NULL, NULL, NULL, napi_default, NULL}};
+      {"startBackend", NULL, StartBackend, NULL, NULL, NULL, napi_default, NULL},
+      {"getBackendStatus", NULL, GetBackendStatus, NULL, NULL, NULL, napi_default, NULL}};
   napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
   return exports;
 }
