@@ -1,7 +1,7 @@
 name: Build HarmonyOS Web APP (ArkWeb + on-device Node.js)
 
 # Web variant of the app — no electron-harmony runtime:
-#   ArkWeb (Web component) + hqzing/ohos-node running the electerm-web
+#   ArkWeb (Web component) + our shared libnode.so running the electerm-web
 #   backend as a native child process (childProcessManager.startNativeChildProcess).
 #
 # Triggers on dev2 pushes. Uploads the signed .app as an artifact.
@@ -21,9 +21,13 @@ permissions:
   contents: read
 
 env:
-  # hqzing/ohos-node release used as the on-device Node.js runtime.
-  # Keep in sync with the default in scripts/prepare-node.sh.
-  NODE_VERSION: '24.19.0'
+  # Our own shared libnode.so release used as the on-device Node.js runtime.
+  # MUST stay in sync with the default in scripts/prepare-node.sh: the script
+  # derives the release tag as "ohos-node-shared-v${NODE_VERSION}", so a
+  # mismatch turns into a 404 on the asset download.
+  # 24.19.0 was the last hqzing/ohos-node release; 24.2.0 is the first
+  # self-built --shared libnode (a real shared library, not a PIE).
+  NODE_VERSION: '24.2.0'
 
 jobs:
   build:
@@ -155,7 +159,7 @@ jobs:
             ohpm-web-
 
       # ── Step 2: Prepare the OpenHarmony Node.js runtime ───────────────────
-      #    hqzing/ohos-node prebuilt binary → entry/libs/arm64-v8a/libnode.so
+      #    shared libnode.so release → entry/libs/arm64-v8a/libnode.so
       - name: Restore Node runtime cache
         id: node_cache
         uses: actions/cache/restore@v4
@@ -163,7 +167,7 @@ jobs:
           path: .cache/node-runtime
           key: ohos-node-${{ env.NODE_VERSION }}
 
-      - name: Prepare Node.js runtime (hqzing/ohos-node)
+      - name: Prepare Node.js runtime (shared libnode.so)
         run: ./scripts/prepare-node.sh
 
       - name: Save Node runtime cache
@@ -270,7 +274,7 @@ jobs:
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Runtime | \`hqzing/ohos-node v24.19.0 (libnode.so)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runtime | \`shared libnode.so v${{ env.NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Web app | \`electerm-web backend + ArkWeb frontend\` |" >> $GITHUB_STEP_SUMMARY
           echo "| App version | \`$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo unknown)\` |" >> $GITHUB_STEP_SUMMARY
           if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then
