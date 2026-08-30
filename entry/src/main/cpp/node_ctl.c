@@ -32,6 +32,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -227,10 +228,26 @@ static void logWrite(const char *fmt, ...) {
 static pid_t g_nodeTid = 0; /* tid of the node thread once launched */
 
 static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
-  (void)si;
-  (void)ctx;
   int saved = errno;
   long tid = (long)syscall(__NR_gettid);
+  ucontext_t *uc = (ucontext_t *)ctx;
+  unsigned long pc = 0, sp = 0, lr = 0, arg0 = 0;
+
+#if defined(__aarch64__)
+  if (uc) {
+    pc = uc->uc_mcontext.pc;
+    sp = uc->uc_mcontext.sp;
+    lr = uc->uc_mcontext.regs[30];
+    arg0 = uc->uc_mcontext.regs[0];
+  }
+#elif defined(__x86_64__)
+  if (uc) {
+    pc = (unsigned long)uc->uc_mcontext.gregs[REG_RIP];
+    sp = (unsigned long)uc->uc_mcontext.gregs[REG_RSP];
+    arg0 = (unsigned long)uc->uc_mcontext.gregs[REG_RAX];
+  }
+#endif
+
   char b[128];
   int n = snprintf(b, sizeof(b), "[embed] fatal: signal %d on tid %ld",
                    sig, tid);
@@ -243,6 +260,18 @@ static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
     (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC, "electerm.embed",
                        "%{public}s", b);
   }
+
+  /* The fault context. backtrace() on aarch64/musl very often returns ZERO
+   * frames (it cannot unwind through the signal frame), and when that
+   * happens the crash used to be completely unlocatable. The raw PC plus
+   * the faulting address can always be resolved offline against the
+   * unstripped libnode.so (see .workbuddy/tools/sym.py), so log them
+   * FIRST — before the backtrace, which can itself abort. */
+  logWrite("[embed] fault: sig=%d code=%d addr=0x%lx pc=0x%lx sp=0x%lx lr=0x%lx x0=0x%lx",
+           sig, si ? si->si_code : -1,
+           (unsigned long)(si ? (uintptr_t)si->si_addr : 0),
+           pc, sp, lr, arg0);
+
   /* Capture the crashing thread's native stack. The abort text (e.g.
    * "Assertion failed: fd > STDERR_FILENO ... uv__close") names the dying
    * function but never its CALLER — that's the missing piece. libnode.so is
@@ -253,6 +282,9 @@ static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
   {
     void *bt[24];
     int frames = backtrace(bt, 24);
+    /* Log the frame count even when it is 0: "no frames" is itself the
+     * answer to "why is there no backtrace". */
+    logWrite("[embed] backtrace frames=%d", frames);
     for (int i = 0; i < frames; i++) {
       Dl_info info;
       char lb[192];
@@ -290,6 +322,17 @@ static void crashMarkerHandler(int sig, siginfo_t *si, void *ctx) {
     /* node's thread crashed — freeze it, keep the app alive. Never returns;
      * if the crash corrupted a libc lock the UI may eventually freeze too,
      * but the evidence is already on disk and in hilog. */
+    char msg[128];
+    snprintf(msg, sizeof(msg), "node thread died: signal %d at pc=0x%lx",
+             sig, pc);
+    /* Report the failure so the ArkTS probe stops waiting: it would
+     * otherwise sit on "running" for the whole boot timeout, because
+     * setStatus(ST_RUNNING) was published before node::Start and nobody
+     * updated it when the thread died. Failing fast lets the page fall
+     * back to the native child process immediately. */
+    setStatus(ST_FAILED, msg);
+    logWrite("[embed] %s — failing fast so the page can try the child process",
+             msg);
     for (;;) {
       pause();
     }
@@ -415,12 +458,34 @@ static void sigsysHandler(int sig, siginfo_t *si, void *ctx) {
     }
   }
   ucontext_t *uc = (ucontext_t *)ctx;
+  /* si_addr is the address of the trapping instruction for a SIGSYS
+   * (Linux aliases si_call_addr onto si_addr). Compare it with the signal
+   * frame's PC instead of blindly skipping the svc:
+   *
+   * the handler must skip the trapped syscall instruction so execution
+   * resumes after it, but whether the kernel delivered the signal with the
+   * PC still ON the svc or already advanced past it is NOT portable. Adding
+   * 4 when the PC has already moved skips a real instruction and resumes
+   * mid-stream — a very good way to turn a handled trap into a SIGSEGV a
+   * few instructions later, which is what we have been seeing.
+   */
+  unsigned long callAddr = (unsigned long)(uintptr_t)(si ? si->si_addr : 0);
 #if defined(__aarch64__)
-  uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */
+  logWrite("[embed] SIGSYS pc=0x%lx call_addr=0x%lx (delta %ld)",
+           uc->uc_mcontext.pc, callAddr,
+           (long)(uc->uc_mcontext.pc - callAddr));
+  if (callAddr == 0 || uc->uc_mcontext.pc == callAddr) {
+    uc->uc_mcontext.pc += 4; /* skip the 4-byte svc instruction */
+  }
   uc->uc_mcontext.regs[0] = (unsigned long)-1;
 #elif defined(__x86_64__)
-  /* On x86_64, skip the syscall instruction and set return to -1 */
-  uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  logWrite("[embed] SIGSYS rip=0x%lx call_addr=0x%lx (delta %ld)",
+           (unsigned long)uc->uc_mcontext.gregs[REG_RIP], callAddr,
+           (long)((unsigned long)uc->uc_mcontext.gregs[REG_RIP] - callAddr));
+  if (callAddr == 0 ||
+      (unsigned long)uc->uc_mcontext.gregs[REG_RIP] == callAddr) {
+    uc->uc_mcontext.gregs[REG_RIP] += 2; /* skip 2-byte syscall */
+  }
   uc->uc_mcontext.gregs[REG_RAX] = (unsigned long)-1;
 #endif
   /* Return EXACTLY -1, not -ENOSYS: OHOS musl's syscall() passes the raw
@@ -798,6 +863,26 @@ static const char *startEmbeddedNode(const char *params) {
    * node::Start returning is abnormal (the server should run forever); log
    * it and let the thread end. NEVER _exit() here: this is the app's own
    * process. */
+  /* Pre-flight the exact syscall libuv is about to make.
+   *
+   * libuv's uv__iou_init() calls io_uring_setup (425) unconditionally: its
+   * UV_USE_IO_URING getenv check sits behind a `tbz w3,#1` on the flags
+   * argument, and uv__platform_loop_init passes flags=0, so the env var is
+   * never consulted and setting it does nothing. The sandbox traps the
+   * syscall, so the SIGSYS shim has to carry it.
+   *
+   * Do the same call here, on a thread we fully control and before node is
+   * up, so a shim that does not work shows up as a logged marker right
+   * before the crash instead of an unexplained SIGSEGV inside node::Start.
+   */
+  {
+    errno = 0;
+    long rc = syscall(425 /* __NR_io_uring_setup */, 8, (void *)0);
+    int preErrno = errno;
+    logWrite("[embed] io_uring preflight: rc=%ld errno=%d (%s)",
+             rc, preErrno, rc == -1 ? strerror(preErrno) : "not trapped");
+  }
+
   g_nodeTid = (pid_t)syscall(__NR_gettid);
   setStatus(ST_RUNNING, "node::Start");
   logWrite("[embed] bootstrap tid=%ld, calling node::Start", (long)g_nodeTid);
