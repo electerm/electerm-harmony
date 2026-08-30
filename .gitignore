@@ -65,3 +65,4 @@ entry/.cxx/
 entry/oh_modules/
 # generated local SDK paths (written by scripts/build-web-app.sh)
 local.properties
+build/.verify-tmp

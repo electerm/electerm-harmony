@@ -498,13 +498,13 @@ static void installSigsysShim(void) {
 
 struct NodeThreadArgs {
   node_start_fn start;
-  char *argv[3];
+  char *argv[5];  /* node binary, V8 flags, script, NULL */
   int rc;
 };
 
 static void *nodeThreadMain(void *p) {
   struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
-  a->rc = a->start(2, a->argv);
+  a->rc = a->start(4, a->argv);
   logWrite("[launcher] node::Start returned %d", a->rc);
   _exit(a->rc & 0xff);
   return NULL; /* unreachable */
@@ -533,17 +533,24 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
    * instead of a SIGSYS thread kill. */
   installSigsysShim();
 
-  /* argv must outlive the thread — static storage. */
+  /* argv must outlive the thread — static storage. Include V8 flags
+   * to bypass the AllowHeapAllocationInRelease assertion that fires
+   * during Isolate::Initialize when the (missing) snapshot path tries
+   * to allocate on the heap. */
   static char arg0[MAX_LINE * 2];
   static char arg1[MAX_LINE * 2];
+  static char argFlag1[] = "--no-verify-heap";
+  static char argFlag2[] = "--no-snap";
   snprintf(arg0, sizeof(arg0), "%s", nodePath);
   snprintf(arg1, sizeof(arg1), "%s", script);
 
   static struct NodeThreadArgs na;
   na.start = start;
   na.argv[0] = arg0;
-  na.argv[1] = arg1;
-  na.argv[2] = NULL;
+  na.argv[1] = argFlag1;
+  na.argv[2] = argFlag2;
+  na.argv[3] = arg1;
+  na.argv[4] = NULL;
   na.rc = -1;
 
   pthread_attr_t attr;

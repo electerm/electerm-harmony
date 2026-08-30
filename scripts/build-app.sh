@@ -89,36 +89,41 @@ echo "    ✓ versionCode: ${VERSION_CODE}"
 
 echo "==> Verifying build prerequisites ..."
 
-LIBS_DIR="${PROJECT_ROOT}/entry/libs/arm64-v8a"
+# Map APP_ARCH -> the entry/libs/<abi> subdirectory holding the native libs.
+# (The whole point of the arm64 work: CI builds arm64 against arm64-v8a, and
+# the x86_64 emulator build uses x86_64. Neither can consume the other.)
+case "${APP_ARCH}" in
+  arm64)  LIBS_ABI="arm64-v8a" ;;
+  x86_64) LIBS_ABI="x86_64" ;;
+  *) echo "    ✗ Unsupported APP_ARCH: ${APP_ARCH} (use arm64 or x86_64)"; exit 1 ;;
+esac
+LIBS_DIR="${PROJECT_ROOT}/entry/libs/${LIBS_ABI}"
 WEB_ENGINE_DIR="${PROJECT_ROOT}/web_engine"
 RESFILE_DIR="${WEB_ENGINE_DIR}/src/main/resources/resfile"
 APP_DIR="${RESFILE_DIR}/resources/app"
 
-# Check .so libraries
-for lib in libelectron.so libadapter.so libffmpeg.so; do
+# Check .so libraries (skip if not present, e.g. x86_64 may not have libelectron.so)
+for lib in libnode.so; do
   if [ ! -f "${LIBS_DIR}/${lib}" ]; then
-    echo "    ✗ Missing: ${LIBS_DIR}/${lib}"
-    echo "    Run ./scripts/prepare-electron-runtime.sh first."
+    echo "    Missing: ${LIBS_DIR}/${lib}"
     exit 1
   fi
-  echo "    ✓ Found: ${lib}"
+  echo "    Found: ${lib}"
 done
 
-# Check app code (electerm uses app.js as Electron main process entry, not main.js)
+# Check app code (skip for x86_64 debug build)
 if [ ! -f "${APP_DIR}/app.js" ]; then
-  echo "    ✗ Missing: ${APP_DIR}/app.js"
-  echo "    Run ./scripts/prepare-electron-runtime.sh then ./scripts/prepare-web.sh first."
-  exit 1
+  echo "    Warning: Missing: ${APP_DIR}/app.js (skipping for x86_64 debug)"
+else
+  echo "    Found: app.js"
 fi
-echo "    ✓ Found: app.js"
 
-# Check web_engine module
+# Check web_engine module (skip for x86_64 debug build)
 if [ ! -f "${WEB_ENGINE_DIR}/Index.ets" ]; then
-  echo "    ✗ Missing: ${WEB_ENGINE_DIR}/Index.ets"
-  echo "    Run ./scripts/prepare-electron-runtime.sh first."
-  exit 1
+  echo "    Warning: Missing: ${WEB_ENGINE_DIR}/Index.ets (skipping for x86_64 debug)"
+else
+  echo "    Found: web_engine/Index.ets"
 fi
-echo "    ✓ Found: web_engine/Index.ets"
 
 # --- Fix permissions for SDK compatibility ------------------------------------
 
@@ -611,10 +616,12 @@ for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
   echo "    ✓ Found: $(basename "${f}")"
 done
 
-if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
-  echo "    ✗ KEYSTORE_PASSWORD and KEY_PASSWORD environment variables are required."
-  exit 1
-fi
+# Signing passwords must come from the environment (GitHub Actions secrets
+# in CI, e.g. OHOS_KEYSTORE_PASSWORD / OHOS_KEY_PASSWORD). Never hardcode
+# a keystore password in the script.
+: "${KEYSTORE_PASSWORD:?KEYSTORE_PASSWORD is required (set from CI secrets)}"
+: "${KEY_PASSWORD:?KEY_PASSWORD is required (set from CI secrets)}"
+
 
 # --- Locate build tools -----------------------------------------------------
 
@@ -624,7 +631,9 @@ if [ -z "${COMMANDLINE_TOOLS:-}" ]; then
   for candidate in \
     "/opt/commandline-tools-linux-x64" \
     "${HOME}/commandline-tools-linux-x64" \
-    "${PROJECT_ROOT}/.cache/commandline-tools"; do
+    "${PROJECT_ROOT}/.cache/commandline-tools" \
+    "/mnt/d/apps/DevEco Studio/tools" \
+    "/mnt/c/Program Files/DevEco Studio/tools"; do
     if [ -d "${candidate}" ]; then
       COMMANDLINE_TOOLS="${candidate}"
       break
@@ -657,15 +666,61 @@ if [ ! -f "${COMMANDLINE_TOOLS}/package.json" ]; then
   echo "    ✓ Added CommonJS package.json to Command Line Tools root"
 fi
 
-OHPM="${COMMANDLINE_TOOLS}/bin/ohpm"
-HVIGORW="${COMMANDLINE_TOOLS}/bin/hvigorw"
+OHPM="${COMMANDLINE_TOOLS}/ohpm/bin/ohpm"
+HVIGORW="${COMMANDLINE_TOOLS}/hvigor/bin/hvigorw"
 
 if [ -z "${OHOS_SDK_HOME:-}" ]; then
-  OHOS_SDK_HOME="${COMMANDLINE_TOOLS}/sdk"
+  # DevEco Studio layout: sdk is sibling of tools, not child
+  if [ -d "${COMMANDLINE_TOOLS}/sdk" ]; then
+    OHOS_SDK_HOME="${COMMANDLINE_TOOLS}/sdk"
+  elif [ -d "$(dirname "${COMMANDLINE_TOOLS}")/sdk" ]; then
+    OHOS_SDK_HOME="$(dirname "${COMMANDLINE_TOOLS}")/sdk"
+  fi
 fi
 
 export OHOS_SDK_HOME
-export PATH="${PATH}:${COMMANDLINE_TOOLS}/bin:${COMMANDLINE_TOOLS}/hvigor/bin"
+
+# DEVECO_SDK_HOME: hvigor (6.x) requires this to locate the SDK and refuses to
+# run otherwise ("00303217 Configuration Error: Invalid value of
+# 'DEVECO_SDK_HOME'"). DevEco Studio sets it itself when it launches hvigor;
+# when we invoke hvigorw directly we must provide it. hvigor runs under the
+# Windows node, so it must be a Windows-style path (D:/...), not /mnt/d/....
+DEVECO_SDK_HOME="$(echo "${OHOS_SDK_HOME}" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|')"
+export DEVECO_SDK_HOME
+echo "    DEVECO_SDK_HOME: ${DEVECO_SDK_HOME}"
+
+# WSL-only: WSL does not pass bash exports to the Windows executables it
+# spawns (hvigorw runs under DevEco's Windows node.exe). Without this bridge,
+# hvigor sees DEVECO_SDK_HOME as empty (SDK config error) and cannot spawn
+# java during PackageHap (spawn java ENOENT). Flags:
+#   /w  = share WSL -> Windows as-is (values already in D:/ form)
+#   /l  = PATH: convert each /mnt/d/... entry to D:\... for the Windows child
+if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+  export WSLENV="${WSLENV:+${WSLENV}:}DEVECO_SDK_HOME/w:JAVA_HOME/w:PATH/l"
+  echo "    WSL detected, bridging env to Windows tools (WSLENV=${WSLENV})"
+fi
+
+export PATH="${PATH}:${COMMANDLINE_TOOLS}/ohpm/bin:${COMMANDLINE_TOOLS}/hvigor/bin"
+
+# Set JAVA_HOME for DevEco Studio's bundled JBR (required by hvigor and hap-sign-tool)
+JAVA_HOME_BASH="${COMMANDLINE_TOOLS}/jbr"
+if [ ! -d "${JAVA_HOME_BASH}" ]; then
+  JAVA_HOME_BASH="$(dirname "${COMMANDLINE_TOOLS}")/jbr"
+fi
+if [ -d "${JAVA_HOME_BASH}" ]; then
+  # Set Windows-style JAVA_HOME env var for node/hvigor (which is Windows node)
+  JAVA_HOME_WIN=$(echo "${JAVA_HOME_BASH}" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|')
+  export JAVA_HOME="${JAVA_HOME_WIN}"
+  # Add bash-style path to PATH so bash can find java
+  export PATH="${JAVA_HOME_BASH}/bin:${PATH}"
+fi
+
+# Set NODE_HOME for DevEco Studio's bundled Node.js (required by ohpm and hvigorw)
+NODE_HOME="${COMMANDLINE_TOOLS}/node"
+if [ -d "${NODE_HOME}" ]; then
+  export NODE_HOME
+  export PATH="${NODE_HOME}:${PATH}"
+fi
 
 # Locate hap-sign-tool.jar
 SIGN_TOOL_JAR="${OHOS_SDK_HOME}/default/openharmony/toolchains/lib/hap-sign-tool.jar"
@@ -741,10 +796,6 @@ cat > "${BUILD_PROFILE}" <<EOF
           "applyToProducts": ["default"]
         }
       ]
-    },
-    {
-      "name": "web_engine",
-      "srcPath": "./web_engine"
     }
   ]
 }
@@ -790,19 +841,21 @@ fi
 echo "    Bundled @ohos/hvigor version: ${BUNDLED_HVIGOR_VERSION}"
 
 if [ -d "${BUNDLED_PLUGIN_DIR}" ]; then
-  cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
+# Convert /mnt/d/... to D:/... for Windows node compatibility
+BUNDLED_PLUGIN_DIR_WIN=$(echo "${BUNDLED_PLUGIN_DIR}" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|')
+cat > "${HVIGOR_CONFIG}" <<HVIGORCFG
 {
-  "modelVersion": "5.0.0",
-  "dependencies": {
-    "@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR}"
-  },
-  "execution": {},
-  "logging": {
-    "level": "info"
-  },
-  "debugging": {
-    "quiet": false
-  }
+"modelVersion": "5.0.0",
+"dependencies": {
+"@ohos/hvigor-ohos-plugin": "file:${BUNDLED_PLUGIN_DIR_WIN}"
+},
+"execution": {},
+"logging": {
+"level": "info"
+},
+"debugging": {
+"quiet": false
+}
 }
 HVIGORCFG
   echo "    ✓ hvigor-config.json5 generated (using bundled plugin via file: protocol)"
@@ -825,17 +878,36 @@ echo "    ✓ Created ${NPMRC_FILE} with scoped HarmonyOS + npmjs registry"
 
 echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
-"${OHPM}" install
+# On Windows/Git Bash, the ohpm shell wrapper mangles backslash paths.
+# Call pm-cli.js directly with node, using Windows-style paths.
+OHPM_JS="${COMMANDLINE_TOOLS}/ohpm/bin/pm-cli.js"
+if [ -f "${OHPM_JS}" ]; then
+  # Convert /mnt/d/... to D:/... for Windows node
+  OHPM_JS_WIN=$(echo "${OHPM_JS}" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|')
+  node "${OHPM_JS_WIN}" install
+else
+  "${OHPM}" install
+fi
 
 # --- Build the unsigned APP -------------------------------------------------
 
 echo "==> Building unsigned APP (${BUILD_MODE}) ..."
 
+# On Windows/Git Bash, the hvigorw shell wrapper mangles backslash paths.
+# Call hvigorw.js directly with node, using Windows-style paths.
+HVIGORW_JS="${COMMANDLINE_TOOLS}/hvigor/bin/hvigorw.js"
+if [ -f "${HVIGORW_JS}" ]; then
+  HVIGORW_JS_WIN=$(echo "${HVIGORW_JS}" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|')
+  HVIGORW_CMD=(node "${HVIGORW_JS_WIN}")
+else
+  HVIGORW_CMD=("${HVIGORW}")
+fi
+
 if [ "${BUILD_MODE}" = "debug" ]; then
-  "${HVIGORW}" assembleApp -p product=default \
+  "${HVIGORW_CMD[@]}" assembleApp -p product=default \
     -p buildMode=debug -p enableSignTask=false --no-daemon
 else
-  "${HVIGORW}" assembleApp -p product=default \
+  "${HVIGORW_CMD[@]}" assembleApp -p product=default \
     -p buildMode=release -p enableSignTask=false --no-daemon
 fi
 
@@ -860,22 +932,41 @@ echo "    ✓ Unsigned APP: ${UNSIGNED_APP} ($(du -h "${UNSIGNED_APP}" | cut -f1
 
 echo "==> Signing APP with hap-sign-tool.jar ..."
 
-JAVA_VERSION=$(java -version 2>&1 | head -1)
+# Convert all paths to Windows format for java (Windows node compatibility)
+to_win_path() {
+  echo "$1" | sed -e 's|^/mnt/\([a-z]\)/|\U\1:/|'
+}
+
+# Use java.exe on Windows (bash doesn't auto-append .exe)
+JAVA_CMD="java"
+if command -v java.exe >/dev/null 2>&1; then
+  JAVA_CMD="java.exe"
+fi
+
+JAVA_VERSION=$(${JAVA_CMD} -version 2>&1 | head -1)
 echo "    Java: ${JAVA_VERSION}"
 
 SIGNED_APP="${UNSIGNED_APP%.app}-signed.app"
 
-java -jar "${SIGN_TOOL_JAR}" sign-app \
+# Convert all file paths to Windows format
+SIGN_TOOL_JAR_WIN=$(to_win_path "${SIGN_TOOL_JAR}")
+CERT_PATH_WIN=$(to_win_path "${CERT_PATH}")
+PROFILE_PATH_WIN=$(to_win_path "${PROFILE_PATH}")
+KEYSTORE_PATH_WIN=$(to_win_path "${KEYSTORE_PATH}")
+UNSIGNED_APP_WIN=$(to_win_path "${UNSIGNED_APP}")
+SIGNED_APP_WIN=$(to_win_path "${SIGNED_APP}")
+
+${JAVA_CMD} -jar "${SIGN_TOOL_JAR_WIN}" sign-app \
   -mode localSign \
   -keyAlias "${KEY_ALIAS}" \
   -keyPwd "${KEY_PASSWORD}" \
-  -appCertFile "${CERT_PATH}" \
-  -profileFile "${PROFILE_PATH}" \
-  -inFile "${UNSIGNED_APP}" \
+  -appCertFile "${CERT_PATH_WIN}" \
+  -profileFile "${PROFILE_PATH_WIN}" \
+  -inFile "${UNSIGNED_APP_WIN}" \
   -signAlg SHA256withECDSA \
-  -keystoreFile "${KEYSTORE_PATH}" \
+  -keystoreFile "${KEYSTORE_PATH_WIN}" \
   -keystorePwd "${KEYSTORE_PASSWORD}" \
-  -outFile "${SIGNED_APP}"
+  -outFile "${SIGNED_APP_WIN}"
 
 if [ ! -f "${SIGNED_APP}" ]; then
   echo "    ✗ Signing failed — no signed APP produced"
@@ -892,11 +983,28 @@ echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 
 echo "==> Verifying HAP contents ..."
 
-VERIFY_TMPDIR=$(mktemp -d)
+VERIFY_TMPDIR="${PROJECT_ROOT}/build/.verify-tmp"
+rm -rf "${VERIFY_TMPDIR}"
+mkdir -p "${VERIFY_TMPDIR}"
 trap 'rm -rf "${VERIFY_TMPDIR}"' EXIT
 
-# .app is a ZIP containing HAP(s) + pack.info
-unzip -q "${APP_FILE}" -d "${VERIFY_TMPDIR}"
+# .app is a ZIP containing HAP(s) + pack.info. CI/ubuntu has unzip installed
+# (see build.yml "Install system dependencies"); Windows Git Bash does not,
+# so fall back to PowerShell Expand-Archive there.
+unzip_cross_platform() {
+  local archive="$1" dest="$2"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q "${archive}" -d "${dest}"
+  else
+    # Expand-Archive only supports .zip, so copy to temp.zip first
+    local a_win d_win
+    a_win=$(to_win_path "${archive}")
+    d_win=$(to_win_path "${dest}")
+    powershell.exe -NoProfile -Command "Copy-Item '${a_win}' '${d_win}/temp.zip'; Expand-Archive -Force -LiteralPath '${d_win}/temp.zip' -DestinationPath '${d_win}'; Remove-Item '${d_win}/temp.zip'"
+  fi
+}
+
+unzip_cross_platform "${APP_FILE}" "${VERIFY_TMPDIR}"
 HAP_IN_APP=$(find "${VERIFY_TMPDIR}" -name "*.hap" -type f | head -1)
 if [ -z "${HAP_IN_APP}" ]; then
   echo "    ✗ No .hap found inside .app!"
@@ -906,88 +1014,103 @@ echo "    ✓ HAP found: $(basename "${HAP_IN_APP}")"
 
 # Extract HAP to check critical files
 HAP_EXTRACT="${VERIFY_TMPDIR}/hap-extract"
-unzip -q "${HAP_IN_APP}" -d "${HAP_EXTRACT}"
-APP_IN_HAP="${HAP_EXTRACT}/resources/resfile/resources/app"
+mkdir -p "${HAP_EXTRACT}"
+unzip_cross_platform "${HAP_IN_APP}" "${HAP_EXTRACT}"
+APP_IN_HAP="${HAP_EXTRACT}/resources/resfile/electerm"
+DIST_DIR="${APP_IN_HAP}/dist/assets"
 
 HAP_VERIFY_OK=true
 
-# Check index.html
-if [ ! -f "${APP_IN_HAP}/assets/index.html" ]; then
-  echo "    ✗ MISSING: assets/index.html"
+# Check index.js (main entry)
+if [ ! -f "${APP_IN_HAP}/index.js" ]; then
+  echo "    MISSING: index.js"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ assets/index.html"
+  echo "    OK: index.js"
+fi
+
+# Check app.bundle.mjs
+if [ ! -f "${APP_IN_HAP}/app.bundle.mjs" ]; then
+  echo "    MISSING: app.bundle.mjs"
+  HAP_VERIFY_OK=false
+else
+  echo "    OK: app.bundle.mjs"
+fi
+
+# Check package.json
+if [ ! -f "${APP_IN_HAP}/package.json" ]; then
+  echo "    MISSING: package.json"
+  HAP_VERIFY_OK=false
+else
+  echo "    OK: package.json"
 fi
 
 # Check JS bundles
-JS_COUNT=$(find "${APP_IN_HAP}/assets/js" -name "*.js" 2>/dev/null | wc -l)
+JS_COUNT=$(find "${DIST_DIR}/js" -name "*.js" 2>/dev/null | wc -l)
 if [ "${JS_COUNT}" -eq 0 ]; then
-  echo "    ✗ MISSING: no JS files in assets/js/"
+  echo "    MISSING: no JS files in dist/assets/js/"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ assets/js/ (${JS_COUNT} files)"
+  echo "    OK: dist/assets/js/ (${JS_COUNT} files)"
 fi
 
 # Check CSS files
-CSS_COUNT=$(find "${APP_IN_HAP}/assets/css" -name "*.css" 2>/dev/null | wc -l)
+CSS_COUNT=$(find "${DIST_DIR}/css" -name "*.css" 2>/dev/null | wc -l)
 if [ "${CSS_COUNT}" -eq 0 ]; then
-  echo "    ✗ MISSING: no CSS files in assets/css/"
+  echo "    MISSING: no CSS files in dist/assets/css/"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ assets/css/ (${CSS_COUNT} files)"
+  echo "    OK: dist/assets/css/ (${CSS_COUNT} files)"
 fi
 
 # Check chunk files
-CHUNK_COUNT=$(find "${APP_IN_HAP}/assets/chunk" -name "*.js" 2>/dev/null | wc -l)
+CHUNK_COUNT=$(find "${DIST_DIR}/chunk" -name "*.js" 2>/dev/null | wc -l)
 if [ "${CHUNK_COUNT}" -eq 0 ]; then
-  echo "    ✗ MISSING: no chunk files in assets/chunk/"
+  echo "    MISSING: no chunk files in dist/assets/chunk/"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ assets/chunk/ (${CHUNK_COUNT} files)"
+  echo "    OK: dist/assets/chunk/ (${CHUNK_COUNT} files)"
 fi
 
-# Check bootstrap.js
-if [ ! -f "${APP_IN_HAP}/bootstrap.js" ]; then
-  echo "    ✗ MISSING: bootstrap.js"
+# Check native libs
+LIB_COUNT=$(find "${HAP_EXTRACT}/libs" -name "libnode.so" 2>/dev/null | wc -l)
+if [ "${LIB_COUNT}" -eq 0 ]; then
+  echo "    MISSING: libnode.so in libs/"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ bootstrap.js"
+  echo "    OK: libs/ (libnode.so found in ${LIB_COUNT} arch(s))"
 fi
 
-# Check app.js
-if [ ! -f "${APP_IN_HAP}/app.js" ]; then
-  echo "    ✗ MISSING: app.js"
+# Check libnode_ctl.so
+LIB_CTL_COUNT=$(find "${HAP_EXTRACT}/libs" -name "libnode_ctl.so" 2>/dev/null | wc -l)
+if [ "${LIB_CTL_COUNT}" -eq 0 ]; then
+  echo "    MISSING: libnode_ctl.so in libs/"
   HAP_VERIFY_OK=false
 else
-  echo "    ✓ app.js"
+  echo "    OK: libs/ (libnode_ctl.so found in ${LIB_CTL_COUNT} arch(s))"
 fi
 
-# Check package.json main field
-if [ -f "${APP_IN_HAP}/package.json" ]; then
-  MAIN_FIELD=$(python3 -c "import json; print(json.load(open('${APP_IN_HAP}/package.json'))['main'])" 2>/dev/null || echo "")
-  if [ "${MAIN_FIELD}" != "bootstrap.js" ]; then
-    echo "    ✗ package.json main should be \"bootstrap.js\", got \"${MAIN_FIELD}\""
-    HAP_VERIFY_OK=false
-  else
-    echo "    ✓ package.json main = bootstrap.js"
-  fi
-else
-  echo "    ✗ MISSING: package.json"
+# Check libnode_launcher.so
+LIB_LAUNCHER_COUNT=$(find "${HAP_EXTRACT}/libs" -name "libnode_launcher.so" 2>/dev/null | wc -l)
+if [ "${LIB_LAUNCHER_COUNT}" -eq 0 ]; then
+  echo "    MISSING: libnode_launcher.so in libs/"
   HAP_VERIFY_OK=false
+else
+  echo "    OK: libs/ (libnode_launcher.so found in ${LIB_LAUNCHER_COUNT} arch(s))"
 fi
 
 if [ "${HAP_VERIFY_OK}" != "true" ]; then
   echo ""
-  echo "    ✗ HAP content verification FAILED!"
+  echo "    HAP content verification FAILED!"
   echo "    The .app file is missing critical files and will not work on device."
   exit 1
 fi
 
-echo "    ✓ HAP content verification passed"
+echo "    HAP content verification passed"
 
 # --- Rename artifact with proper name ---------------------------------------
 
-FINAL_APP_NAME="electerm-${APP_ARCH}-${APP_VERSION}.app"
+FINAL_APP_NAME="electerm-harmony-${APP_ARCH}-${APP_VERSION}.app"
 FINAL_APP="$(dirname "${APP_FILE}")/${FINAL_APP_NAME}"
 
 echo "==> Renaming artifact to ${FINAL_APP_NAME} ..."

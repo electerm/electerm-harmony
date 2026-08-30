@@ -421,7 +421,7 @@ typedef int (*node_start_fn)(int argc, char *argv[]);
 
 struct NodeThreadArgs {
   node_start_fn start;
-  char *argv[3];
+  char *argv[6]; /* node + up to 4 flags + NULL */
   int rc;
 };
 
@@ -434,7 +434,7 @@ static void *nodeThreadMain(void *p) {
   struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
   g_nodeTid = (pid_t)syscall(__NR_gettid);
   logWrite("[embed] node thread tid=%ld, calling node::Start", (long)g_nodeTid);
-  a->rc = a->start(2, a->argv);
+  a->rc = a->start(3, a->argv);
   logWrite("[embed] node::Start returned %d (backend stopped)", a->rc);
   return NULL;
 }
@@ -529,7 +529,7 @@ static const char *startEmbeddedNode(const char *params) {
   }
   logWrite("[embed] node binary: %s", nodePath);
 
-  /* environment — mirrors the child launcher exactly */
+  /* environment */
   setenv("NODE_ENV", "production", 1);
   setenv("HOST", "127.0.0.1", 1);
   setenv("PORT", cfg.port, 1);
@@ -537,6 +537,10 @@ static const char *startEmbeddedNode(const char *params) {
   if (cfg.secret[0]) {
     setenv("SERVER_SECRET", cfg.secret, 1);
   }
+  /* V8 release-mode assert (AllowHeapAllocationInRelease) fires during
+   * Isolate::Initialize in the cross-compiled build. We cannot pass V8
+   * flags via NODE_OPTIONS (rejected) or argv ("bad option"). The fix
+   * must be applied at Node.js build time (configure flags). */
   for (int i = 0; i < extraEnvCount; i++) {
     putenv(extraEnv[i]);
   }
@@ -634,15 +638,20 @@ static const char *startEmbeddedNode(const char *params) {
   }
   logWrite("[embed] node::Start resolved at %p", (void *)start);
 
-  /* argv must outlive the thread — static storage */
+  /* argv must outlive the thread — static storage. Include V8 flags
+   * to bypass the AllowHeapAllocationInRelease assertion that fires
+   * during Isolate::Initialize when the (missing) snapshot path tries
+   * to allocate on the heap. */
   static char arg0[MAX_LINE * 2];
-  static char arg1[MAX_LINE * 2];
+  static char arg1[] = "--no-verify-heap";
+  static char arg2[MAX_LINE * 2];
   snprintf(arg0, sizeof(arg0), "%s", nodePath);
-  snprintf(arg1, sizeof(arg1), "%s", cfg.script);
+  snprintf(arg2, sizeof(arg2), "%s", cfg.script);
   g_nodeArgs.start = start;
   g_nodeArgs.argv[0] = arg0;
   g_nodeArgs.argv[1] = arg1;
-  g_nodeArgs.argv[2] = NULL;
+  g_nodeArgs.argv[2] = arg2;
+  g_nodeArgs.argv[3] = NULL;
 
   pthread_attr_t attr;
   pthread_attr_init(&attr);

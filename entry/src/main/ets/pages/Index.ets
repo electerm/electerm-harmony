@@ -82,11 +82,18 @@ struct Index {
    * Resolve libnode.so in the app's native libs dir and log the dir listing —
    * this tells us from the parent side whether the installer actually
    * extracted the 92MB node binary. Empty string when not found.
+   *
+   * We cover every ABI the HAP is built for: arm64-v8a (phones/tablets/2in1)
+   * and x86_64 (the emulator). The ABI dir actually installed is the one for
+   * the device that installed the app; probing both keeps the same code
+   * working on a phone, a tablet and the x86_64 emulator.
    */
   resolveNodePath(bundleCodeDir: string): string {
     const libsDirs: string[] = [
       `${bundleCodeDir}/entry/libs/arm64-v8a`,
-      `${bundleCodeDir}/libs/arm64-v8a`
+      `${bundleCodeDir}/entry/libs/x86_64`,
+      `${bundleCodeDir}/libs/arm64-v8a`,
+      `${bundleCodeDir}/libs/x86_64`
     ];
     for (let i = 0; i < libsDirs.length; i++) {
       const libsDir: string = libsDirs[i];
