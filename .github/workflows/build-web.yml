@@ -251,10 +251,9 @@ jobs:
             exit 1
           fi
           APP_NAME=$(basename "${APP_FILE}")
-          ARTIFACT_NAME="${APP_NAME%.app}"
           echo "app_path=${APP_FILE}" >> $GITHUB_OUTPUT
           echo "app_name=${APP_NAME}" >> $GITHUB_OUTPUT
-          echo "artifact_name=${ARTIFACT_NAME}-web" >> $GITHUB_OUTPUT
+          echo "artifact_name=${APP_NAME}" >> $GITHUB_OUTPUT
           echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
 
       - name: Upload APP artifact

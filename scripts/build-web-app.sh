@@ -406,9 +406,12 @@ if [ ! -f "${SIGN_TOOL_JAR}" ]; then
   exit 1
 fi
 
-# electerm-harmony-default-unsigned.app -> electerm-harmony-default-signed.app
-SIGNED_APP="${UNSIGNED_APP%.app}"
-SIGNED_APP="${SIGNED_APP%-unsigned}-signed.app"
+# Canonical web-build artifact name: electerm-harmony-<arch>-<ver>.app
+# The web build only targets the on-device architecture (arm64-v8a), and
+# <ver> is the package.json version, so the shipped file is e.g.
+#   electerm-harmony-arm64-5.3.16.app
+APP_ARCH="arm64"
+CANONICAL_APP="${APP_OUTPUT_DIR}/electerm-harmony-${APP_ARCH}-${APP_VERSION}.app"
 
 java -jar "${SIGN_TOOL_JAR}" sign-app \
   -mode localSign \
@@ -420,16 +423,16 @@ java -jar "${SIGN_TOOL_JAR}" sign-app \
   -signAlg SHA256withECDSA \
   -keystoreFile "${KEYSTORE_PATH}" \
   -keystorePwd "${KEYSTORE_PASSWORD}" \
-  -outFile "${SIGNED_APP}"
+  -outFile "${CANONICAL_APP}"
 
-if [ ! -f "${SIGNED_APP}" ]; then
+if [ ! -f "${CANONICAL_APP}" ]; then
   echo "    ✗ Signing failed — no signed APP produced"
   exit 1
 fi
 
-# Keep only the signed APP (under a name that says so) so artifact
-# pickup (find … -name '*.app') can never grab the unsigned one.
-APP_FILE="${SIGNED_APP}"
+# Keep only the canonical-named APP so artifact pickup (find … -name '*.app')
+# can never grab a stray/unsigned one.
+APP_FILE="${CANONICAL_APP}"
 rm -f "${UNSIGNED_APP}"
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
