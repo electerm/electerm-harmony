@@ -1,0 +1,340 @@
+name: Build HarmonyOS APP
+
+on:
+  push:
+    branches:
+      - build
+      - dev
+      - dev1
+      # NOTE: dev2 intentionally excluded — that branch only builds the
+      # web variant (build-web.yml). Keeping it here would fire the full
+      # HarmonyOS APP build on every dev2 push, which we don't want.
+
+# Cancel previous runs on the same branch/tag
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Note: The Node.js runtime (libnode.so) is downloaded from the
+# electerm/electerm-harmony release published manually via
+# temp/bak/publish-node-release.sh — see the "Prepare Node.js runtime (arm64)"
+# step below.
+
+jobs:
+  build:
+    # HarmonyOS Command Line Tools are x64-only.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout electerm-harmony
+        uses: actions/checkout@v4
+
+      # ── Setup Node.js (for building the web app) ─────────────────────────
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # ── Install system deps for native modules ────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            unzip \
+            jq \
+            python3 \
+            make \
+            g++ \
+            libsecret-1-dev
+
+      # ── Setup JDK (for hap-sign-tool.jar) ────────────────────────────────
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # ── Step 1: Prepare Node.js runtime ────────────────────────────────────
+      #   Downloads our own real shared libnode.so (built with --shared via
+      #   scripts/build-node-ohos.sh, archived in temp/bak/, published manually
+      #   via temp/bak/publish-node-release.sh) from the electerm/electerm-harmony
+      #   release. arm64-v8a is the device ABI for phones/tablets/2in1; this is
+      #   the half that used to be a dlopen-crashing PIE executable
+      #   (hqzing/ohos-node).
+      - name: Prepare Node.js runtime (arm64)
+        run: ./scripts/prepare-node.sh arm64
+
+      - name: Inject safe-storage secret
+        env:
+          STORAGE_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
+        run: node scripts/inject-safe-storage-secret.mjs
+
+      # ── Step 2: Build web app (frontend + backend bundle) ───────────
+      - name: Prepare web app
+        run: ./scripts/prepare-web.sh
+        env:
+          OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
+
+      # ── Step 3: Cache / download HarmonyOS Command Line Tools (~2 GB) ────
+      - name: Compute Command Line Tools cache key
+        id: cmdkey
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          if [ -z "${OHOS_CMDLINE_TOOLS_URL}" ]; then
+            echo "::error::OHOS_CMDLINE_TOOLS_URL secret is not set."
+            exit 1
+          fi
+          # Hash the URL so the cache invalidates automatically when the
+          # secret points to a new version of the tools.
+          HASH="$(echo -n "${OHOS_CMDLINE_TOOLS_URL}" | md5sum | cut -d' ' -f1)"
+          echo "key=cmdline-tools-${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore HarmonyOS Command Line Tools cache
+        id: cmdline_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Download & extract HarmonyOS Command Line Tools
+        if: steps.cmdline_cache.outputs.cache-hit != 'true'
+        env:
+          OHOS_CMDLINE_TOOLS_URL: ${{ secrets.OHOS_CMDLINE_TOOLS_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cache
+          ZIP=".cache/commandline-tools.zip"
+          echo "Cache miss — downloading HarmonyOS Command Line Tools (~2 GB) ..."
+          curl -L --retry 10 --retry-all-errors --retry-delay 5 -C - \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+          echo "Verifying archive integrity ..."
+          if ! unzip -t "$ZIP" >/dev/null 2>&1; then
+            echo "::error::Downloaded archive is corrupt; retrying once without resume."
+            curl -L --retry 10 --retry-all-errors --retry-delay 5 \
+              -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+              -o "$ZIP" "${OHOS_CMDLINE_TOOLS_URL}"
+            unzip -t "$ZIP" >/dev/null 2>&1 || { echo "::error::Still corrupt after retry"; exit 1; }
+          fi
+          rm -rf .cache/commandline-tools
+          mkdir -p .cache/commandline-tools
+          unzip -o -q "$ZIP" -d .cache/commandline-tools
+          rm -f "$ZIP"
+          echo "Downloaded and extracted HarmonyOS Command Line Tools"
+
+      - name: Save HarmonyOS Command Line Tools cache
+        if: steps.cmdline_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/commandline-tools
+          key: ${{ steps.cmdkey.outputs.key }}
+
+      - name: Configure Command Line Tools environment
+        run: |
+          set -euo pipefail
+          COMMANDLINE_TOOLS="$(pwd)/.cache/commandline-tools/command-line-tools"
+          if [ ! -d "$COMMANDLINE_TOOLS" ]; then
+            COMMANDLINE_TOOLS="$(cd "$(dirname "$(find .cache/commandline-tools -name ohpm -type f | head -1)")/.." && pwd)"
+          fi
+          # Fix: Project root package.json has "type": "module", which makes
+          # Node.js treat hvigorw.js as an ES module (breaks with "require is
+          # not defined"). Adding a CommonJS package.json to the tools dirs
+          # prevents Node from traversing up to the project root.
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/hvigor/package.json" 2>/dev/null || true
+          echo '{"type":"commonjs"}' > "$COMMANDLINE_TOOLS/package.json"
+          echo "COMMANDLINE_TOOLS=$COMMANDLINE_TOOLS" >> "$GITHUB_ENV"
+          echo "OHOS_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "DEVECO_NODE_HOME=$COMMANDLINE_TOOLS/tool/node" >> "$GITHUB_ENV"
+          echo "DEVECO_SDK_HOME=$COMMANDLINE_TOOLS/sdk" >> "$GITHUB_ENV"
+          echo "$COMMANDLINE_TOOLS/bin" >> "$GITHUB_PATH"
+          echo "$COMMANDLINE_TOOLS/hvigor/bin" >> "$GITHUB_PATH"
+          echo "HarmonyOS Command Line Tools ready at $COMMANDLINE_TOOLS"
+
+      - name: Configure ohpm registry
+        run: |
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
+          ohpm --version || true
+
+      - name: Restore ohpm modules cache
+        id: ohpm_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+          restore-keys: |
+            ohpm-
+
+      # ── Step 4: Decode signing materials ────────────────────────────────
+      - name: Decode signing materials
+        env:
+          OHOS_KEYSTORE_B64: ${{ secrets.OHOS_KEYSTORE_B64 }}
+          OHOS_CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
+          OHOS_PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
+        run: |
+          mkdir -p signing
+          if [ -z "${OHOS_KEYSTORE_B64}" ] || [ -z "${OHOS_CERT_B64}" ] || [ -z "${OHOS_PROFILE_B64}" ]; then
+            echo "One or more signing material secrets are not set"
+            exit 1
+          fi
+          echo "${OHOS_KEYSTORE_B64}" | base64 -d > signing/electerm.p12
+          echo "${OHOS_CERT_B64}" | base64 -d > signing/electerm_publish.cer
+          echo "${OHOS_PROFILE_B64}" | base64 -d > signing/electermRelease.p7b
+
+          ls -la signing/
+          for f in signing/electerm.p12 signing/electerm_publish.cer signing/electermRelease.p7b; do
+            if [ ! -s "${f}" ]; then
+              echo "::error::Failed to decode ${f} — check GitHub Secrets."
+              exit 1
+            fi
+            echo "  ✓ $(basename ${f}): $(du -h ${f} | cut -f1)"
+          done
+
+      # ── Step 5: Set bundle name from secret ──────────────────────────────
+      - name: Configure bundle name
+        env:
+          BUNDLE_NAME: ${{ secrets.OHOS_BUNDLE_NAME }}
+        run: |
+          if [ -n "${BUNDLE_NAME}" ]; then
+            sed -i "s/\"bundleName\": \".*\"/\"bundleName\": \"${BUNDLE_NAME}\"/" \
+              AppScope/app.json5
+            echo "Bundle name set to: ${BUNDLE_NAME}"
+          else
+            echo "Using default bundle name from app.json5"
+          fi
+          cat AppScope/app.json5
+
+      # ── Step 6: Build & sign the APP ─────────────────────────────────────
+      # APP_ARCH=arm64: the device ABI (phones/tablets/2in1). The entry module
+      # abiFilters cover arm64-v8a + x86_64; build-app.sh selects
+      # entry/libs/<abi>/ by APP_ARCH.
+      - name: Build HarmonyOS app
+        run: ./scripts/build-app.sh --${{ github.event.inputs.build_mode || 'release' }}
+        env:
+          COMMANDLINE_TOOLS: ${{ env.COMMANDLINE_TOOLS }}
+          OHOS_SDK_HOME: ${{ env.OHOS_SDK_HOME }}
+          APP_ARCH: arm64
+          KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+
+      # ── Step 7: Upload artifact ──────────────────────────────────────────
+      - name: Save ohpm modules cache
+        if: steps.ohpm_cache.outputs.cache-hit != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+            ~/.ohpm
+          key: ohpm-${{ hashFiles('**/oh-package.json5', '**/oh-package.json') }}
+
+      - name: Find APP file
+        id: find_app
+        run: |
+          APP_FILE=$(find build/outputs -name "*.app" -type f | head -1)
+          if [ -z "${APP_FILE}" ]; then
+            echo "::error::No .app file found!"
+            exit 1
+          fi
+          APP_NAME=$(basename "${APP_FILE}")
+          ARTIFACT_NAME="${APP_NAME%.app}"
+          echo "app_path=${APP_FILE}" >> $GITHUB_OUTPUT
+          echo "app_name=${APP_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "Found APP: ${APP_FILE} ($(du -h ${APP_FILE} | cut -f1))"
+
+      # ── Step 7b: Verify APP contents independently ──────────────────────
+      # build-app.sh already verifies HAP contents, but this step provides
+      # a clear pass/fail signal in the CI log and adds the results to the
+      # GitHub Step Summary for quick inspection.
+      # Layout is the dev2 (ArkWeb + Node.js backend) one: the electerm web
+      # app lives at resources/resfile/electerm/ and the runtime .so files at
+      # libs/<abi>/.
+      - name: Verify APP contents
+        run: |
+          set -euo pipefail
+          APP_FILE=$(find build/outputs -name "*.app" -type f | head -1)
+          echo "Verifying: ${APP_FILE}"
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+          unzip -q "${APP_FILE}" -d "${TMPDIR}"
+          HAP_FILE=$(find "${TMPDIR}" -name "*.hap" -type f | head -1)
+          HAP_DIR="${TMPDIR}/hap"
+          unzip -q "${HAP_FILE}" -d "${HAP_DIR}"
+          APP_DIR="${HAP_DIR}/resources/resfile/electerm"
+          ERRORS=""
+          for f in \
+            "index.js" \
+            "app.bundle.mjs" \
+            "package.json" \
+            "views/index.pug"; do
+            if [ ! -f "${APP_DIR}/${f}" ]; then
+              ERRORS="${ERRORS}\n  ✗ MISSING: ${f}"
+            else
+              echo "  ✓ ${f}"
+            fi
+          done
+          JS_COUNT=$(find "${APP_DIR}/dist/assets/js" -name "*.js" 2>/dev/null | wc -l)
+          CSS_COUNT=$(find "${APP_DIR}/dist/assets/css" -name "*.css" 2>/dev/null | wc -l)
+          CHUNK_COUNT=$(find "${APP_DIR}/dist/assets/chunk" -name "*.js" 2>/dev/null | wc -l)
+          echo "  ✓ assets/js: ${JS_COUNT} files"
+          echo "  ✓ assets/css: ${CSS_COUNT} files"
+          echo "  ✓ assets/chunk: ${CHUNK_COUNT} files"
+          if [ "${JS_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No JS files in dist/assets/js/"; fi
+          if [ "${CSS_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No CSS files in dist/assets/css/"; fi
+          if [ "${CHUNK_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ No chunk files in dist/assets/chunk/"; fi
+          # Native runtime libs (real shared libnode.so — see prepare-node.sh)
+          LIB_NODE_COUNT=$(find "${HAP_DIR}/libs" -name "libnode.so" 2>/dev/null | wc -l)
+          LIB_CTL_COUNT=$(find "${HAP_DIR}/libs" -name "libnode_ctl.so" 2>/dev/null | wc -l)
+          LIB_LAUNCHER_COUNT=$(find "${HAP_DIR}/libs" -name "libnode_launcher.so" 2>/dev/null | wc -l)
+          echo "  ✓ libs/libnode.so: ${LIB_NODE_COUNT} arch(s)"
+          echo "  ✓ libs/libnode_ctl.so: ${LIB_CTL_COUNT} arch(s)"
+          echo "  ✓ libs/libnode_launcher.so: ${LIB_LAUNCHER_COUNT} arch(s)"
+          if [ "${LIB_NODE_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ libnode.so missing from libs/"; fi
+          if [ "${LIB_CTL_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ libnode_ctl.so missing from libs/"; fi
+          if [ "${LIB_LAUNCHER_COUNT}" -eq 0 ]; then ERRORS="${ERRORS}\n  ✗ libnode_launcher.so missing from libs/"; fi
+          if [ -n "${ERRORS}" ]; then
+            echo -e "::error::APP content verification failed:${ERRORS}"
+            exit 1
+          fi
+          echo "✓ All critical files verified in APP"
+          # Add to GitHub Step Summary
+          echo "| JS files | \`${JS_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| CSS files | \`${CSS_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chunk files | \`${CHUNK_COUNT}\` |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload APP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.find_app.outputs.artifact_name }}
+          path: ${{ steps.find_app.outputs.app_path }}
+          retention-days: 30
+
+      # ── Summary ──────────────────────────────────────────────────────────
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch/Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runtime | \`Node.js 24 (--shared libnode.so) + ArkWeb\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web app | \`electerm source (direct run)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| App version | \`${{ env.APP_VERSION || 'unknown' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build mode | \`${{ github.event.inputs.build_mode || 'release' }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -f "${{ steps.find_app.outputs.app_path }}" ]; then
+            echo "| APP file | \`${{ steps.find_app.outputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| APP size | \`$(du -h ${{ steps.find_app.outputs.app_path }} | cut -f1)\` |" >> $GITHUB_STEP_SUMMARY
+          fi
