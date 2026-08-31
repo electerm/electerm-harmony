@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # prepare-node.sh — Download our own real shared libnode.so for OpenHarmony
-# from the electerm/electerm-harmony GitHub release and install it into the
+# from the electerm/ohos-node-shared GitHub release and install it into the
 # entry module as the prebuilt Node.js native "library".
 #
 # WHY NOT hqzing/ohos-node (the old source):
@@ -24,7 +24,7 @@
 # Environment variables:
 #   NODE_VERSION       — node.js version the release was built from (default 24.2.0)
 #   RELEASE_TAG        — override the GitHub release tag (default auto-derived)
-#   RELEASE_REPO       — repo hosting the release (default electerm/electerm-harmony)
+#   RELEASE_REPO       — repo hosting the release (default electerm/ohos-node-shared)
 set -euo pipefail
 
 # --- Config -----------------------------------------------------------------
@@ -40,7 +40,7 @@ case "${ARCH}" in
 esac
 
 NODE_VERSION="${NODE_VERSION:-24.2.0}"
-RELEASE_REPO="${RELEASE_REPO:-electerm/electerm-harmony}"
+RELEASE_REPO="${RELEASE_REPO:-electerm/ohos-node-shared}"
 RELEASE_TAG="${RELEASE_TAG:-ohos-node-shared-v${NODE_VERSION}}"
 
 ASSET_NAME="libnode-${ASSET_ARCH}.so"
