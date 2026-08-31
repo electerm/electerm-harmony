@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - dev2
+      - build
   workflow_dispatch:
 
 # Cancel previous runs on the same branch
