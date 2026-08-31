@@ -6,7 +6,9 @@ on:
       - build
       - dev
       - dev1
-      - dev2
+      # NOTE: dev2 intentionally excluded — that branch only builds the
+      # web variant (build-web.yml). Keeping it here would fire the full
+      # HarmonyOS APP build on every dev2 push, which we don't want.
 
 # Cancel previous runs on the same branch/tag
 concurrency:
