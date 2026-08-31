@@ -143,8 +143,8 @@ struct Index {
       const filesDir: string = context.filesDir;
       // el2 junction path (visible in the child too) when available
       this.dataDir = this.dirExists(EL2_FILES_DIR)
-        ? `${EL2_FILES_DIR}/electerm-data`
-        : `${filesDir}/electerm-data`;
+        ? EL2_FILES_DIR
+        : filesDir;
       const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
       const nodePath: string = this.resolveNodePath(context.bundleCodeDir);
 
