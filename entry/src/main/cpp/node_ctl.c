@@ -886,20 +886,28 @@ static const char *startEmbeddedNode(const char *params) {
   }
   logWrite("[embed] node::Start resolved at %p", (void *)start);
 
-  /* argv must outlive the thread — static storage. Include V8 flags
-   * to bypass the AllowHeapAllocationInRelease assertion that fires
-   * during Isolate::Initialize when the (missing) snapshot path tries
-   * to allocate on the heap. */
+  /* argv must outlive the thread — static storage. V8 flags:
+   *  - --no-verify-heap : bypasses the AllowHeapAllocationInRelease assertion
+   *    that fires during Isolate::Initialize.
+   *  - --jitless       : disable the JIT so V8 never maps executable
+   *    (PROT_EXEC) pages at runtime. On OpenHarmony the kernel/W^X policy
+   *    rejects mprotect(PROT_EXEC) with EPERM, and V8's OS::SetPermissions
+   *    asserts `CHECK_EQ(ENOMEM, errno)` on that failure, so node::Start
+   *    aborts with "# Check failed: 12 == (*__errno_location())". --jitless
+   *    removes the runtime executable mapping entirely. (Verified a valid
+   *    node v24 flag; .so is a true shared lib so no snapshot/PIE issue.) */
   static char arg0[MAX_LINE * 2];
   static char arg1[] = "--no-verify-heap";
-  static char arg2[MAX_LINE * 2];
+  static char arg2[] = "--jitless";
+  static char arg3[MAX_LINE * 2];
   snprintf(arg0, sizeof(arg0), "%s", nodePath);
-  snprintf(arg2, sizeof(arg2), "%s", cfg.script);
+  snprintf(arg3, sizeof(arg3), "%s", cfg.script);
   g_nodeArgs.start = start;
   g_nodeArgs.argv[0] = arg0;
   g_nodeArgs.argv[1] = arg1;
   g_nodeArgs.argv[2] = arg2;
-  g_nodeArgs.argv[3] = NULL;
+  g_nodeArgs.argv[3] = arg3;
+  g_nodeArgs.argv[4] = NULL;
 
   /* Run node::Start on THIS thread — we are already the detached bootstrap
    * thread with a 32MB stack, so there is no reason to hand off again.
@@ -935,7 +943,9 @@ static const char *startEmbeddedNode(const char *params) {
   g_nodeTid = (pid_t)syscall(__NR_gettid);
   setStatus(ST_RUNNING, "node::Start");
   logWrite("[embed] bootstrap tid=%ld, calling node::Start", (long)g_nodeTid);
-  int rc = start(3, g_nodeArgs.argv);
+  errno = 0; /* clear any stale errno left by the io_uring preflight so a
+              * later CHECK_EQ(ENOMEM, errno) sees the real failure, not EPERM */
+  int rc = start(4, g_nodeArgs.argv);
   logWrite("[embed] node::Start returned %d (backend stopped)", rc);
   snprintf(errBuf, sizeof(errBuf), "err:node::Start returned %d", rc);
   setStatus(ST_FAILED, errBuf);

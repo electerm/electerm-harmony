@@ -542,13 +542,13 @@ static void installSigsysShim(void) {
 
 struct NodeThreadArgs {
   node_start_fn start;
-  char *argv[5];  /* node binary, V8 flags, script, NULL */
+  char *argv[7];  /* node binary, V8 flags (up to 4), script, NULL */
   int rc;
 };
 
 static void *nodeThreadMain(void *p) {
   struct NodeThreadArgs *a = (struct NodeThreadArgs *)p;
-  a->rc = a->start(4, a->argv);
+  a->rc = a->start(5, a->argv);
   logWrite("[launcher] node::Start returned %d", a->rc);
   _exit(a->rc & 0xff);
   return NULL; /* unreachable */
@@ -577,14 +577,20 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
    * instead of a SIGSYS thread kill. */
   installSigsysShim();
 
-  /* argv must outlive the thread — static storage. Include V8 flags
-   * to bypass the AllowHeapAllocationInRelease assertion that fires
-   * during Isolate::Initialize when the (missing) snapshot path tries
-   * to allocate on the heap. */
+  /* argv must outlive the thread — static storage. V8 flags:
+   *  - --no-verify-heap : bypasses the AllowHeapAllocationInRelease assertion.
+   *  - --no-snap       : skip snapshot load (no embedded snapshot in our build).
+   *  - --jitless       : disable the JIT so V8 never maps executable
+   *    (PROT_EXEC) pages at runtime. OpenHarmony's W^X/kernel policy rejects
+   *    mprotect(PROT_EXEC) with EPERM, and V8's OS::SetPermissions asserts
+   *    `CHECK_EQ(ENOMEM, errno)` on that failure -> node::Start aborts with
+   *    "# Check failed: 12 == (*__errno_location())". --jitless removes the
+   *    runtime executable mapping entirely. (Verified valid node v24 flag.) */
   static char arg0[MAX_LINE * 2];
   static char arg1[MAX_LINE * 2];
   static char argFlag1[] = "--no-verify-heap";
   static char argFlag2[] = "--no-snap";
+  static char argFlag3[] = "--jitless";
   snprintf(arg0, sizeof(arg0), "%s", nodePath);
   snprintf(arg1, sizeof(arg1), "%s", script);
 
@@ -593,8 +599,9 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
   na.argv[0] = arg0;
   na.argv[1] = argFlag1;
   na.argv[2] = argFlag2;
-  na.argv[3] = arg1;
-  na.argv[4] = NULL;
+  na.argv[3] = argFlag3;
+  na.argv[4] = arg1;
+  na.argv[5] = NULL;
   na.rc = -1;
 
   pthread_attr_t attr;
