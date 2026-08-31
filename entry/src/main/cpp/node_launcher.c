@@ -578,14 +578,12 @@ static int runNodeInProcess(const char *nodePath, const char *script) {
   installSigsysShim();
 
   /* argv must outlive the thread — static storage. V8 flags:
-   *  - --no-verify-heap : bypasses the AllowHeapAllocationInRelease assertion.
-   *  - --no-snap       : skip snapshot load (no embedded snapshot in our build).
-   *  - --jitless       : disable the JIT so V8 never maps executable
-   *    (PROT_EXEC) pages at runtime. OpenHarmony's W^X/kernel policy rejects
-   *    mprotect(PROT_EXEC) with EPERM, and V8's OS::SetPermissions asserts
-   *    `CHECK_EQ(ENOMEM, errno)` on that failure -> node::Start aborts with
-   *    "# Check failed: 12 == (*__errno_location())". --jitless removes the
-   *    runtime executable mapping entirely. (Verified valid node v24 flag.) */
+   *  - --jitless       : THE fix for the OpenHarmony W^X policy — V8 never
+   *    maps PROT_EXEC pages, so no mprotect(PROT_EXEC)/EPERM and no
+   *    `CHECK_EQ(ENOMEM, errno)` abort in node::Start.
+   *  - --no-snap       : skip embedded-snapshot load (our build ships none).
+   *  - --no-verify-heap : disables V8 heap verification on startup
+   *    (defensive; harmless when the heap is healthy). */
   static char arg0[MAX_LINE * 2];
   static char arg1[MAX_LINE * 2];
   static char argFlag1[] = "--no-verify-heap";

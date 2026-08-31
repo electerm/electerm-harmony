@@ -113,12 +113,12 @@ for f in "${KEYSTORE_PATH}" "${CERT_PATH}" "${PROFILE_PATH}"; do
 done
 echo "    ✓ Signing materials present"
 
-# Informational (WARNING, non-fatal): note the cert identity.
+# Informational (non-fatal): note the cert identity.
 # The same electerm_publish.cer is used by the main (electron) branch for
 # `hap-sign-tool sign-app` and that branch builds fine, so for *HAP package
-# signing* this cert is acceptable. The one place a root/CA cert is genuinely
-# wrong — per-.so binary-sign-tool code-signing — is no longer done by this
-# script (see the libnode.so code-signing section). Left as INFO only.
+# signing* this cert is acceptable. This script does not perform any per-.so
+# binary-sign-tool code-signing, so the root/CA nature of the cert is not a
+# problem here. Shown for visibility only.
 if command -v openssl >/dev/null 2>&1; then
   CERT_SUBJECT=$(openssl x509 -in "${CERT_PATH}" -noout -subject 2>/dev/null || true)
   echo "    • App cert (appCertFile for hap-sign-tool): ${CERT_SUBJECT}"
@@ -308,86 +308,14 @@ echo "==> Installing ohpm dependencies ..."
 cd "${PROJECT_ROOT}"
 "${OHPM}" install
 
-# --- Code-sign libnode.so? NO, by default. ----------------------------------
-# IMPORTANT (root-cause of the CI arm64 SIGTRAP crash):
-#   The bundled libnode.so is loaded *in-process* by the app via dlopen().
-#   A shared library that is dlopen()'d needs a TLS layout compatible with
-#   the host app (dynamic/global-dynamic TLS). Running binary-sign-tool over
-#   the .so rewrites the ELF to embed a code-signature section and, on arm64,
-#   corrupts the TLS template — so when node::Start runs, V8's per-thread
-#   TLS reads garbage and the release CHECK `AllowHeapAllocationInRelease`
-#   fires at Isolate::Initialize (brk -> SIGTRAP, signal 5). The local
-#   (unsigned, x64 emulator) build never code-signs libnode.so and works;
-#   the CI build did, and crashed identically to the bug described in
-#   prepare-node.sh. So we do NOT code-sign the bundled .so here.
-#
-#   For a properly *app-signed* HAP (hap-sign-tool below), the package
-#   signature grants its bundled native libs execution permission — XPM does
-#   not require a separate per-.so binary-sign-tool signature. The reference
-#   5.3.15 signed HAP that proved the emulator path also ships an unsigned
-#   (at the .so level) libnode.so.
-#
-#   Opt back in only if a specific device/enrollment truly requires it, and
-#   only with a VALID app code-signing cert (NOT a root CA — see the guard
-#   below). When enabled, restore the pristine copy afterwards with:
-#     git checkout -- entry/libs/arm64-v8a/libnode.so
-NODE_SIGNED=0
-if [ "${CODE_SIGN_NODE:-0}" = "1" ]; then
-  echo "==> Code-signing libnode.so (CODE_SIGN_NODE=1) ..."
-
-  BINSIGN_JAR="${BINSIGN_JAR:-${PROJECT_ROOT}/build/tools/binary-sign-tool.jar}"
-  BINSIGN_SHA256="d984474a09f6a1255ccde31f36e8a580be77aabd35b0ca2b3d94d1962ae3778d"
-  if [ ! -f "${BINSIGN_JAR}" ]; then
-    mkdir -p "$(dirname "${BINSIGN_JAR}")"
-    echo "    Downloading binary-sign-tool.jar (developtools_hapsigner dist) ..."
-    curl -fsSL --retry 5 --retry-delay 3 -o "${BINSIGN_JAR}" \
-      "https://raw.githubusercontent.com/openharmony/developtools_hapsigner/master/dist/binary-sign-tool.jar"
-  fi
-  BINSIGN_ACTUAL=$(shasum -a 256 "${BINSIGN_JAR}" | cut -d' ' -f1)
-  if [ "${BINSIGN_ACTUAL}" != "${BINSIGN_SHA256}" ]; then
-    echo "    ✗ binary-sign-tool.jar checksum mismatch: ${BINSIGN_ACTUAL}"
-    exit 1
-  fi
-  echo "    ✓ binary-sign-tool.jar ready"
-
-  NODE_LIB="${PROJECT_ROOT}/entry/libs/arm64-v8a/libnode.so"
-  NODE_LIB_SIGNED="$(mktemp).signed"
-
-  if [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
-    echo "    Signing with the APP certificate ..."
-    if java -jar "${BINSIGN_JAR}" sign \
-        -keyAlias "${KEY_ALIAS}" \
-        -keyPwd "${KEY_PASSWORD}" \
-        -appCertFile "${CERT_PATH}" \
-        -inFile "${NODE_LIB}" \
-        -signAlg SHA256withECDSA \
-        -keystoreFile "${KEYSTORE_PATH}" \
-        -keystorePwd "${KEYSTORE_PASSWORD}" \
-        -outFile "${NODE_LIB_SIGNED}" >/dev/null 2>&1; then
-      mv -f "${NODE_LIB_SIGNED}" "${NODE_LIB}"
-      NODE_SIGNED=1
-      echo "    ✓ libnode.so cert-signed (APP identity)"
-    else
-      echo "    ⚠ cert-sign failed — falling back to self-sign"
-      rm -f "${NODE_LIB_SIGNED}"
-    fi
-  fi
-
-  if [ "${NODE_SIGNED}" = "0" ]; then
-    if java -jar "${BINSIGN_JAR}" sign \
-        -inFile "${NODE_LIB}" -outFile "${NODE_LIB_SIGNED}" \
-        -selfSign 1 >/dev/null 2>&1; then
-      mv -f "${NODE_LIB_SIGNED}" "${NODE_LIB}"
-      NODE_SIGNED=1
-      echo "    ✓ libnode.so self-signed"
-    else
-      echo "    ⚠ self-sign failed — shipping unsigned (device may refuse to exec)"
-    fi
-    rm -f "${NODE_LIB_SIGNED}"
-  fi
-else
-  echo "==> Skipping libnode.so code-signing (bundled .so is covered by the app signature; code-signing corrupts the arm64 TLS template and crashes node::Start)."
-fi
+# --- Bundled libnode.so is NOT code-signed here. -------------------------
+#   The app HAP signature (hap-sign-tool below) already grants its bundled
+#   native libs execution permission, so XPM does not require a separate
+#   per-.so binary-sign-tool signature. The previous arm64 SIGTRAP in
+#   node::Start ("# Check failed: 12 == (*__errno_location())") was a W^X
+#   policy rejection of the JIT's runtime PROT_EXEC mapping - fixed at
+#   runtime by launching node with --jitless in node_ctl.c / node_launcher.c.
+#   No .so code-signing is performed.
 
 # --- Build the unsigned APP -------------------------------------------------
 
@@ -490,17 +418,6 @@ check_file() {
 
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode.so" "libs/arm64-v8a/libnode.so"
 
-# The code signature must survive packaging (hvigor strip could drop the
-# non-alloc .codesign section — entry/build-profile.json5 disables strip).
-if [ "${NODE_SIGNED}" = "1" ]; then
-  if java -jar "${BINSIGN_JAR}" display-sign \
-      -inFile "${HAP_DIR}/libs/arm64-v8a/libnode.so" 2>/dev/null \
-      | grep -q "code signature is not found"; then
-    ERRORS="${ERRORS}\n  ✗ libnode.so code signature lost during packaging"
-  else
-    echo "  ✓ libnode.so code signature present in packed HAP"
-  fi
-fi
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode_launcher.so" "libs/arm64-v8a/libnode_launcher.so"
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode_ctl.so" "libs/arm64-v8a/libnode_ctl.so"
 check_file "${HAP_DIR}/resources/resfile/electerm/index.js" "resfile/electerm/index.js"

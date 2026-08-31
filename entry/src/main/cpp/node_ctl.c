@@ -769,10 +769,6 @@ static const char *startEmbeddedNode(const char *params) {
   if (cfg.secret[0]) {
     setenv("SERVER_SECRET", cfg.secret, 1);
   }
-  /* V8 release-mode assert (AllowHeapAllocationInRelease) fires during
-   * Isolate::Initialize in the cross-compiled build. We cannot pass V8
-   * flags via NODE_OPTIONS (rejected) or argv ("bad option"). The fix
-   * must be applied at Node.js build time (configure flags). */
   for (int i = 0; i < extraEnvCount; i++) {
     /* setenv() COPIES the value. putenv() would store a pointer into
      * `extraEnv`, a stack array of THIS frame — and since node now runs on
@@ -887,15 +883,15 @@ static const char *startEmbeddedNode(const char *params) {
   logWrite("[embed] node::Start resolved at %p", (void *)start);
 
   /* argv must outlive the thread — static storage. V8 flags:
-   *  - --no-verify-heap : bypasses the AllowHeapAllocationInRelease assertion
-   *    that fires during Isolate::Initialize.
-   *  - --jitless       : disable the JIT so V8 never maps executable
-   *    (PROT_EXEC) pages at runtime. On OpenHarmony the kernel/W^X policy
-   *    rejects mprotect(PROT_EXEC) with EPERM, and V8's OS::SetPermissions
-   *    asserts `CHECK_EQ(ENOMEM, errno)` on that failure, so node::Start
-   *    aborts with "# Check failed: 12 == (*__errno_location())". --jitless
-   *    removes the runtime executable mapping entirely. (Verified a valid
-   *    node v24 flag; .so is a true shared lib so no snapshot/PIE issue.) */
+   *  - --jitless       : THE fix for the OpenHarmony W^X policy. V8 never
+   *    maps executable (PROT_EXEC) pages at runtime, so no
+   *    mprotect(PROT_EXEC)/EPERM, and V8's OS::SetPermissions no longer
+   *    hits `CHECK_EQ(ENOMEM, errno)` -> the "# Check failed: 12 =="
+   *    "(*__errno_location())" SIGTRAP/abort in node::Start. Node runs as a
+   *    pure interpreter; fine for an on-device backend service.
+   *  - --no-verify-heap : disables V8 heap verification on startup
+   *    (defensive — avoids allocation checks that can fail under the
+   *    constrained runtime). Harmless no-op when the heap is healthy. */
   static char arg0[MAX_LINE * 2];
   static char arg1[] = "--no-verify-heap";
   static char arg2[] = "--jitless";
