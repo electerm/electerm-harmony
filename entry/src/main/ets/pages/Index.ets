@@ -2,7 +2,8 @@
  * Index page — ArkWeb host for the electerm web app.
  *
  * Startup sequence:
- *   1. use the entry module data dir
+ *   1. resolve the writable el2 data dir — the one the previous build used,
+ *      so an in-place upgrade keeps its bookmarks
  *   2. start the Node.js backend — primarily IN-PROCESS in this app
  *      process (libnode_ctl.so startBackend → dlopen libnode.so →
  *      node::Start; the electron-harmony pattern), falling back to a
@@ -47,11 +48,26 @@ const BOOT_TIMEOUT_MS: number = 20_000;
 /** Never read more than this from node-boot.log — this runs on the UI thread. */
 const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
 /**
- * The main branch stores its data beside the installed entry module under
- * <bundleCodeDir>/entry/files. Deriving it from bundleCodeDir keeps that
- * layout independent of the device's per-user install prefix.
+ * The data dir must live under el2 — the app-owned area that an in-place
+ * upgrade keeps (same bundleName + same signing cert ⇒ same UID ⇒ the previous
+ * build's el2 tree is still there).
+ *
+ * `bundleCodeDir` is the *opposite*: the el1 HAP install dir. It is owned by
+ * the installer, mounted read-only, signature-verified and re-extracted on
+ * every install, so mkdir there fails with 13900012 (EPERM) and any data put
+ * there would be wiped by the next update anyway.
+ *
+ * Two el2 candidates are inherited from the previous (Electron) build:
+ *   - app level  /data/storage/el2/base/files            (AbilityStage marker)
+ *   - HAP level  /data/storage/el2/base/haps/entry/files (context.filesDir)
+ * PickDataDir() prefers whichever already holds data, so an upgrade keeps its
+ * bookmarks instead of starting from an empty db.
  */
-const ENTRY_FILES_DIR = (bundleCodeDir: string): string => `${bundleCodeDir}/entry/files`;
+const EL2_APP_FILES: string = '/data/storage/el2/base/files';
+/** Sub-dir used when neither candidate holds data yet (fresh install). */
+const DATA_SUBDIR: string = 'electerm-data';
+/** Marker an older build left behind with the dir it actually used. */
+const DATA_PATH_MARKER: string = '.electerm-data-path';
 
 @Entry
 @Component
@@ -139,7 +155,7 @@ struct Index {
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
-      this.dataDir = ENTRY_FILES_DIR(context.bundleCodeDir);
+      this.dataDir = this.pickDataDir(context);
       const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
       const nodePath: string = this.resolveNodePath(context.bundleCodeDir);
 
@@ -148,6 +164,7 @@ struct Index {
       if (!this.dirExists(this.dataDir)) {
         fs.mkdirSync(this.dataDir, true);
       }
+      this.pinDataDir(this.dataDir);
 
       // 2. start the backend
       // entryParams is a plain "key=value\n" string parsed by node_launcher.c
@@ -324,6 +341,95 @@ struct Index {
       return stat.isDirectory();
     } catch {
       return false;
+    }
+  }
+
+  /** el2 candidates, most preferred first. Never anything under el1/bundle. */
+  dataDirCandidates(context: common.Context): string[] {
+    return [
+      `${EL2_APP_FILES}/${DATA_SUBDIR}`,
+      EL2_APP_FILES,
+      `${context.filesDir}/${DATA_SUBDIR}`,
+      context.filesDir
+    ];
+  }
+
+  /** True when `dir` already holds an electerm nedb tree
+   * (<DATA_PATH>/users/<user>/electerm.*.nedb) — i.e. an older build used it. */
+  hasElectermData(dir: string): boolean {
+    return this.dirExists(`${dir}/users`);
+  }
+
+  /** Contents of a marker left by an older build; '' when absent or not el2. */
+  readMarker(path: string): string {
+    try {
+      const text: string = fs.readTextSync(path).trim();
+      return text.startsWith('/data/storage/el2/') ? text : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Fail fast on a dir that exists but is not writable (locked el2, etc.). */
+  writeProbe(dir: string): void {
+    const probe: string = `${dir}/.write-test`;
+    fs.closeSync(fs.openSync(probe, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE));
+    fs.unlinkSync(probe);
+  }
+
+  /**
+   * Resolve the writable data dir, el2 only.
+   *
+   * An in-place upgrade keeps the app's el2 tree, so the previous build's nedb
+   * files are still on disk — the only thing that has to match is the
+   * directory. A dir that already holds `users/` therefore beats everything
+   * else; the marker is only a hint for layouts we no longer recognise.
+   */
+  pickDataDir(context: common.Context): string {
+    const candidates: string[] = this.dataDirCandidates(context);
+
+    for (let i = 0; i < candidates.length; i++) {
+      if (this.hasElectermData(candidates[i])) {
+        hilog.info(DOMAIN, TAG, 'reusing previous data dir: %{public}s', candidates[i]);
+        return candidates[i];
+      }
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      const marker: string = this.readMarker(`${candidates[i]}/${DATA_PATH_MARKER}`);
+      if (marker !== '') {
+        hilog.info(DOMAIN, TAG, 'using marker data dir: %{public}s', marker);
+        return marker;
+      }
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        if (!this.dirExists(candidates[i])) {
+          fs.mkdirSync(candidates[i], true);
+        }
+        this.writeProbe(candidates[i]);
+        hilog.info(DOMAIN, TAG, 'using fresh data dir: %{public}s', candidates[i]);
+        return candidates[i];
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, 'data dir unusable: %{public}s (%{public}s)',
+          candidates[i], JSON.stringify(e));
+      }
+    }
+    return context.tempDir;
+  }
+
+  /** Record the dir we settled on so the next version resolves it directly. */
+  pinDataDir(dir: string): void {
+    try {
+      if (!this.dirExists(EL2_APP_FILES)) {
+        fs.mkdirSync(EL2_APP_FILES, true);
+      }
+      const markerPath: string = `${EL2_APP_FILES}/${DATA_PATH_MARKER}`;
+      const file = fs.openSync(markerPath,
+        fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      fs.writeSync(file.fd, dir);
+      fs.closeSync(file);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'could not pin data dir: %{public}s', JSON.stringify(e));
     }
   }
 

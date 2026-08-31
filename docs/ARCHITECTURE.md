@@ -68,7 +68,7 @@ Key design points:
 - **`AbilityStage.ets`** — standard `AbilityStage` (no Electron `WebAbilityStage`).
 - **`entryability/EntryAbility.ets`** — standard `UIAbility`; on `onDestroy()` it calls `BackendManager.killBackend()`.
 - **`pages/Index.ets`** — the boot orchestrator:
-  1. creates the writable data dir (`filesDir/electerm-data`, with an `el2` junction fallback);
+  1. resolves the writable data dir — **el2 only** (`/data/storage/el2/base/files/electerm-data`, else `/data/storage/el2/base/files`, else `filesDir` and its `electerm-data` sub-dir). A candidate that already holds `users/` wins, so an in-place upgrade keeps the previous build's db. `bundleCodeDir` (`el1/bundle`) is the read-only HAP install dir and must never be used for data — `mkdir` there fails with `13900012`;
   2. calls `startBackend()` (in-process primary, native child fallback);
   3. polls `http://127.0.0.1:5577` with plain HTTP until it answers;
   4. once ready, `controller.loadUrl(SERVER_URL)` swaps the `Web` component from the local `loading.html` to the backend.
