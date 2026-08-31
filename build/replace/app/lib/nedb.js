@@ -36,7 +36,7 @@ export const tables = [
   'autoRunWidgets'
 ]
 
-const dbPath = process.env.DB_PATH || resolve(cwd, 'data')
+const dbPath = process.env.DB_PATH || process.env.DATA_PATH || resolve(cwd, 'data')
 const dbDir = resolve(dbPath, 'users', defaultUserName)
 fs.mkdirSync(dbDir, { recursive: true })
 
