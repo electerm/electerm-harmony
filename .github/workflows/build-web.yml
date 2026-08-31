@@ -178,6 +178,11 @@ jobs:
           path: .cache/node-runtime
           key: ohos-node-${{ env.NODE_VERSION }}
 
+      - name: Inject safe-storage secret
+        env:
+          STORAGE_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
+        run: node scripts/inject-safe-storage-secret.mjs
+
       # ── Step 3: Build web app (frontend + backend bundle → resfile) ──────
       - name: Prepare web app
         run: ./scripts/prepare-web.sh
