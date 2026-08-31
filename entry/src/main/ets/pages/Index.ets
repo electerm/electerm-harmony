@@ -2,7 +2,7 @@
  * Index page — ArkWeb host for the electerm web app.
  *
  * Startup sequence:
- *   1. create the writable data dir (filesDir/electerm-data)
+ *   1. use the entry module data dir
  *   2. start the Node.js backend — primarily IN-PROCESS in this app
  *      process (libnode_ctl.so startBackend → dlopen libnode.so →
  *      node::Start; the electron-harmony pattern), falling back to a
@@ -47,12 +47,11 @@ const BOOT_TIMEOUT_MS: number = 20_000;
 /** Never read more than this from node-boot.log — this runs on the UI thread. */
 const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
 /**
- * Prefer the per-process el2 junction over the parent's filesDir string:
- * /data/storage/el2/base/files points at the same storage but is mounted in
- * EVERY process of the app (including the native child), while the
- * sandbox-style absolute path the parent gets may not be.
+ * The main branch stores its data beside the installed entry module under
+ * <bundleCodeDir>/entry/files. Deriving it from bundleCodeDir keeps that
+ * layout independent of the device's per-user install prefix.
  */
-const EL2_FILES_DIR: string = '/data/storage/el2/base/files';
+const ENTRY_FILES_DIR = (bundleCodeDir: string): string => `${bundleCodeDir}/entry/files`;
 
 @Entry
 @Component
@@ -140,11 +139,7 @@ struct Index {
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
-      const filesDir: string = context.filesDir;
-      // el2 junction path (visible in the child too) when available
-      this.dataDir = this.dirExists(EL2_FILES_DIR)
-        ? EL2_FILES_DIR
-        : filesDir;
+      this.dataDir = ENTRY_FILES_DIR(context.bundleCodeDir);
       const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
       const nodePath: string = this.resolveNodePath(context.bundleCodeDir);
 
