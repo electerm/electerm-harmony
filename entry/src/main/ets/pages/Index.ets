@@ -69,10 +69,41 @@ const DATA_SUBDIR: string = 'electerm-data';
 /** Marker an older build left behind with the dir it actually used. */
 const DATA_PATH_MARKER: string = '.electerm-data-path';
 
+/**
+ * ArkTS object injected into the ArkWeb page as `window.harmonyNative`.
+ *
+ * The electerm UI runs in a single Web component pointed at the local backend
+ * (http://127.0.0.1:5577), so clicking an http(s) link must open the OS
+ * default browser — it must NEVER navigate this webview away from the app.
+ * The client (src/client/web-components/web-pre.js) calls
+ * window.harmonyNative.openExternal(url) for that.
+ */
+class NativeBridge {
+  private ctx: common.UIAbilityContext;
+
+  constructor(ctx: common.UIAbilityContext) {
+    this.ctx = ctx;
+  }
+
+  /** Open a link with the OS default app (browser for http/https). */
+  openExternal(url: string): void {
+    const trimmed: string = (url || '').trim();
+    if (!/^(https?|mailto|tel):/i.test(trimmed)) {
+      hilog.warn(DOMAIN, TAG, 'blocked openExternal for non-openable url: %{public}s', trimmed);
+      return;
+    }
+    this.ctx.openLink(trimmed).catch((err: BusinessError) => {
+      hilog.error(DOMAIN, TAG, 'openLink(%{public}s) failed: %{public}s', trimmed, JSON.stringify(err));
+    });
+  }
+}
+
 @Entry
 @Component
 struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
+  /** JS bridge exposed to the webview as window.harmonyNative (openExternal). */
+  nativeBridge: NativeBridge = new NativeBridge(getContext(this) as common.UIAbilityContext);
   @State serverReady: boolean = false;
   @State bootFailed: boolean = false;
   @State statusMessage: string = 'Starting electerm …';
@@ -519,6 +550,15 @@ struct Index {
     });
   }
 
+  /** True for an http(s) url that lives outside the local backend — such a
+   * main-frame navigation would take the whole webview away from the app UI,
+   * so it must be diverted to the OS default browser instead. */
+  isExternalWebUrl(url: string): boolean {
+    return /^https?:\/\//i.test(url) &&
+      !url.startsWith('http://127.0.0.1') &&
+      !url.startsWith('http://localhost');
+  }
+
   onBackPress(): boolean {
     try {
       if (this.controller.accessBackward()) {
@@ -538,6 +578,31 @@ struct Index {
         .height('100%')
         .javaScriptAccess(true)
         .domStorageAccess(true)
+        // Expose window.harmonyNative.openExternal(url) so the electerm UI can
+        // ask the OS to open http(s)/mailto/tel links in the default app.
+        .javaScriptProxy({
+          object: this.nativeBridge,
+          name: 'harmonyNative',
+          methodList: ['openExternal'],
+          controller: this.controller
+        })
+        // Backstop: no MAIN-frame navigation may leave the local backend
+        // (the built-in web-session tab browses external sites in a subframe
+        // and must stay untouched). Anything external — a raw <a href> click
+        // that bypassed the client's openExternal funnel, a redirect, … — is
+        // cancelled here and handed to the OS default browser.
+        .onLoadIntercept((event) => {
+          if (!event.data.isMainFrame()) {
+            return false;
+          }
+          const url: string = event.data.getRequestUrl();
+          if (this.isExternalWebUrl(url)) {
+            hilog.info(DOMAIN, TAG, 'diverting main-frame nav to system browser: %{public}s', url);
+            this.nativeBridge.openExternal(url);
+            return true;
+          }
+          return false;
+        })
 
       if (!this.serverReady) {
         Column({ space: 16 }) {
