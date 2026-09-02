@@ -362,7 +362,6 @@ fi
 # Canonical web-build artifact name: electerm-harmony-<arch>-<ver>.app
 # The web build only targets the on-device architecture (arm64-v8a), and
 # <ver> is the package.json version, so the shipped file is e.g.
-#   electerm-harmony-arm64-5.3.16.app
 APP_ARCH="arm64"
 CANONICAL_APP="${APP_OUTPUT_DIR}/electerm-harmony-${APP_ARCH}-${APP_VERSION}.app"
 
