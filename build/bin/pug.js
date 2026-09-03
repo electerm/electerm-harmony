@@ -1,20 +1,27 @@
 // build html
 /**
  * build common files with react module in it
+ *
+ * Generates a static dist/index.html from the pug template, injecting the
+ * same data the runtime server (src/app/lib/view.js) provides to the client.
+ * Mirrors upstream electerm's build/bin/pug.js, ported to ESM for this project.
  */
-const fs = require('fs')
-const pug = require('pug')
-const { resolve } = require('path')
-const pack = require('../../package.json')
-const deepCopy = require('json-deep-copy')
+import fs from 'fs'
+import pug from 'pug'
+import { resolve } from 'path'
+import deepCopy from 'json-deep-copy'
+
+const pack = JSON.parse(
+  fs.readFileSync(resolve(__dirname, '../../package.json'), 'utf8')
+)
 
 const entryPug = resolve(
   __dirname,
-  '../../src/client/views/index.pug'
+  '../../src/app/views/index.pug'
 )
 const targetFilePath = resolve(
   __dirname,
-  '../../work/app/assets/index.html'
+  '../../dist/index.html'
 )
 const pugContent = fs.readFileSync(entryPug, 'utf-8')
 const defaultAIPreset = {
@@ -25,21 +32,25 @@ const defaultAIPreset = {
   id: 'ai.electerm.org',
   nameAI: 'ai.electerm.org(default free)'
 }
-
-// const AIDisclamer = 'AI-generated terminal commands can be inaccurate or unsafe, be careful'
-
+const supportSessionTypes = [
+  'ssh',
+  'telnet',
+  'rdp',
+  'vnc',
+  'ftp',
+  'spice'
+]
 const data = {
   version: pack.version,
   siteName: pack.name,
   isDev: false,
-  disableUpgradeCheck: true,
-  hideLocalTerminal: true,
+  cdn: '',
+  tokenElecterm: '',
   defaultAIPreset,
-  disableAIFeature: false,
-  AIDisclamer: '本内容由 AI 生成，仅供参考',
-  supportSessionTypes: ['ssh', 'telnet', 'rdp', 'vnc', 'ftp', 'spice']
+  downloadUpgradeFromBrowser: true,
+  versionFile: 'version-android.html',
+  supportSessionTypes
 }
-
 const htmlContent = pug.render(pugContent, {
   filename: entryPug,
   ...data,

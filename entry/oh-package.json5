@@ -1,10 +1,10 @@
 {
   "name": "entry",
   "version": "5.3.15",
-  "description": "Electerm HarmonyOS entry module — provides UI surface and Electron runtime integration",
+  "description": "Electerm HarmonyOS entry module — ArkWeb shell + on-device Node.js backend",
   "main": "",
   "license": "MIT",
   "dependencies": {
-    "web_engine": "file:../web_engine"
+    "libnode_ctl": "file:./src/main/cpp/types/libnode_ctl"
   }
 }

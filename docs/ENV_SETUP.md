@@ -281,33 +281,30 @@ Or use the helper script (reads from `temp/.env` and `signing/`):
 | `OHOS_CMDLINE_TOOLS_URL` | download URL | HarmonyOS Command Line Tools download link (see section 5 below) |
 | `OHOS_SERVER_SECRET` | random string | Secret key for web app server (generate with `openssl rand -base64 32`) |
 
-### 4.4 Electron 鸿蒙 Runtime
+### 4.4 Node.js Runtime (ohos-node-shared)
 
-The app uses the Electron 鸿蒙 runtime (from `openharmony-sig/electron`) for Node.js + WebView.
-The pre-built runtime is distributed as a tarball. The URL is set as a GitHub secret to avoid
-exposing the private hosting address in the workflow file.
+This branch (`dev2`) runs the electerm-web backend on a **Node.js shared library**
+(`libnode.so`) — **not** the Electron 鸿蒙 runtime. The Node.js runtime is
+downloaded automatically at build time (locally via `scripts/prepare-node.sh`,
+in CI via `build-web.yml`) from the **public**
+[`electerm/ohos-node-shared`](https://github.com/electerm/ohos-node-shared)
+GitHub release. No secret or private URL is required.
 
-Set this secret in GitHub repo → **Settings → Secrets and variables → Actions**.
+- **Release tag**: `ohos-node-shared-v${NODE_VERSION}` (default `v24.2.0`)
+- **Asset**: `libnode-${arch}.so` → installed as `entry/libs/<abi>/libnode.so`
+- The version is controlled by the `NODE_VERSION` env in `build-web.yml` and the
+  default in `scripts/prepare-node.sh` (they must match, or the asset download
+  404s).
 
-> **Note:** Ask the project maintainer for the URL value — it is not committed to the repo.
-
-The tarball contains:
-- `web_engine/` — Complete HAR module (ArkTS API + resfile resources)
-- `electron/libs/arm64-v8a/*.so` — Native libraries
-
-| Secret Name | Required | Description |
-|-------------|----------|-------------|
-| `ELECTRON_RUNTIME_URL` | **Yes** | URL to download the pre-built Electron runtime tarball |
-
-See [BUILD.md §3](./BUILD.md#3-obtaining-the-electron-鸿蒙-runtime) for details.
+See [BUILD.md §3](./BUILD.md#3-obtaining-the-nodejs-runtime-libnodeso) for details.
 
 ### 4.5 Workflow Environment Variables (not secrets)
 
-These are defined in `.github/workflows/build.yml` under `env:` and can be changed without touching secrets:
+These are defined in `.github/workflows/build-web.yml` under `env:` and can be changed without touching secrets:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| (none) | | Runtime version is controlled by the URL you provide |
+| `NODE_VERSION` | `24.2.0` | Node.js runtime version (must match `scripts/prepare-node.sh`) |
 
 ---
 
@@ -369,7 +366,7 @@ Before your first CI build, make sure you have:
   - [ ] `OHOS_APP_ID`
   - [ ] `OHOS_CMDLINE_TOOLS_URL`
   - [ ] `OHOS_SERVER_SECRET`
-  - [ ] `ELECTRON_RUNTIME_URL` (ask maintainer for the value)
+- [ ] `NODE_VERSION` env in `build-web.yml` matches `scripts/prepare-node.sh` (`24.2.0`)
 - [ ] Workflow enabled under repo → **Actions** tab
 
 ---
@@ -377,7 +374,7 @@ Before your first CI build, make sure you have:
 ## 7. Security Notes
 
 - **Never commit** `.p12`, `.cer`, `.p7b`, or passwords to the repository
-- The `.gitignore` file excludes the `signing/` directory, `web_engine/`, `entry/libs/`, and `temp/` directory
+- The `.gitignore` file excludes the `signing/` directory, `entry/libs/` (the downloaded `libnode.so`), `entry/src/main/resources/resfile/electerm/` (web app build output), `build-profile.json5`, and `temp/` directory
 - GitHub Secrets are encrypted and never exposed in logs
 - If a signing material is compromised, revoke it on AppGallery Connect and generate new ones
 - Use **release certificates** only for published builds; use **debug certificates** for testing

@@ -1,26 +1,22 @@
 #!/usr/bin/env bash
-# prepare-web.sh — Install, build, and bundle the electerm app
-# from the project root into the HarmonyOS app's resfile resources.
+# prepare-web.sh — Install deps and build the electerm web app (frontend +
+# pure-node backend) into the entry module's resfile directory.
 #
-# This script:
-#   1. Installs npm dependencies in the project root (dev deps for build tools)
-#   2. Runs build/harmony/build.js which:
-#      - Copies @electerm/electerm-react/client → src/client/ (gitignored)
-#      - Runs `npm run b` (complete electerm build: clean + compile + prepare-file)
-#      - Applies HarmonyOS delta (main → bootstrap.js, remove native modules)
-#      - Copies work/app/ → web_engine/src/main/resources/resfile/resources/app/
+# Runs build/web/build.mjs which:
+#   1. vite-builds the frontend  -> resfile/electerm/dist/assets
+#   2. copies static assets + views/index.pug
+#   3. esbuild-bundles the backend -> resfile/electerm/app.bundle.mjs
+#   4. writes resfile/electerm/index.js (runtime env setup) + package.json
 #
-# Key points:
-#   - Reuses electerm's full build pipeline (npm run b), only adds harmony delta
-#   - Native modules (node-pty, serialport, cpu-features) are removed post-build
-#   - The app entry is bootstrap.js (sets DATA_PATH before loading app.js)
+# The resfile directory is packaged into the HAP and read directly by the
+# on-device node process — no runtime extraction.
 #
 # Usage:
 #   ./scripts/prepare-web.sh
 #
 # Environment variables:
-#   OHOS_SERVER_SECRET  — sets SERVER_SECRET in .env (optional)
-
+#   SERVER_SECRET / OHOS_SERVER_SECRET — JWT secret baked into the build
+#                                        (required in CI, optional locally)
 set -euo pipefail
 
 # --- Config -----------------------------------------------------------------
@@ -28,90 +24,60 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Web app source (project root)
-WEB_SRC_DIR="${PROJECT_ROOT}"
-# Output: web_engine/src/main/resources/resfile/resources/app/
-# (Electron app directory in the web_engine HAR module's resfile)
-RESFILE_APP_DIR="${PROJECT_ROOT}/web_engine/src/main/resources/resfile/resources/app"
+RESFILE_APP_DIR="${PROJECT_ROOT}/entry/src/main/resources/resfile/electerm"
 
 # --- Main -------------------------------------------------------------------
 
-echo "==> Preparing electerm app (from project root: ${WEB_SRC_DIR})"
+echo "==> Preparing electerm web app (from project root: ${PROJECT_ROOT})"
 
-if [ ! -f "${WEB_SRC_DIR}/package.json" ]; then
-  echo "    ✗ package.json not found at ${WEB_SRC_DIR}/package.json"
-  exit 1
-fi
+cd "${PROJECT_ROOT}"
 
-cd "${WEB_SRC_DIR}"
-
-# Print version for traceability
 APP_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])" 2>/dev/null || echo "unknown")
 echo "    Version: ${APP_VERSION}"
 
-# Install dependencies (needed for vite, pug, shelljs, and static asset packages)
-# --ignore-scripts prevents native module compilation (electron-rebuild etc.)
+# Install dependencies (frontend build tools + backend runtime deps).
+# --ignore-scripts avoids native module compilation for the host platform
+# (node-pty, serialport — not needed, they are esbuild externals).
 echo "    Installing dependencies ..."
-npm install --legacy-peer-deps --ignore-scripts
+npm ci --legacy-peer-deps --ignore-scripts || {
+  echo "    npm ci failed, falling back to npm install ..."
+  npm install --legacy-peer-deps --ignore-scripts
+}
 
-# Create .env from .sample.env if it exists (needed by build/vite/common.js for dotenv)
-if [ -f ".sample.env" ]; then
-  echo "    Creating .env ..."
-  cp .sample.env .env
-fi
+# Copy @electerm/electerm-react's client sources into src/client/electerm-react
+# (gitignored generated dir the vite build imports from). This is the android
+# repo's build/bin/install.js step; run it directly — `npm run install` would
+# collide with npm's install lifecycle script.
+echo "    Installing electerm-react client sources ..."
+node build/bin/install.js
 
-# Set SERVER_SECRET from CI env var (optional)
-# Use printf + grep -v + append to avoid sed delimiter issues
-# with base64 secrets that may contain / or & characters.
-if [ -n "${OHOS_SERVER_SECRET:-}" ]; then
-  echo "    Setting SERVER_SECRET from OHOS_SERVER_SECRET ..."
-  grep -v '^SERVER_SECRET=' .env > .env.tmp 2>/dev/null || true
-  printf 'SERVER_SECRET=%s\n' "${OHOS_SERVER_SECRET}" >> .env.tmp
-  mv .env.tmp .env
-fi
-
-# Run the HarmonyOS build script (vite + copy source + install deps + copy to resfile)
-echo "    Building HarmonyOS electerm app (direct source mode) ..."
-npm run build:harmony
+# Build frontend + backend into entry resfile
+echo "    Building electerm web app ..."
+npm run build:web
 
 # --- Verify output ---
 
 if [ ! -d "${RESFILE_APP_DIR}" ]; then
   echo "    ✗ Build output not found at ${RESFILE_APP_DIR}"
-  echo "    Run node build/harmony/build.js manually to check for errors."
+  echo "    Run node build/web/build.mjs manually to check for errors."
   exit 1
 fi
 
-# Verify bootstrap.js (HarmonyOS Electron main process entry)
-if [ ! -f "${RESFILE_APP_DIR}/bootstrap.js" ]; then
-  echo "    ✗ Missing: ${RESFILE_APP_DIR}/bootstrap.js"
+for f in "index.js" "app.bundle.mjs" "package.json" "views/index.pug"; do
+  if [ ! -f "${RESFILE_APP_DIR}/${f}" ]; then
+    echo "    ✗ Missing: ${RESFILE_APP_DIR}/${f}"
+    exit 1
+  fi
+  echo "    ✓ Found: ${f}"
+done
+
+JS_COUNT=$(find "${RESFILE_APP_DIR}/dist/assets/js" -name "*.js" 2>/dev/null | wc -l | tr -d ' ')
+CSS_COUNT=$(find "${RESFILE_APP_DIR}/dist/assets/css" -name "*.css" 2>/dev/null | wc -l | tr -d ' ')
+echo "    ✓ dist/assets/js: ${JS_COUNT} files, dist/assets/css: ${CSS_COUNT} files"
+if [ "${JS_COUNT}" = "0" ] || [ "${CSS_COUNT}" = "0" ]; then
+  echo "    ✗ Frontend assets missing"
   exit 1
 fi
-echo "    ✓ Found: bootstrap.js"
-
-# Verify app.js (loaded by bootstrap.js after paths are ready)
-if [ ! -f "${RESFILE_APP_DIR}/app.js" ]; then
-  echo "    ✗ Missing: ${RESFILE_APP_DIR}/app.js"
-  exit 1
-fi
-echo "    ✓ Found: app.js"
-
-# Verify package.json
-if [ ! -f "${RESFILE_APP_DIR}/package.json" ]; then
-  echo "    ✗ Missing: ${RESFILE_APP_DIR}/package.json"
-  exit 1
-fi
-echo "    ✓ Found: package.json"
-
-# Verify node_modules
-if [ ! -d "${RESFILE_APP_DIR}/node_modules" ]; then
-  echo "    ✗ Missing: node_modules/"
-  exit 1
-fi
-echo "    ✓ Found: node_modules/"
-
-# Remove any .env file — not needed in the Electron app
-rm -f "${RESFILE_APP_DIR}/.env"
 
 echo "    ✓ App size: $(du -sh "${RESFILE_APP_DIR}" | cut -f1)"
 echo "==> Web app preparation complete."
