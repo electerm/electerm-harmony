@@ -35,7 +35,6 @@ const defaultAIPreset = {
 const supportSessionTypes = [
   'ssh',
   'telnet',
-  'web',
   'rdp',
   'vnc',
   'ftp',
