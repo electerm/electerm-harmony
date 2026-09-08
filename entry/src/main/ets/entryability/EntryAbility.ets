@@ -17,9 +17,11 @@ import AbilityConstant from '@ohos.app.ability.AbilityConstant';
 import { Configuration } from '@ohos.app.ability.Configuration';
 import { abilityAccessCtrl, common, Permissions, PermissionRequestResult, UIAbility } from '@kit.AbilityKit';
 import { Environment } from '@kit.CoreFileKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BackendManager } from '../BackendManager';
 
 const TAG: string = 'ElectermEntryAbility';
+const DOMAIN: number = 0xE1EC;
 
 // All user-grant permissions declared in module.json5.
 // Permissions without "reason"/"usedScene" (INTERNET, GET_NETWORK_INFO,
@@ -37,6 +39,22 @@ export default class EntryAbility extends UIAbility {
   }
 
   onConfigurationUpdate(config: Configuration) {
+  }
+
+  /**
+   * Re-launch of an already-running app (launchType = singleton).
+   *
+   * Tap the icon again, or open an ssh://…/electerm://… link while electerm
+   * is in the background: the system reuses THIS instance instead of starting
+   * a second one, so onCreate/onWindowStageCreate do NOT run again — which is
+   * exactly what we want, because a second instance would try to bind
+   * 127.0.0.1:5577 a second time and fight the first one over the nedb data
+   * dir. Nothing to do here beyond logging: the window is brought back to the
+   * foreground by the system.
+   */
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const uri: string = want.uri ? want.uri : '(none)';
+    hilog.info(DOMAIN, TAG, 'onNewWant: reusing running instance uri=%{public}s', uri);
   }
 
   onWindowStageCreate(windowStage: window.WindowStage) {

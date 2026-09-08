@@ -74,7 +74,7 @@
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
-        "launchType": "specified",
+        "launchType": "singleton",
         "removeMissionAfterTerminate": true,
         "exported": true,
         "skills": [
