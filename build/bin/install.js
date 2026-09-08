@@ -87,19 +87,20 @@ if (downloaded) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Apply tracked HarmonyOS source replacements
+// 3. Copy @electerm/electerm-react client from node_modules
+// ---------------------------------------------------------------------------
+echo('installing electerm-react module')
+shellRm('-rf', 'src/client/electerm-react')
+cp('-r', 'node_modules/@electerm/electerm-react/client', 'src/client/electerm-react')
+
+// ---------------------------------------------------------------------------
+// 4. Apply tracked HarmonyOS source replacements
+//    (runs last, so it also covers the electerm-react folder copied above)
 // ---------------------------------------------------------------------------
 if (existsSync(REPLACE_DIR)) {
   echo('applying HarmonyOS source replacements…')
   await copyReplacements(REPLACE_DIR, resolve('src'))
 }
-
-// ---------------------------------------------------------------------------
-// 4. Copy @electerm/electerm-react client from node_modules
-// ---------------------------------------------------------------------------
-echo('installing electerm-react module')
-shellRm('-rf', 'src/client/electerm-react')
-cp('-r', 'node_modules/@electerm/electerm-react/client', 'src/client/electerm-react')
 
 // ---------------------------------------------------------------------------
 // 5. Cleanup temp files
