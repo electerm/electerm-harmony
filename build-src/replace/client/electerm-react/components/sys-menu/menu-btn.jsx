@@ -44,49 +44,8 @@ class MenuBtn extends PureComponent {
   }
 
   renderContext = () => {
-    const items = [
-      {
-        func: 'onNewSsh',
-        icon: 'CodeFilled',
-        text: e('newBookmark'),
-        subText: this.getShortcut('app_newBookmark')
-      }
-    ]
-    if (window.store.hasNodePty) {
-      items.push({
-        func: 'addTab',
-        icon: 'RightSquareFilled',
-        text: e('newTab'),
-        subText: this.getShortcut('app_newTab')
-      })
-    }
-    // {
-    //   type: 'hr'
-    // },
-    items.push({
-      noCloseMenu: true,
-      icon: 'BookOutlined',
-      text: e('bookmarks'),
-      submenu: 'Bookmark'
-    })
+    const items = []
     items.push(
-      {
-        noCloseMenu: true,
-        icon: 'ClockCircleOutlined',
-        text: e('history'),
-        submenu: 'History'
-      },
-      {
-        noCloseMenu: true,
-        icon: 'BarsOutlined',
-        text: e('sessions'),
-        submenu: 'Tabs'
-      },
-      {
-        icon: 'AppstoreOutlined',
-        text: e('layout'),
-        submenu: 'Layout'
-      },
       // {
       //   type: 'hr'
       // },

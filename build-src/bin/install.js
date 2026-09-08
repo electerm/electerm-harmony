@@ -25,7 +25,7 @@ const BRANCH = 'main'
 const URL = `https://codeload.github.com/${REPO}/tar.gz/refs/heads/${BRANCH}`
 const TMP = resolve('temp/electerm-android-src')
 const TMP_FILE = resolve(TMP, 'electerm-android.tar.gz')
-const REPLACE_DIR = resolve('build/replace')
+const REPLACE_DIR = resolve('build-src/replace')
 
 echo('install required modules')
 

@@ -17,6 +17,12 @@ import { killNode } from 'libnode_ctl.so';
 export class BackendManager {
   static pid: number = -1;
   static inProcess: boolean = false;
+  /** Writable el2 data dir the backend runs against (for boot-log reading). */
+  static dataDir: string = '';
+  /** "key=value\n" params built once at first launch attempt. */
+  static entryParams: string = '';
+  /** Guard against a double launch attempt (onCreate + Index fallback). */
+  static launchAttempted: boolean = false;
 
   static setPid(pid: number): void {
     BackendManager.pid = pid;

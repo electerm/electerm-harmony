@@ -212,6 +212,8 @@ process.env.HOME = userDataDir
 mkdirSync(resolve(userDataDir, '.ssh'), { recursive: true })
 
 await import('./app.bundle.mjs')
+// The bundle's top-level init ends with express listen, so by the time the
+// dynamic import resolves the HTTP server is (normally) already bound.
 `
   fs.writeFileSync(path.resolve(OUT_DIR, 'index.js'), entry)
 

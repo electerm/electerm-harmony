@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 
-const file = process.env.SAFE_STORAGE_FILE || 'build/replace/app/lib/safe-storage.js'
+const file = process.env.SAFE_STORAGE_FILE || 'build-src/replace/app/lib/safe-storage.js'
 const marker = "process.env.STORAGE_SECRET || 'static-secret-string-safe-storage'"
 const secret = process.env.STORAGE_SECRET
 

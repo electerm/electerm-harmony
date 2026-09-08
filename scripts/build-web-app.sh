@@ -251,15 +251,15 @@ echo "==> Updating app version to ${APP_VERSION} ..."
 APP_JSON5="${PROJECT_ROOT}/AppScope/app.json5"
 sed -i.bak "s/\"versionName\": \"[^\"]*\"/\"versionName\": \"${APP_VERSION}\"/" "${APP_JSON5}"
 sed -i.bak "s/\"versionCode\": [0-9]*/\"versionCode\": ${VERSION_CODE}/" "${APP_JSON5}"
-rm -f "${APP_JSON5}.bak"
+rm -f "${APP_JSON5}.bak" || true
 
 ROOT_PKG="${PROJECT_ROOT}/oh-package.json5"
 sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${APP_VERSION}\"/" "${ROOT_PKG}"
-rm -f "${ROOT_PKG}.bak"
+rm -f "${ROOT_PKG}.bak" || true
 
 ENTRY_PKG="${PROJECT_ROOT}/entry/oh-package.json5"
 sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${APP_VERSION}\"/" "${ENTRY_PKG}"
-rm -f "${ENTRY_PKG}.bak"
+rm -f "${ENTRY_PKG}.bak" || true
 
 echo "    ✓ app.json5:        versionName=${APP_VERSION}, versionCode=${VERSION_CODE}"
 
@@ -296,11 +296,17 @@ fi
 # --- Configure npm registry for hvigor --------------------------------------
 
 NPMRC_FILE="${HOME}/.npmrc"
-cat > "${NPMRC_FILE}" <<'NPMRC'
+# Non-fatal: a sandboxed/readonly home cannot be reconfigured, and hvigor
+# works fine with whatever registry is already configured there.
+if cat > "${NPMRC_FILE}" <<'NPMRC'
 @ohos:registry=https://repo.harmonyos.com/npm/
 registry=https://registry.npmjs.org/
 NPMRC
-echo "    ✓ Created ${NPMRC_FILE}"
+then
+  echo "    ✓ Created ${NPMRC_FILE}"
+else
+  echo "    ⚠ Could not write ${NPMRC_FILE} — continuing with the existing config"
+fi
 
 # --- Install ohpm dependencies ----------------------------------------------
 
@@ -385,7 +391,7 @@ fi
 # Keep only the canonical-named APP so artifact pickup (find … -name '*.app')
 # can never grab a stray/unsigned one.
 APP_FILE="${CANONICAL_APP}"
-rm -f "${UNSIGNED_APP}"
+rm -f "${UNSIGNED_APP}" || true
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 

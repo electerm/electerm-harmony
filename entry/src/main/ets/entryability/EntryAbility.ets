@@ -19,6 +19,7 @@ import { abilityAccessCtrl, common, Permissions, PermissionRequestResult, UIAbil
 import { Environment } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BackendManager } from '../BackendManager';
+import { launchInProcessEarly } from '../BackendLauncher';
 
 const TAG: string = 'ElectermEntryAbility';
 const DOMAIN: number = 0xE1EC;
@@ -36,6 +37,14 @@ const ALL_USER_PERMISSIONS: Permissions[] = [
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
+
+    // Fire the node backend NOW — before loadContent, before the ArkWeb
+    // engine spins up. The dlopen + node::Start bootstrap (~0.9s) then
+    // overlaps UI init instead of serialising behind it. startBackend
+    // returns immediately (background thread); the fs probing inside is
+    // ~1ms and any failure is swallowed — Index falls back to the native
+    // child-process path.
+    launchInProcessEarly(this.context as common.UIAbilityContext);
   }
 
   onConfigurationUpdate(config: Configuration) {
@@ -67,10 +76,11 @@ export default class EntryAbility extends UIAbility {
     // input-dispatch watchdog eventually killed it as APP_INPUT_BLOCK.
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        console.error(`[${TAG}] Failed to load content: ${JSON.stringify(err)}`);
+        hilog.error(DOMAIN, TAG, 'loadContent failed: %{public}s', JSON.stringify(err));
         return;
       }
-      console.info(`[${TAG}] content loaded`);
+      // ArkWeb engine init + ArkUI tree are done; Index.aboutToAppear() has run
+      // (or is running) by now — its own milestone follows immediately after.
     });
 
     // Request permissions in the background. Index requests them again via

@@ -2,7 +2,7 @@
 # prepare-web.sh — Install deps and build the electerm web app (frontend +
 # pure-node backend) into the entry module's resfile directory.
 #
-# Runs build/web/build.mjs which:
+# Runs build-src/web/build.mjs which:
 #   1. vite-builds the frontend  -> resfile/electerm/dist/assets
 #   2. copies static assets + views/index.pug
 #   3. esbuild-bundles the backend -> resfile/electerm/app.bundle.mjs
@@ -46,10 +46,10 @@ npm ci --legacy-peer-deps --ignore-scripts || {
 
 # Copy @electerm/electerm-react's client sources into src/client/electerm-react
 # (gitignored generated dir the vite build imports from). This is the android
-# repo's build/bin/install.js step; run it directly — `npm run install` would
+# repo's build-src/bin/install.js step; run it directly — `npm run install` would
 # collide with npm's install lifecycle script.
 echo "    Installing electerm-react client sources ..."
-node build/bin/install.js
+node build-src/bin/install.js
 
 # Build frontend + backend into entry resfile
 echo "    Building electerm web app ..."
@@ -59,7 +59,7 @@ npm run build:web
 
 if [ ! -d "${RESFILE_APP_DIR}" ]; then
   echo "    ✗ Build output not found at ${RESFILE_APP_DIR}"
-  echo "    Run node build/web/build.mjs manually to check for errors."
+  echo "    Run node build-src/web/build.mjs manually to check for errors."
   exit 1
 fi
 

@@ -1,8 +1,11 @@
+// Vite config used to build the electerm *frontend* for the HarmonyOS
+// (ArkWeb) app. Identical to build/android/vite.android.mjs except the
+// output goes into the entry module's resfile Node.js project.
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { cwd, version } from './common.js'
 import { resolve } from 'path'
-import def from './def.js'
+import { cwd, version } from '../vite/common.js'
+import def from '../vite/def.js'
 
 function buildInput () {
   return {
@@ -12,10 +15,8 @@ function buildInput () {
   }
 }
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
-    // commonjs(),
     react({ include: /\.(mdx|js|jsx|ts|tsx|mjs)$/ })
   ],
   define: def,
@@ -27,26 +28,24 @@ export default defineConfig({
     alias: {
       'ironrdp-wasm': resolve(cwd, 'node_modules/ironrdp-wasm/pkg/rdp_client.js'),
       '@novnc/novnc/core/rfb': resolve(cwd, 'node_modules/@novnc/novnc/core/rfb.js'),
-      // @xterm/addon-ligatures bundles lru-cache@11, which calls
-      // channel()/tracingChannel() from node:diagnostics_channel at import time.
-      // In the renderer (browser) context Vite stubs Node builtins and the call
-      // throws. lru-cache only uses it for optional metrics, so a no-op stub is
-      // safe. Covers both bare `diagnostics_channel` and the `node:` prefix.
-      'node:diagnostics_channel': resolve(cwd, 'build/vite/diagnostics-channel-stub.js'),
-      diagnostics_channel: resolve(cwd, 'build/vite/diagnostics-channel-stub.js')
+      // @xterm/addon-ligatures pulls in lru-cache which touches
+      // node:diagnostics_channel at import time; stub it for the browser.
+      'node:diagnostics_channel': resolve(cwd, 'build-src/vite/diagnostics-channel-stub.js'),
+      diagnostics_channel: resolve(cwd, 'build-src/vite/diagnostics-channel-stub.js')
     }
   },
   optimizeDeps: {
     exclude: ['ironrdp-wasm']
   },
-  // assetsInclude: ['**/*.wasm'],
   root: resolve(cwd),
   build: {
     target: 'esnext',
     cssCodeSplit: false,
     codeSplitting: false,
     emptyOutDir: false,
-    outDir: resolve(cwd, 'dist/assets'),
+    // Output the built frontend *inside* the resfile Node.js project so the
+    // backend (which serves `dist/assets`) finds it at runtime on device.
+    outDir: resolve(cwd, 'entry/src/main/resources/resfile/electerm/dist/assets'),
     rollupOptions: {
       input: buildInput(),
       output: {

@@ -26,14 +26,26 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
-import { startBackend, getBackendStatus } from 'libnode_ctl.so';
+import { getBackendStatus } from 'libnode_ctl.so';
 import { BackendManager } from '../BackendManager';
+import { launchInProcessEarly, buildEntryParams } from '../BackendLauncher';
 
 const TAG: string = 'electerm.Index';
 const DOMAIN: number = 0xE1EC;
 const BACKEND_PORT: number = 5577;
 const SERVER_URL: string = `http://127.0.0.1:${BACKEND_PORT}`;
-const POLL_INTERVAL_MS: number = 500;
+/**
+ * Probe backoff schedule (ms). The backend typically answers ~0.9s after
+ * launch; a fixed 500ms poll discovered it up to half a second late. Fast
+ * early probes are cheap (loopback HTTP), so front-load them and stretch
+ * out only for the slow tail.
+ */
+const POLL_DELAYS_MS: number[] = [
+  20, 20, 20, 20, 20, 20, 20, 20, 20, 20, //   0–200ms: catch a fast backend
+  50, 50, 50, 50, 50, 50, 50, 50,         // 200–600ms
+  200, 200, 200, 200                      // 600ms–1.4s
+];
+const POLL_DELAY_DEFAULT_MS: number = 500;
 /**
  * How long to wait for the backend before giving up on a boot strategy.
  *
@@ -47,27 +59,6 @@ const POLL_INTERVAL_MS: number = 500;
 const BOOT_TIMEOUT_MS: number = 20_000;
 /** Never read more than this from node-boot.log — this runs on the UI thread. */
 const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
-/**
- * The data dir must live under el2 — the app-owned area that an in-place
- * upgrade keeps (same bundleName + same signing cert ⇒ same UID ⇒ the previous
- * build's el2 tree is still there).
- *
- * `bundleCodeDir` is the *opposite*: the el1 HAP install dir. It is owned by
- * the installer, mounted read-only, signature-verified and re-extracted on
- * every install, so mkdir there fails with 13900012 (EPERM) and any data put
- * there would be wiped by the next update anyway.
- *
- * Two el2 candidates are inherited from the previous (Electron) build:
- *   - app level  /data/storage/el2/base/files            (AbilityStage marker)
- *   - HAP level  /data/storage/el2/base/haps/entry/files (context.filesDir)
- * PickDataDir() prefers whichever already holds data, so an upgrade keeps its
- * bookmarks instead of starting from an empty db.
- */
-const EL2_APP_FILES: string = '/data/storage/el2/base/files';
-/** Sub-dir used when neither candidate holds data yet (fresh install). */
-const DATA_SUBDIR: string = 'electerm-data';
-/** Marker an older build left behind with the dir it actually used. */
-const DATA_PATH_MARKER: string = '.electerm-data-path';
 
 /**
  * ArkTS object injected into the ArkWeb page as `window.harmonyNative`.
@@ -125,124 +116,30 @@ struct Index {
   }
 
   /**
-   * Resolve the backend entry script inside the installed HAP.
-   * The HAP layout is entry/src/main/resources/resfile/electerm → installed
-   * at <bundleCodeDir>/entry/resources/resfile/electerm (note: "resources",
-   * plural — matches the packaged HAP contents). bundleCodeDir may or may not
-   * already include the module segment, so try both shapes and verify.
-   */
-  resolveScriptPath(bundleCodeDir: string): string {
-    const candidates: string[] = [
-      `${bundleCodeDir}/entry/resources/resfile/electerm/index.js`,
-      `${bundleCodeDir}/resources/resfile/electerm/index.js`
-    ];
-    for (let i = 0; i < candidates.length; i++) {
-      hilog.info(DOMAIN, TAG, 'script candidate: %{public}s', candidates[i]);
-      if (this.fileExists(candidates[i])) {
-        hilog.info(DOMAIN, TAG, 'using script: %{public}s', candidates[i]);
-        return candidates[i];
-      }
-      hilog.warn(DOMAIN, TAG, 'script candidate missing: %{public}s', candidates[i]);
-    }
-    return candidates[0]; // let the launcher report the failure
-  }
-
-  /**
-   * Resolve libnode.so in the app's native libs dir and log the dir listing —
-   * this tells us from the parent side whether the installer actually
-   * extracted the 92MB node binary. Empty string when not found.
+   * Bring the backend up and load the UI.
    *
-   * We cover every ABI the HAP is built for: arm64-v8a (phones/tablets/2in1)
-   * and x86_64 (the emulator). The ABI dir actually installed is the one for
-   * the device that installed the app; probing both keeps the same code
-   * working on a phone, a tablet and the x86_64 emulator.
+   * The launch itself was already fired from EntryAbility.onCreate (see
+   * launchInProcessEarly) — by the time aboutToAppear runs, node has been
+   * bootstrapping for ~150ms in parallel with the ArkWeb engine. This method
+   * only: retries the launch if onCreate never ran it, waits for HTTP,
+   * and falls back to a native child process on failure.
    */
-  resolveNodePath(bundleCodeDir: string): string {
-    const libsDirs: string[] = [
-      `${bundleCodeDir}/entry/libs/arm64-v8a`,
-      `${bundleCodeDir}/entry/libs/x86_64`,
-      `${bundleCodeDir}/libs/arm64-v8a`,
-      `${bundleCodeDir}/libs/x86_64`
-    ];
-    for (let i = 0; i < libsDirs.length; i++) {
-      const libsDir: string = libsDirs[i];
-      try {
-        const names: string[] = fs.listFileSync(libsDir);
-        hilog.info(DOMAIN, TAG, 'libs dir %{public}s → %{public}s', libsDir, names.join(', '));
-        const nodePath: string = `${libsDir}/libnode.so`;
-        if (this.fileExists(nodePath)) {
-          hilog.info(DOMAIN, TAG, 'using node: %{public}s', nodePath);
-          return nodePath;
-        }
-      } catch (e) {
-        hilog.error(DOMAIN, TAG, 'libs dir not listable: %{public}s (%{public}s)',
-          libsDir, JSON.stringify(e));
-      }
-    }
-    return '';
-  }
-
-  /** Create the writable data dir and spawn the node backend. */
   async startBackend(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
-      this.dataDir = this.pickDataDir(context);
-      const scriptPath: string = this.resolveScriptPath(context.bundleCodeDir);
-      const nodePath: string = this.resolveNodePath(context.bundleCodeDir);
+      this.dataDir = BackendManager.dataDir;
+      this.statusMessage = 'Loading engine …';
 
-      // 1. writable data dir (db, ssh keys, logs — the resfile install dir
-      //    the backend itself runs from is read-only)
-      if (!this.dirExists(this.dataDir)) {
-        fs.mkdirSync(this.dataDir, true);
+      // 1. in-process path (usually already launched from onCreate)
+      if (!BackendManager.launchAttempted) {
+        // onCreate didn't run (defensive) — launch from here instead.
+        launchInProcessEarly(context);
+        this.dataDir = BackendManager.dataDir;
       }
-      this.pinDataDir(this.dataDir);
-
-      // 2. start the backend
-      // entryParams is a plain "key=value\n" string parsed by node_launcher.c
-      const paramLines: string[] = [
-        `dataDir=${this.dataDir}`,
-        `script=${scriptPath}`,
-        `port=${BACKEND_PORT}`
-      ];
-      if (nodePath) {
-        paramLines.push(`node=${nodePath}`);
-      }
-      const entryParams: string = paramLines.join('\n');
-
-      this.statusMessage = 'Preparing data dir …';
-      hilog.info(DOMAIN, TAG, 'backend params: %{public}s', entryParams);
-      hilog.info(DOMAIN, TAG, 'script=%{public}s node=%{public}s', scriptPath,
-        nodePath !== '' ? nodePath : '(not found)');
-
-      // Primary path: run node IN the main app process (dlopen libnode.so +
-      // node::Start via libnode_ctl.so — the electron-harmony / nodejs-mobile
-      // pattern). The nativespawn child runs under a stricter seccomp filter
-      // whose event-loop syscall blocks kill libuv there; the main process
-      // runs libuv-class loops of its own (NETSTACK/curl), so node lives here.
-      //
-      // startBackend() RETURNS IMMEDIATELY — the dlopen of the ~120MB
-      // libnode.so and node::Start happen on a background thread. Doing them
-      // inline here blocked the UI thread long enough that the Index page
-      // never painted: the window sat on its splash screen until the
-      // APP_INPUT_BLOCK watchdog fired and the ANR dialog killed the app.
-      let launchedInProcess: boolean = false;
-      try {
-        const rc: string = startBackend(entryParams);
-        launchedInProcess = !rc.startsWith('err:');
-        hilog.info(DOMAIN, TAG, 'in-process startBackend → %{public}s', rc);
-      } catch (e) {
-        hilog.error(DOMAIN, TAG, 'in-process startBackend threw: %{public}s', JSON.stringify(e));
-      }
-
-      if (launchedInProcess) {
-        BackendManager.setInProcess();
-        this.statusMessage = 'Loading engine (libnode.so) …';
-        hilog.info(DOMAIN, TAG, 'node running in-process (background thread)');
-
-        // 3. wait for the HTTP server, bailing out early on a hard failure
+      if (BackendManager.inProcess) {
         const ok: boolean = await this.waitForBackend(BOOT_TIMEOUT_MS, true);
         if (ok) {
-          // 4. load the real UI
+          // 2. load the real UI
           this.serverReady = true;
           this.controller.loadUrl(SERVER_URL);
           return;
@@ -255,6 +152,11 @@ struct Index {
 
       // Fallback: native child process (libnode_launcher.so:Main).
       this.statusMessage = 'In-process engine failed — starting child process …';
+      let entryParams: string = BackendManager.entryParams;
+      if (entryParams === '') {
+        entryParams = buildEntryParams(context);
+        this.dataDir = BackendManager.dataDir;
+      }
       const pid: number = await childProcessManager.startNativeChildProcess(
         'libnode_launcher.so:Main',
         { entryParams: entryParams }
@@ -287,10 +189,11 @@ struct Index {
    * Size-guarded: this runs on the UI thread on every poll tick, and a
    * runaway writer would otherwise turn each read into a UI stall. */
   readBootLog(): string {
-    if (!this.dataDir) {
+    const dataDir: string = this.dataDir || BackendManager.dataDir;
+    if (!dataDir) {
       return '';
     }
-    const path: string = `${this.dataDir}/node-boot.log`;
+    const path: string = `${dataDir}/node-boot.log`;
     try {
       const stat = fs.statSync(path);
       if (stat.size > MAX_BOOT_LOG_BYTES) {
@@ -357,112 +260,6 @@ struct Index {
     }
   }
 
-  fileExists(path: string): boolean {
-    try {
-      const stat = fs.statSync(path);
-      return stat.isFile();
-    } catch {
-      return false;
-    }
-  }
-
-  dirExists(path: string): boolean {
-    try {
-      const stat = fs.statSync(path);
-      return stat.isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
-  /** el2 candidates, most preferred first. Never anything under el1/bundle. */
-  dataDirCandidates(context: common.Context): string[] {
-    return [
-      `${EL2_APP_FILES}/${DATA_SUBDIR}`,
-      EL2_APP_FILES,
-      `${context.filesDir}/${DATA_SUBDIR}`,
-      context.filesDir
-    ];
-  }
-
-  /** True when `dir` already holds an electerm nedb tree
-   * (<DATA_PATH>/users/<user>/electerm.*.nedb) — i.e. an older build used it. */
-  hasElectermData(dir: string): boolean {
-    return this.dirExists(`${dir}/users`);
-  }
-
-  /** Contents of a marker left by an older build; '' when absent or not el2. */
-  readMarker(path: string): string {
-    try {
-      const text: string = fs.readTextSync(path).trim();
-      return text.startsWith('/data/storage/el2/') ? text : '';
-    } catch {
-      return '';
-    }
-  }
-
-  /** Fail fast on a dir that exists but is not writable (locked el2, etc.). */
-  writeProbe(dir: string): void {
-    const probe: string = `${dir}/.write-test`;
-    fs.closeSync(fs.openSync(probe, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE));
-    fs.unlinkSync(probe);
-  }
-
-  /**
-   * Resolve the writable data dir, el2 only.
-   *
-   * An in-place upgrade keeps the app's el2 tree, so the previous build's nedb
-   * files are still on disk — the only thing that has to match is the
-   * directory. A dir that already holds `users/` therefore beats everything
-   * else; the marker is only a hint for layouts we no longer recognise.
-   */
-  pickDataDir(context: common.Context): string {
-    const candidates: string[] = this.dataDirCandidates(context);
-
-    for (let i = 0; i < candidates.length; i++) {
-      if (this.hasElectermData(candidates[i])) {
-        hilog.info(DOMAIN, TAG, 'reusing previous data dir: %{public}s', candidates[i]);
-        return candidates[i];
-      }
-    }
-    for (let i = 0; i < candidates.length; i++) {
-      const marker: string = this.readMarker(`${candidates[i]}/${DATA_PATH_MARKER}`);
-      if (marker !== '') {
-        hilog.info(DOMAIN, TAG, 'using marker data dir: %{public}s', marker);
-        return marker;
-      }
-    }
-    for (let i = 0; i < candidates.length; i++) {
-      try {
-        if (!this.dirExists(candidates[i])) {
-          fs.mkdirSync(candidates[i], true);
-        }
-        this.writeProbe(candidates[i]);
-        hilog.info(DOMAIN, TAG, 'using fresh data dir: %{public}s', candidates[i]);
-        return candidates[i];
-      } catch (e) {
-        hilog.warn(DOMAIN, TAG, 'data dir unusable: %{public}s (%{public}s)',
-          candidates[i], JSON.stringify(e));
-      }
-    }
-    return context.tempDir;
-  }
-
-  /** Record the dir we settled on so the next version resolves it directly. */
-  pinDataDir(dir: string): void {
-    try {
-      if (!this.dirExists(EL2_APP_FILES)) {
-        fs.mkdirSync(EL2_APP_FILES, true);
-      }
-      const markerPath: string = `${EL2_APP_FILES}/${DATA_PATH_MARKER}`;
-      const file = fs.openSync(markerPath,
-        fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, dir);
-      fs.closeSync(file);
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'could not pin data dir: %{public}s', JSON.stringify(e));
-    }
-  }
 
   /** Poll http://127.0.0.1:5577 until it answers or `timeoutMs` elapses.
    * While waiting, surface the child's latest boot-log line in the overlay so
@@ -476,6 +273,8 @@ struct Index {
     const startedAt: number = Date.now();
     const deadline: number = startedAt + timeoutMs;
     let tick: number = 0;
+    let lastOverlayAt: number = 0;
+    let lastLogAt: number = 0;
     while (Date.now() < deadline) {
       if (await this.probe()) {
         return true;
@@ -492,6 +291,7 @@ struct Index {
           return false;
         }
       }
+      const now: number = Date.now();
 
       // Always refresh the overlay, and always log — including when
       // node-boot.log is EMPTY. An empty boot log means the native side never
@@ -500,26 +300,35 @@ struct Index {
       // returns early on empty input). hilog is ring-buffered away under
       // cloud-debug system noise far faster than it can be exported, so the
       // SCREEN is the primary diagnostic channel and must never go static.
-      const secs: number = Math.round((Date.now() - startedAt) / 1000);
-      const parts: string[] = [`Starting engine … ${secs}s`, `probe: ${this.lastProbeError}`];
-      if (checkStatus) {
-        parts.push(`backend: ${status !== '' ? status : 'unknown'}`);
+      // With the backoff schedule the tick is no longer a fixed 500ms, so
+      // overlay/log cadence is throttled by wall-clock time instead of tick
+      // count: overlay every 250ms, hilog + boot-log read every 1s.
+      if (now - lastOverlayAt >= 250) {
+        lastOverlayAt = now;
+        const secs: number = Math.round((now - startedAt) / 1000);
+        const parts: string[] = [`Starting engine … ${secs}s`, `probe: ${this.lastProbeError}`];
+        if (checkStatus) {
+          parts.push(`backend: ${status !== '' ? status : 'unknown'}`);
+        }
+        if (this.lastBootLine) {
+          parts.push(this.lastBootLine);
+        }
+        this.statusMessage = parts.join('\n');
       }
-      if (this.lastBootLine) {
-        parts.push(this.lastBootLine);
-      }
-      this.statusMessage = parts.join('\n');
-
-      if (tick % 4 === 0) { // every ~2s
-        // Reading the boot log is file I/O on the UI thread — keep it at
-        // 0.5 Hz and reuse the cached line for the per-tick overlay refresh.
+      if (now - lastLogAt >= 1000) {
+        lastLogAt = now;
+        // Reading the boot log is file I/O on the UI thread — keep it at 1 Hz.
         this.lastBootLine = this.readBootLogLastLine();
+        const secs: number = Math.round((now - startedAt) / 1000);
         hilog.info(DOMAIN, TAG, 'waiting %{public}ds probe=%{public}s status=%{public}s boot=%{public}s',
           secs.toString(), this.lastProbeError, status, this.lastBootLine);
         this.logBootTailWindow(1100);
       }
       tick++;
-      await this.sleep(POLL_INTERVAL_MS);
+      const delay: number = tick <= POLL_DELAYS_MS.length
+        ? POLL_DELAYS_MS[tick - 1]
+        : POLL_DELAY_DEFAULT_MS;
+      await this.sleep(delay);
     }
     return false;
   }
