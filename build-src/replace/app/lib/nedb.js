@@ -26,6 +26,7 @@ export const tables = [
   'lastStates',
   'data',
   'quickCommands',
+  'triggers',
   'log',
   'dbUpgradeLog',
   'profiles',

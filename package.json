@@ -1,6 +1,6 @@
 {
   "name": "electerm-harmony",
-  "version": "5.3.27",
+  "version": "5.5.6",
   "description": "Free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS (ArkWeb + on-device Node.js)",
   "main": "src/app/app.js",
   "type": "module",
@@ -44,7 +44,7 @@
   "preferGlobal": true,
   "devDependencies": {
     "@ant-design/icons": "^6.2.5",
-    "@electerm/electerm-react": "^5.3.26",
+    "@electerm/electerm-react": "5.5.6",
     "@electerm/electerm-resource": "2.2.1",
     "@fontsource/maple-mono": "^5.2.6",
     "@novnc/novnc": "^1.7.0",
@@ -82,11 +82,12 @@
     "vite": "^8.0.15"
   },
   "dependencies": {
-    "@electerm/electerm-locales": "2.3.10",
+    "@electerm/electerm-locales": "2.3.17",
     "@electerm/electerm-themes": "^1.0.1",
     "@electerm/ftp-srv": "1.0.5",
     "@electerm/nedb": "^2.0.0",
     "@electerm/ssh2": "1.22.0",
+    "@xterm/addon-serialize": "0.15.0-beta.292",
     "@xterm/headless": "6.1.0-beta.292",
     "axios": "1.18.1",
     "basic-ftp": "6.0.1",

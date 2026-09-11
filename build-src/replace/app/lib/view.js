@@ -46,6 +46,13 @@ export async function index (req, res) {
     'ftp',
     'spice'
   ]
+  const sysMenus = [
+    'onNewSsh',
+    'openSetting',
+    'openAbout',
+    'zoom',
+    'reload'
+  ]
   const data = {
     isDev,
     isMac,
@@ -58,6 +65,7 @@ export async function index (req, res) {
     fsFunctions,
     isWebApp: true,
     disableUpgradeCheck: true,
+    sysMenus,
     versionFile: 'version-android.html',
     downloadUpgradeFromBrowser: true,
     extIconPath: cdn + extIconPath,

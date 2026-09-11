@@ -37,6 +37,13 @@ const defaultAIPreset = {
   id: 'ai.electerm.org',
   nameAI: 'ai.electerm.org(default free)'
 }
+const sysMenu = [
+  'onNewSsh',
+  'openSetting',
+  'openAbout',
+  'zoom',
+  'reload'
+]
 const base = {
   version: pack.version,
   isDev: !isProd,
@@ -53,7 +60,8 @@ const base = {
   cdn: h,
   isWebApp: true,
   sessionLogPath: logDir,
-  tokenElecterm: process.env.ENABLE_AUTH ? '' : createToken()
+  tokenElecterm: process.env.ENABLE_AUTH ? '' : createToken(),
+  sysMenu
 }
 let needMigrate
 function checkNeedMigrate () {
