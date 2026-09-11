@@ -1,40 +1,33 @@
 /**
- * EntryAbility — main ability for the electerm-harmony app.
+ * EntryAbility — main ability for the electerm-harmony web app.
  *
- * Extends WebAbility from the web_engine module, which handles window
- * creation, XComponent setup, and Electron runtime startup.
+ * Plain UIAbility (no electron/web_engine): loads pages/Index, which boots
+ * the on-device Node.js backend as a native child process and renders the
+ * UI in an ArkWeb Web component pointed at http://127.0.0.1:5577.
  *
- * Key responsibility: request ALL declared user-grant permissions at
- * startup, BEFORE the Electron runtime starts.  This is done in
- * onWindowStageCreate() before calling super.onWindowStageCreate(),
- * because super.onWindowStageCreate() loads the WebWindow page which
- * triggers the Electron runtime to load bootstrap.js.
- *
- * After permissions are granted, writes a second marker file
- * (.electerm-documents-path) containing the Documents directory path,
- * which bootstrap.js uses to override os.homedir() so that file save
- * dialogs and SFTP local paths default to the user-visible Documents
- * folder.
+ * Responsibilities:
+ *  - request user-grant permissions at startup (Documents/Desktop/Download
+ *    directory access for SFTP local paths, pasteboard for copy/paste);
+ *  - on destroy, terminate the Node.js child process so port 5577 is freed.
  */
 
 import window from '@ohos.window';
 import Want from '@ohos.app.ability.Want';
 import AbilityConstant from '@ohos.app.ability.AbilityConstant';
 import { Configuration } from '@ohos.app.ability.Configuration';
-import { abilityAccessCtrl, common, Permissions, PermissionRequestResult } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common, Permissions, PermissionRequestResult, UIAbility } from '@kit.AbilityKit';
 import { Environment } from '@kit.CoreFileKit';
-import fs from '@ohos.file.fs';
-
-import { WebAbility } from 'web_engine';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BackendManager } from '../BackendManager';
+import { launchInProcessEarly } from '../BackendLauncher';
 
 const TAG: string = 'ElectermEntryAbility';
+const DOMAIN: number = 0xE1EC;
 
 // All user-grant permissions declared in module.json5.
 // Permissions without "reason"/"usedScene" (INTERNET, GET_NETWORK_INFO,
 // ACCESS_CERT_MANAGER, PRINT, GYROSCOPE, ACCELEROMETER) are normal or
 // system-grant permissions that don't need runtime request.
-// Removed LOCATION, MICROPHONE, CAMERA, ACCESS_BLUETOOTH — a terminal/SSH
-// app has no use for geolocation, audio/video capture, or Bluetooth.
 const ALL_USER_PERMISSIONS: Permissions[] = [
   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
   'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY',
@@ -42,46 +35,73 @@ const ALL_USER_PERMISSIONS: Permissions[] = [
   'ohos.permission.READ_PASTEBOARD'
 ];
 
-export default class EntryAbility extends WebAbility {
-  onConfigurationUpdate(config: Configuration) {
-    super.onConfigurationUpdate(config);
-  }
-
+export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
-    super.onCreate(want, launchParam);
+
+    // Fire the node backend NOW — before loadContent, before the ArkWeb
+    // engine spins up. The dlopen + node::Start bootstrap (~0.9s) then
+    // overlaps UI init instead of serialising behind it. startBackend
+    // returns immediately (background thread); the fs probing inside is
+    // ~1ms and any failure is swallowed — Index falls back to the native
+    // child-process path.
+    launchInProcessEarly(this.context as common.UIAbilityContext);
   }
 
-  async onPrepareToTerminateAsync(): Promise<boolean> {
-    return await super.onPrepareToTerminateAsync();
+  onConfigurationUpdate(config: Configuration) {
   }
 
-  async onDestroy(): Promise<void> {
-    await super.onDestroy();
+  /**
+   * Re-launch of an already-running app (launchType = singleton).
+   *
+   * Tap the icon again, or open an ssh://…/electerm://… link while electerm
+   * is in the background: the system reuses THIS instance instead of starting
+   * a second one, so onCreate/onWindowStageCreate do NOT run again — which is
+   * exactly what we want, because a second instance would try to bind
+   * 127.0.0.1:5577 a second time and fight the first one over the nedb data
+   * dir. Nothing to do here beyond logging: the window is brought back to the
+   * foreground by the system.
+   */
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const uri: string = want.uri ? want.uri : '(none)';
+    hilog.info(DOMAIN, TAG, 'onNewWant: reusing running instance uri=%{public}s', uri);
   }
 
-  async onWindowStageCreate(windowStage: window.WindowStage) {
-    // Request ALL declared user-grant permissions BEFORE the Electron
-    // runtime starts.  super.onWindowStageCreate() loads the WebWindow
-    // page which triggers the Electron runtime to load bootstrap.js.
+  onWindowStageCreate(windowStage: window.WindowStage) {
+    // loadContent FIRST, permissions AFTER.
     //
-    // If a permission is already granted, requestPermissionsFromUser
-    // returns immediately without showing a dialog for that permission.
-    await this.requestAllPermissions();
-    this.writeDocumentsPathMarker();
+    // Awaiting requestPermissionsFromUser() before loadContent() means the
+    // window shows nothing but its splash until the user answers the dialog.
+    // On an unattended device (cloud debugging / 云调试, CI smoke runs) nobody
+    // taps "Allow", so the app sat on the splash screen indefinitely and the
+    // input-dispatch watchdog eventually killed it as APP_INPUT_BLOCK.
+    windowStage.loadContent('pages/Index', (err) => {
+      if (err.code) {
+        hilog.error(DOMAIN, TAG, 'loadContent failed: %{public}s', JSON.stringify(err));
+        return;
+      }
+      // ArkWeb engine init + ArkUI tree are done; Index.aboutToAppear() has run
+      // (or is running) by now — its own milestone follows immediately after.
+    });
 
-    super.onWindowStageCreate(windowStage);
+    // Request permissions in the background. Index requests them again via
+    // its own context when it needs to write user-visible files; a granted
+    // permission here just avoids the dialogs appearing later.
+    this.requestAllPermissions();
   }
 
   onWindowStageDestroy() {
-    super.onWindowStageDestroy();
   }
 
   onForeground() {
-    super.onForeground();
   }
 
   onBackground() {
-    super.onBackground();
+  }
+
+  async onDestroy(): Promise<void> {
+    // Terminate the node child process so port 5577 is freed. If the child
+    // is already dead (crashed / exec failed) killNode just returns -1.
+    BackendManager.killBackend();
   }
 
   /**
@@ -103,39 +123,6 @@ export default class EntryAbility extends WebAbility {
       }
     } catch (e) {
       console.error(`[${TAG}] Failed to request permissions: ${JSON.stringify(e)}`);
-    }
-  }
-
-  /**
-   * Write the documents-path marker file.
-   *
-   * After permissions are granted, Environment.getUserDocumentDir()
-   * returns the user-visible Documents directory path. This is written
-   * to a separate marker (.electerm-documents-path) which bootstrap.js
-   * reads to override os.homedir() — so that file save dialogs, SFTP
-   * local paths, and other home-directory-based operations default to
-   * the user-visible Documents folder.
-   *
-   * If the permission was denied, the marker is not written and
-   * bootstrap.js falls back to the original os.homedir() value.
-   */
-  private writeDocumentsPathMarker(): void {
-    try {
-      const filesDir: string = this.context.getApplicationContext().filesDir;
-
-      try {
-        const documentsDir: string = Environment.getUserDocumentDir();
-        const markerPath: string = `${filesDir}/.electerm-documents-path`;
-        const file = fs.openSync(markerPath,
-          fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-        fs.writeSync(file.fd, documentsDir);
-        fs.closeSync(file);
-        console.info(`[${TAG}] wrote documents path marker: ${markerPath} → ${documentsDir}`);
-      } catch (e) {
-        console.warn(`[${TAG}] getUserDocumentDir failed, skipping documents marker: ${JSON.stringify(e)}`);
-      }
-    } catch (e) {
-      console.error(`[${TAG}] Failed to write documents path marker: ${JSON.stringify(e)}`);
     }
   }
 }

@@ -35,7 +35,21 @@
 
 **electerm** 是一个免费开源的 ssh/sftp/telnet/RDP/VNC/Spice/ftp 客户端（支持 Linux、Mac、Windows、HarmonyOS、Android、iOS）。
 
-本项目使用 [Electron 鸿蒙运行时](https://gitcode.com/openharmony-sig/electron)（Chromium + Node.js）将 electerm 移植到 **HarmonyOS** 平台。
+本项目使用一种轻量级的端侧运行时将 electerm 移植到 **HarmonyOS** —— **不再使用 Electron**：
+
+- **ArkWeb**（`@kit.ArkWeb` 的 `Web` 组件）负责渲染 electerm-web 前端界面。
+- 端侧 **Node.js** 后端负责提供界面并运行 SSH/SFTP/telnet/ftp/RDP/VNC/Spice 协议。Node.js 运行时（共享库 `libnode.so`）来自 [electerm/ohos-node-shared](https://github.com/electerm/ohos-node-shared)，打包进 HAP 的原生 `libs` 目录。
+
+后端默认在**主应用进程内**运行：由 `libnode_ctl.so` 这个 NAPI 模块 `dlopen` `libnode.so` 并调用 `node::Start`；若进程内启动失败，则回退为**原生子进程**（`libnode_launcher.so`，通过 `childProcessManager.startNativeChildProcess` 启动）。
+
+```
+ArkWeb（前端）── http://127.0.0.1:5577 ──► Node.js 后端（libnode.so）
+   Web 组件加载界面                              提供界面 + SSH/SFTP/telnet/ftp/RDP/VNC/Spice
+```
+
+electerm 应用（前端 + 后端打包产物）打包在 HAP 的 `resfile/electerm` 中，由 node 进程直接读取；Node.js 共享库打包为 `libs/arm64-v8a/libnode.so`。端侧启动诊断信息位于 `<filesDir>/electerm-data/node-boot.log`。
+
+> **分支说明：** 本分支（`dev2`）为 Node.js + ArkWeb 构建。本仓库的其他分支（`main`/`dev`/`dev1`）曾使用 [Electron 鸿蒙运行时](https://gitcode.com/openharmony-sig/electron)；本分支不再使用。本分支 CI：`.github/workflows/build-web.yml`（推送 `dev2` 触发）。
 
 ---
 

@@ -1,7 +1,7 @@
 {
-  "modelVersion": "5.3.15",
+  "modelVersion": "5.0.0",
   "dependencies": {
-    "@ohos/hvigor-ohos-plugin": "5.10.3"
+    "@ohos/hvigor-ohos-plugin": "file:/Applications/deveco-studio.app/Contents/tools/hvigor/hvigor-ohos-plugin"
   },
   "execution": {},
   "logging": {

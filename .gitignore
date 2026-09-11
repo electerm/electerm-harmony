@@ -2,6 +2,7 @@
 # Note: /build/ contains committed source (build scripts, vite config).
 # Only ignore HarmonyOS build outputs and electerm-web build artifacts.
 /build/outputs/
+/build/tools/
 /build/intermediates/
 /oh_modules/
 /entry/build/
@@ -51,7 +52,18 @@ Thumbs.db
 /build-download/
 build/harmony/rawfile
 src/client/electerm-react/
-entry/src/main/resources/rawfile
 /src/client/electerm-react/
 /data
 .workbuddy
+# --- Web (ArkWeb) build outputs ---
+# electerm-web app bundled into the entry module resfile by build/web/build.mjs
+/entry/src/main/resources/resfile/
+# node runtime download cache
+/.cache/
+# hvigor native (CMake/Ninja) build dir & ohpm installs
+entry/.cxx/
+entry/oh_modules/
+# generated local SDK paths (written by scripts/build-web-app.sh)
+local.properties
+build/.verify-tmp
+/src

@@ -23,6 +23,10 @@
     {
       "name": "reason",
       "value": "electerm needs access to the Documents, Download, and Desktop directories to store app data, transfer files, and persist settings reliably across restarts"
+    },
+    {
+      "name": "access_pasteboard",
+      "value": "electerm needs pasteboard access to copy and paste commands and output in the terminal"
     }
   ]
 }

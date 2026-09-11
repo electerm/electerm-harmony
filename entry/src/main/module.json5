@@ -6,8 +6,9 @@
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "deviceTypes": [
-      "2in1",
-      "tablet"
+      "phone",
+      "tablet",
+      "2in1"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
@@ -64,11 +65,6 @@
         "name": "ohos.permission.ACCELEROMETER"
       }
     ],
-    "definePermissions": [
-      {
-        "name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
-      }
-    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -78,7 +74,7 @@
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
-        "launchType": "specified",
+        "launchType": "singleton",
         "removeMissionAfterTerminate": true,
         "exported": true,
         "skills": [
