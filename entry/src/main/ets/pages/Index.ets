@@ -24,6 +24,8 @@ import { common } from '@kit.AbilityKit';
 import { childProcessManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { picker, fileUri } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { getBackendStatus } from 'libnode_ctl.so';
@@ -60,6 +62,12 @@ const BOOT_TIMEOUT_MS: number = 20_000;
 /** Never read more than this from node-boot.log — this runs on the UI thread. */
 const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
 
+/** Result reported back to the page for a native save. */
+interface SaveResult {
+  name: string;
+  location: string;
+}
+
 /**
  * ArkTS object injected into the ArkWeb page as `window.harmonyNative`.
  *
@@ -68,12 +76,39 @@ const MAX_BOOT_LOG_BYTES: number = 256 * 1024;
  * default browser — it must NEVER navigate this webview away from the app.
  * The client (src/client/web-components/web-pre.js) calls
  * window.harmonyNative.openExternal(url) for that.
+ *
+ * File saving: a blob-anchor download (`<a download>.click()`) is a silent
+ * no-op inside ArkWeb, so "download sandbox file to Downloads" goes through
+ * this bridge instead (see
+ * build-src/replace/client/web-components/native-file-save.js):
+ *
+ *   getVersion() -> '1' (lets the web app feature-detect this bridge)
+ *   saveUrl(url, token, fallbackName, callbackId) — fetch an /api/download
+ *     response and stream it into the public Download directory, so the file
+ *     is visible in the system file manager (unlike the app sandbox)
+ *   saveBase64(filename, base64Data, contentType, callbackId) — same target
+ *     for in-memory content (theme/quick-command/config exports)
+ *
+ * Both report back asynchronously by evaluating
+ *   window.__etNativeSaveResult(callbackId, ok, dataJson, errorString)
+ * Methods return immediately — javaScriptProxy calls are synchronous — and
+ * the real work continues on promises. The Download directory is resolved
+ * once via the picker in DOWNLOAD mode (auto-creates Download/<bundleName>/
+ * without a file-selection UI) and the URI is cached for later saves.
  */
 class NativeBridge {
   private ctx: common.UIAbilityContext;
+  /** Runs JS in the page; set from Index (owns the WebviewController). */
+  private reporter: ((script: string) => void) | null = null;
+  /** Cached Download/<bundleName>/ dir URI from the picker. */
+  private downloadDirUri: string = '';
 
   constructor(ctx: common.UIAbilityContext) {
     this.ctx = ctx;
+  }
+
+  setReporter(reporter: (script: string) => void): void {
+    this.reporter = reporter;
   }
 
   /** Open a link with the OS default app (browser for http/https). */
@@ -86,6 +121,224 @@ class NativeBridge {
     this.ctx.openLink(trimmed).catch((err: BusinessError) => {
       hilog.error(DOMAIN, TAG, 'openLink(%{public}s) failed: %{public}s', trimmed, JSON.stringify(err));
     });
+  }
+
+  /** Version marker: lets the web app feature-detect this bridge. */
+  getVersion(): string {
+    return '1';
+  }
+
+  /**
+   * Fetch `url` (with the electerm token header) and store the response
+   * body in the public Download directory.
+   */
+  saveUrl(url: string, token: string, fallbackName: string, callbackId: string): void {
+    const client = http.createHttp();
+    const headers: Record<string, string> = {};
+    if (token && token.length > 0) {
+      headers['token'] = token;
+    }
+    client.request(url, {
+      method: http.RequestMethod.GET,
+      header: headers,
+      connectTimeout: 15000,
+      readTimeout: 120000,
+      expectDataType: http.HttpDataType.ARRAY_BUFFER
+    }).then((resp: http.HttpResponse) => {
+      client.destroy();
+      if (resp.responseCode < 200 || resp.responseCode >= 300) {
+        throw new Error('server responded ' + resp.responseCode);
+      }
+      const respHeaders = NativeBridge.lowerHeaders(resp.header);
+      const name = NativeBridge.resolveFilename(respHeaders['content-disposition'] || '', fallbackName);
+      const data = resp.result as ArrayBuffer;
+      return this.writeToDownloads(name, data).then((location: string) => {
+        const result: SaveResult = { name: name, location: location };
+        this.report(callbackId, true, result, null);
+      });
+    }).catch((e: BusinessError) => {
+      try {
+        client.destroy();
+      } catch {
+        // already destroyed — nothing to do
+      }
+      const message = (e as Error).message || String(e);
+      hilog.error(DOMAIN, TAG, 'saveUrl failed: %{public}s', message);
+      this.report(callbackId, false, null, message);
+    });
+  }
+
+  /** Store in-memory content (base64) in the public Download directory. */
+  saveBase64(filename: string, base64Data: string, contentType: string, callbackId: string): void {
+    void contentType;
+    let raw: Uint8Array;
+    try {
+      raw = new util.Base64Helper().decodeSync(NativeBridge.stripDataUrl(base64Data));
+    } catch (e) {
+      this.report(callbackId, false, null, 'invalid base64 content');
+      return;
+    }
+    const name = NativeBridge.sanitize(filename);
+    const data = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+    this.writeToDownloads(name, data).then((location: string) => {
+      const result: SaveResult = { name: name, location: location };
+      this.report(callbackId, true, result, null);
+    }).catch((e: BusinessError) => {
+      const message = (e as Error).message || String(e);
+      hilog.error(DOMAIN, TAG, 'saveBase64 failed: %{public}s', message);
+      this.report(callbackId, false, null, message);
+    });
+  }
+
+  private writeToDownloads(name: string, data: ArrayBuffer): Promise<string> {
+    return this.ensureDownloadDir().then((dirUri: string) => {
+      const target = NativeBridge.uniquePath(dirUri, name);
+      const file = fs.openSync(target, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      try {
+        const CHUNK = 64 * 1024;
+        let offset = 0;
+        while (offset < data.byteLength) {
+          const len = Math.min(CHUNK, data.byteLength - offset);
+          fs.writeSync(file.fd, data.slice(offset, offset + len));
+          offset += len;
+        }
+      } finally {
+        fs.closeSync(file.fd);
+      }
+      hilog.info(DOMAIN, TAG, 'saved to Downloads: %{public}s', target);
+      return target;
+    });
+  }
+
+  private ensureDownloadDir(): Promise<string> {
+    if (this.downloadDirUri !== '') {
+      return Promise.resolve(this.downloadDirUri);
+    }
+    const options = new picker.DocumentSaveOptions();
+    options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+    const viewPicker = new picker.DocumentViewPicker(this.ctx);
+    return viewPicker.save(options).then((uris: Array<string>) => {
+      if (!uris || uris.length === 0 || !uris[0]) {
+        throw new Error('Download directory unavailable');
+      }
+      this.downloadDirUri = uris[0];
+      hilog.info(DOMAIN, TAG, 'Download dir: %{public}s', this.downloadDirUri);
+      return this.downloadDirUri;
+    });
+  }
+
+  private report(callbackId: string, ok: boolean, data: SaveResult | null, error: string | null): void {
+    const reporter = this.reporter;
+    if (!reporter) {
+      hilog.warn(DOMAIN, TAG, 'save bridge result dropped (no reporter): %{public}s', callbackId);
+      return;
+    }
+    const script = 'if(window.__etNativeSaveResult){window.__etNativeSaveResult(' +
+      JSON.stringify(callbackId) + ',' + (ok ? 'true' : 'false') + ',' +
+      (data === null ? 'null' : JSON.stringify(JSON.stringify(data))) + ',' +
+      (error === null ? 'null' : JSON.stringify(error)) + ');}';
+    try {
+      reporter(script);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'save bridge report failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private static lowerHeaders(header: object | undefined): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (!header) {
+      return out;
+    }
+    for (const key of Object.keys(header)) {
+      out[key.toLowerCase()] = String((header as Record<string, object>)[key] || '');
+    }
+    return out;
+  }
+
+  private static resolveFilename(disposition: string, fallback: string): string {
+    let name = '';
+    if (disposition) {
+      const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition);
+      if (star && star[1]) {
+        try {
+          // The backend percent-encodes the UTF-8 name (RFC 5987), so a
+          // plain-form parse would yield mojibake for non-ASCII names.
+          const decoded = decodeURIComponent(star[1].replace(/"/g, '').trim());
+          if (decoded) {
+            name = decoded;
+          }
+        } catch {
+          // fall through to the plain form
+        }
+      }
+      if (!name) {
+        const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i.exec(disposition);
+        const raw = plain ? (plain[1] || plain[2]) : undefined;
+        // RFC 6266: the plain form is a literal, already-decoded name.
+        if (raw) {
+          name = raw.trim();
+        }
+      }
+    }
+    if (!name) {
+      name = fallback;
+    }
+    return NativeBridge.sanitize(name);
+  }
+
+  private static sanitize(name: string | undefined): string {
+    if (!name) {
+      return 'download';
+    }
+    let clean = (name as string).replace(/\\/g, '/');
+    const slash = clean.lastIndexOf('/');
+    if (slash >= 0) {
+      clean = clean.substring(slash + 1);
+    }
+    clean = clean.replace(/[\u0000-\u001F*?"<>|]/g, '_').trim();
+    if (!clean || clean === '.' || clean === '..') {
+      return 'download';
+    }
+    return clean;
+  }
+
+  private static stripDataUrl(base64Data: string): string {
+    if (!base64Data) {
+      return '';
+    }
+    const trimmed = base64Data.trim();
+    const comma = trimmed.indexOf(',');
+    if (comma > -1 && trimmed.substring(0, comma).toLowerCase().includes('base64')) {
+      return trimmed.substring(comma + 1).replace(/\s/g, '');
+    }
+    return trimmed.replace(/\s/g, '');
+  }
+
+  private static uniquePath(dirUri: string, name: string): string {
+    const pathOf = (n: string): string => new fileUri.FileUri(dirUri + '/' + n).path;
+    let candidate = pathOf(name);
+    if (!NativeBridge.exists(candidate)) {
+      return candidate;
+    }
+    const dot = name.lastIndexOf('.');
+    const base = dot > 0 ? name.substring(0, dot) : name;
+    const ext = dot > 0 ? name.substring(dot) : '';
+    for (let i = 1; i < 1000; i++) {
+      candidate = pathOf(base + ' (' + i + ')' + ext);
+      if (!NativeBridge.exists(candidate)) {
+        return candidate;
+      }
+    }
+    return candidate;
+  }
+
+  private static exists(path: string): boolean {
+    try {
+      fs.accessSync(path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -112,6 +365,14 @@ struct Index {
     // (if it never fires the overlay sits on its default message forever with
     // zero log output) and buys nothing.
     this.statusMessage = 'Preparing …';
+    // javaScriptProxy methods are synchronous; async save results come back
+    // through window.__etNativeSaveResult via the WebviewController.
+    const controller = this.controller;
+    this.nativeBridge.setReporter((script: string) => {
+      controller.runJavaScript(script).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'save bridge runJavaScript failed: %{public}s', JSON.stringify(err));
+      });
+    });
     this.startBackend();
   }
 
@@ -388,11 +649,14 @@ struct Index {
         .javaScriptAccess(true)
         .domStorageAccess(true)
         // Expose window.harmonyNative.openExternal(url) so the electerm UI can
-        // ask the OS to open http(s)/mailto/tel links in the default app.
+        // ask the OS to open http(s)/mailto/tel links in the default app,
+        // plus the native file saver (getVersion/saveUrl/saveBase64) so
+        // sandbox files can be downloaded to the public Download directory
+        // (blob-anchor downloads are a no-op inside ArkWeb).
         .javaScriptProxy({
           object: this.nativeBridge,
           name: 'harmonyNative',
-          methodList: ['openExternal'],
+          methodList: ['openExternal', 'getVersion', 'saveUrl', 'saveBase64'],
           controller: this.controller
         })
         // Backstop: no MAIN-frame navigation may leave the local backend

@@ -81,6 +81,35 @@ jobs:
         env:
           OHOS_SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
+      # ── Verify native download bridge is wired ──────────────────────────
+      # The UI page is served by the on-device Node.js backend on
+      # http://127.0.0.1:5577, and a blob-anchor download
+      # (`<a download>.click()`) is a silent no-op inside ArkWeb, so
+      # "download sandbox file to Downloads" goes through our own
+      # window.harmonyNative bridge (Index.ets) + the web hook
+      # (build-src/replace/client/web-components/native-file-save.js).
+      # If either side ever stops landing, the APP still builds but
+      # downloads are broken with no error, so assert both sides here.
+      - name: Verify native download bridge is wired
+        run: |
+          set -euo pipefail
+          fail=0
+          HOOK=build-src/replace/client/web-components/native-file-save.js
+          [ -f "${HOOK}" ] || { echo "::error::${HOOK} missing"; fail=1; }
+          grep -q 'installDownloadFromBrowserHook' build-src/replace/client/web-components/web-pre.js || {
+            echo "::error::web-pre.js does not install the download hook"; fail=1; }
+          grep -q "'saveUrl'" entry/src/main/ets/pages/Index.ets || {
+            echo "::error::Index.ets does not expose the harmonyNative saveUrl bridge"; fail=1; }
+          grep -q "'saveBase64'" entry/src/main/ets/pages/Index.ets || {
+            echo "::error::Index.ets does not expose the harmonyNative saveBase64 bridge"; fail=1; }
+          # The hook must survive the vite build into the bundled web app.
+          if ! grep -rq 'downloadFromBrowser' entry/src/main/resources/resfile/electerm/dist/assets/ 2>/dev/null; then
+            echo "::error::built web bundle has no downloadFromBrowser hook (native-file-save.js not bundled?)"
+            fail=1
+          fi
+          [ "${fail}" -eq 0 ] || exit 1
+          echo "native download bridge wired OK"
+
       # ── Step 3: Cache / download HarmonyOS Command Line Tools (~2 GB) ────
       - name: Compute Command Line Tools cache key
         id: cmdkey

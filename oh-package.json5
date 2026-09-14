@@ -1,6 +1,6 @@
 {
   "name": "electerm-harmony",
-  "version": "5.5.6",
+  "version": "5.5.10",
   "description": "Free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS",
   "main": "",
   "license": "MIT",
