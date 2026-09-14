@@ -11,6 +11,7 @@
     "start": "NODE_ENV=development node ./build-src/vite/dev-server.js",
     "clean": "node build-src/bin/clean",
     "compile": "node build-src/bin/build",
+    "r": "./build-src/bin/release",
     "logo": "python3 build-src/bin/gen-logo.py",
     "vite-build": "cross-env NODE_ENV=production vite build --config ./build-src/vite/conf.js",
     "install": "node build-src/bin/install",
