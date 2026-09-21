@@ -67,3 +67,4 @@ entry/oh_modules/
 local.properties
 build/.verify-tmp
 /src
+.workbuddy-ai
