@@ -39,10 +39,18 @@ echo "    Version: ${APP_VERSION}"
 # --ignore-scripts avoids native module compilation for the host platform
 # (node-pty, serialport — not needed, they are esbuild externals).
 echo "    Installing dependencies ..."
-npm ci --legacy-peer-deps --ignore-scripts || {
-  echo "    npm ci failed, falling back to npm install ..."
-  npm install --legacy-peer-deps --ignore-scripts
-}
+if ! npm ci --legacy-peer-deps --ignore-scripts; then
+  # A version bumped by hand in package.json + package-lock.json keeps the OLD
+  # integrity hash on the lock entry, which makes BOTH `npm ci` and a plain
+  # `npm install` die with EINTEGRITY. Re-resolve the direct deps from the
+  # registry, then retry. See build-src/bin/fix-lock-integrity.js.
+  echo "    npm ci failed, re-resolving lockfile integrity ..."
+  node build-src/bin/fix-lock-integrity.js
+  npm ci --legacy-peer-deps --ignore-scripts || {
+    echo "    npm ci failed again, falling back to npm install ..."
+    npm install --legacy-peer-deps --ignore-scripts
+  }
+fi
 
 # Copy @electerm/electerm-react's client sources into src/client/electerm-react
 # (gitignored generated dir the vite build imports from). This is the android
