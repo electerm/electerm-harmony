@@ -17,6 +17,7 @@ import fsFunctions from '../common/fs-functions.js'
 import copy from 'json-deep-copy'
 import { createToken } from './jwt.js'
 import { logDir } from '../server/session-log.js'
+import { localTerminalAvailable } from '../server/local-terminal.js'
 import { resolve } from 'path'
 import fs from 'fs'
 
@@ -36,7 +37,9 @@ function buildServer () {
 export async function index (req, res) {
   const server = process.env.SERVER || (isDev ? buildServer() : '')
   const cdn = process.env.CDN || server
-  const hasNodePty = false
+  // Whether this sandbox can actually open a PTY is measured at boot by the
+  // probe in ../server/local-terminal.js, not guessed from the device type.
+  const hasNodePty = await localTerminalAvailable()
   // All session types the app knows about.
   const supportSessionTypes = [
     'ssh',
@@ -44,7 +47,8 @@ export async function index (req, res) {
     'rdp',
     'vnc',
     'ftp',
-    'spice'
+    'spice',
+    ...(hasNodePty ? ['local'] : [])
   ]
   const sysMenus = [
     'onNewSsh',

@@ -59,6 +59,13 @@ fi
 echo "    Installing electerm-react client sources ..."
 node build-src/bin/install.js
 
+# Stage the OHOS-patched node-pty native addon into entry/libs/<abi>/ so the
+# local terminal has a loadable PTY implementation on device. Must run before
+# build:web — build-src/web/build.mjs copies the node-pty JS layer into the
+# resfile bundle and refuses to build the local terminal without it.
+echo "    Staging OHOS node-pty addon ..."
+"${SCRIPT_DIR}/prepare-node-pty.sh"
+
 # Build frontend + backend into entry resfile
 echo "    Building electerm web app ..."
 npm run build:web

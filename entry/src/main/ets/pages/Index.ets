@@ -403,6 +403,7 @@ struct Index {
           // 2. load the real UI
           this.serverReady = true;
           this.controller.loadUrl(SERVER_URL);
+          this.logLocalTerminalReport();
           return;
         }
         // The in-process node thread is detached — if it is merely slow
@@ -438,6 +439,7 @@ struct Index {
 
       this.serverReady = true;
       this.controller.loadUrl(SERVER_URL);
+      this.logLocalTerminalReport();
     } catch (e) {
       const err = e as BusinessError;
       this.bootFailed = true;
@@ -500,6 +502,72 @@ struct Index {
     this.logBootTailWindow(2400);
   }
 
+  /**
+   * Echo the local-terminal PTY probe report to hilog.
+   *
+   * The backend writes <dataDir>/local-terminal.json at boot (see
+   * build-src/replace/app/server/local-terminal.js): whether this sandbox can
+   * open a PTY, and, when it cannot, the full diagnosis (openpty result,
+   * /dev/ptmx stat+open, /dev/pts, mountinfo, SELinux domain …).
+   *
+   * This echo matters because when the probe DISABLES the feature there is no
+   * terminal pane left to print into, and on a production ROM the app sandbox
+   * is not readable from outside — `hdc shell cat` is denied. hilog is the only
+   * channel that survives, so the report has to be pushed into it here.
+   *
+   * Two traps this code encodes:
+   *   1. On a real device only hilog.error survives export — hilog.info and
+   *      hilog.warn from this app are dropped by the log pipeline. Hence error.
+   *   2. hilog cuts a record at ~140 bytes, and it takes ONE LINE per record.
+   *      Feeding it pretty-printed JSON makes every chunk split on newlines and
+   *      only the chunk's first line keeps its prefix — the rest arrive as
+   *      anonymous lines and a grep for the prefix shows a fraction of the
+   *      report. So whitespace is flattened first and each chunk is tagged
+   *      `ltN/total:` so that a dropped chunk is visible instead of silent.
+   */
+  logLocalTerminalReport(): void {
+    this.logLocalTerminalReportTry(0);
+  }
+
+  private logLocalTerminalReportTry(attempt: number): void {
+    const dataDir: string = this.dataDir || BackendManager.dataDir;
+    if (!dataDir) {
+      return;
+    }
+    const path: string = `${dataDir}/local-terminal.json`;
+    let text: string = '';
+    try {
+      text = fs.readTextSync(path);
+    } catch {
+      // The probe runs on the node thread right after boot; on a cold start the
+      // report may not be on disk yet. Retry a few times before giving up.
+      if (attempt < 5) {
+        setTimeout(() => {
+          this.logLocalTerminalReportTry(attempt + 1);
+        }, 800);
+      } else {
+        hilog.error(DOMAIN, TAG,
+          'lt: local-terminal.json never appeared at %{public}s (node never ran the probe?)',
+          path);
+      }
+      return;
+    }
+    const flat: string = text.replace(/\s*\n\s*/g, ' ').trim();
+    const parts: string[] = [];
+    for (let i = 0; i < flat.length; i += 110) {
+      parts.push(flat.substring(i, i + 110));
+    }
+    // The prefix is built by string concatenation, not by %d format args:
+    // hilog's numeric specifiers render as empty on this pipeline (observed as
+    // a bare "lt/:" with both indices dropped), which would make a lost chunk
+    // invisible — the exact failure this prefix exists to prevent.
+    hilog.error(DOMAIN, TAG, 'lt report ▼ ' + parts.length + ' parts');
+    for (let i = 0; i < parts.length; i++) {
+      hilog.error(DOMAIN, TAG,
+        'lt' + i + '/' + parts.length + ': ' + parts[i]);
+    }
+  }
+
   /** Dump the last `n` chars of the boot log to hilog (periodic ring-buffer
    * insurance — see waitForBackend). hilog truncates a single message at
    * ~140 bytes, so the tail goes out in 110-char chunks, each its own line. */
@@ -515,9 +583,12 @@ struct Index {
     for (let i = 0; i < tail.length; i += 110) {
       parts.push(tail.substring(i, i + 110));
     }
-    hilog.error(DOMAIN, TAG, 'node-boot.log tail ▼ %{public}d parts', parts.length.toString());
+    hilog.error(DOMAIN, TAG, 'node-boot.log tail ▼ ' + parts.length + ' parts');
     for (let i = 0; i < parts.length; i++) {
-      hilog.error(DOMAIN, TAG, 't%{public}d: %{public}s', i.toString(), parts[i]);
+      // Prefix by concatenation: hilog's `%{public}d` renders as EMPTY on this
+      // pipeline (measured — every chunk arrived as a bare "t: …"), which
+      // silently destroys the "which chunk is missing" signal the prefix is for.
+      hilog.error(DOMAIN, TAG, 't' + i + ': ' + parts[i]);
     }
   }
 

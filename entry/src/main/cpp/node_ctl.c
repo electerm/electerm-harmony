@@ -185,11 +185,26 @@ static void *stdioReaderThread(void *p) {
             }
             if (hilogBudget > 0) {
               unsigned long now = nowMs();
-              if (now - lastHilogMs >= 250) { /* max ~4 hilog IPCs per second */
+              /* The rate limiter must not lose a coin flip with a line that
+               * carries a VERDICT. "local terminal: enabled/disabled …" is the
+               * only readable copy of the PTY probe result on a sealed ROM
+               * (the sandbox file is unreadable from outside), and it can
+               * easily land inside the 250 ms gate. Same for the backend's own
+               * boot milestones. These still spend the budget, they just skip
+               * the spacing check. */
+              int isVerdict = strncmp(line, "[backend]", 9) == 0 ||
+                              strncmp(line, "[pty]", 5) == 0 ||
+                              strstr(line, "local terminal") != NULL;
+              if (isVerdict || now - lastHilogMs >= 250) {
                 lastHilogMs = now;
                 hilogBudget--;
+                /* The format argument NEEDS %{public}: hilog/log.h treats any
+                 * parameter without it as private, and the line renders as
+                 * "electerm.embed: [io] <private>" — which destroys the tag
+                 * that is supposed to be THE readable channel for node's own
+                 * stdout (including the local-terminal verdict above). */
                 (void)OH_LOG_Print(LOG_APP, LOG_ERROR, 0xE1EC,
-                                   "electerm.embed", "[io] %.470s", line);
+                                   "electerm.embed", "[io] %{public}.470s", line);
               }
             }
           }
@@ -760,6 +775,36 @@ static const char *startEmbeddedNode(const char *params) {
     return errBuf;
   }
   logWrite("[embed] node binary: %s", nodePath);
+
+  /* Local-terminal PTY addon.
+   *
+   * OHOS refuses to mmap native code out of the HAP's resources/resfile tree
+   * (it fails at load with musl's useless "No error information"), so node-pty
+   * cannot load its addon from its usual build/Release path. The addon is
+   * staged as entry/libs/<abi>/libpty.node — which the HAP packs as
+   * libs/arm64/libpty.node, i.e. right next to the libnode.so we just resolved
+   * — and its absolute path is exported here for the JS layer (node-pty's
+   * lib/unixTerminal.js and lib/utils.js read ELECTERM_PTY_ADDON first).
+   *
+   * Set purely on file existence, with NO reference to device type: whether a
+   * PTY can actually be opened is a sandbox question answered at runtime by the
+   * probe in app/server/local-terminal.js, which also uses this variable as its
+   * "on-device backend" marker. Without the addon the variable stays unset and
+   * the probe reports addon-missing, which disables the feature cleanly. */
+  {
+    char ptyAddon[MAX_LINE * 2];
+    const char *slash = strrchr(nodePath, '/');
+    if (slash) {
+      snprintf(ptyAddon, sizeof(ptyAddon), "%.*s/libpty.node",
+               (int)(slash - nodePath), nodePath);
+      if (access(ptyAddon, R_OK) == 0) {
+        setenv("ELECTERM_PTY_ADDON", ptyAddon, 1);
+        logWrite("[embed] pty addon: %s", ptyAddon);
+      } else {
+        logWrite("[embed] pty addon absent: %s", ptyAddon);
+      }
+    }
+  }
 
   /* environment */
   setenv("NODE_ENV", "production", 1);

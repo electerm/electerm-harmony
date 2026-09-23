@@ -13,6 +13,20 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // NORMAL-LEVEL PERMISSIONS ONLY.
+    //
+    // The signing profile is `apl: normal` / `hos_normal_app` /
+    // `allowed-acls: []`, so the installer refuses a HAP that asks for anything
+    // above normal:
+    //   安装失败。应用等级为normal，只能使用normal等级的权限。
+    // Two entries used to violate this and are deliberately gone:
+    //   - ohos.permission.READ_WRITE_DESKTOP_DIRECTORY  (apl system_basic)
+    //   - ohos.permission.READ_PASTEBOARD               (apl system_basic)
+    // There is no ACL escape hatch here: the ACL list lives in the signing
+    // profile, which is issued for a normal app. scripts/check-permission-level.py
+    // now fails the build if any requested permission is above normal.
+    // (Clipboard paste still works: the WebView delivers system paste as a DOM
+    // paste event, which needs no app permission.)
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"
@@ -37,26 +51,10 @@
         }
       },
       {
-        "name": "ohos.permission.READ_WRITE_DESKTOP_DIRECTORY",
-        "reason": "$string:reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
         "name": "ohos.permission.ACCESS_CERT_MANAGER"
       },
       {
         "name": "ohos.permission.PRINT"
-      },
-      {
-        "name": "ohos.permission.READ_PASTEBOARD",
-        "reason": "$string:access_pasteboard",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
       },
       {
         "name": "ohos.permission.GYROSCOPE"

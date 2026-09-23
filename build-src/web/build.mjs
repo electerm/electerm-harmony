@@ -59,6 +59,16 @@ if (process.env.CI && SERVER_SECRET === LOCAL_DEV_SECRET) {
   process.exit(1)
 }
 
+// The local terminal is gated at RUNTIME by the PTY probe in
+// build-src/replace/app/server/local-terminal.js. This build-time switch is an
+// escape hatch that removes the feature entirely.
+const disableLocalTerminal = !!process.env.ELECTERM_DISABLE_LOCAL_TERMINAL
+
+// node-pty's OHOS overrides (tracked) and the staged native addon (produced by
+// scripts/prepare-node-pty.sh).
+const PTY_OVERRIDE_DIR = path.resolve(ROOT, 'build-src/node-pty-ohos')
+const PTY_ADDON = path.resolve(ROOT, 'entry/libs/arm64-v8a/libpty.node')
+
 function copyDir (from, to) {
   if (!fs.existsSync(from)) {
     console.warn('[web] skip missing source:', from)
@@ -158,7 +168,72 @@ async function bundleBackend () {
 }
 
 // --------------------------------------------------------------------------
-// 4. Entry script + package.json
+// 4. node-pty (the local terminal's native layer)
+// --------------------------------------------------------------------------
+/**
+ * The on-device backend reaches node-pty through `createRequire(import.meta.url)`
+ * from OUT_DIR, so the package has to sit at OUT_DIR/node_modules/node-pty —
+ * the HAP's resfile tree IS the require root, there is no node_modules above it.
+ *
+ * Only the JS layer is copied. The binary deliberately is NOT: OHOS refuses to
+ * mmap native code out of resources/resfile (it fails at load with musl's
+ * useless "No error information"), so the addon lives in entry/libs/<abi>/ and
+ * is loaded through ELECTERM_PTY_ADDON. Shipping a decoy copy here would turn a
+ * missing addon into a baffling load error instead of a clear one.
+ */
+function stageNodePty () {
+  const src = path.resolve(ROOT, 'node_modules/node-pty')
+  if (!fs.existsSync(src)) {
+    throw new Error(
+      'node_modules/node-pty is missing — run the dependency install first'
+    )
+  }
+  const dest = path.resolve(OUT_DIR, 'node_modules/node-pty')
+  fs.mkdirSync(path.resolve(dest, 'lib'), { recursive: true })
+
+  // package.json (main/lib/index.js) + LICENSE + every lib/*.js …
+  for (const f of ['package.json', 'LICENSE']) {
+    const p = path.resolve(src, f)
+    if (fs.existsSync(p)) fs.copyFileSync(p, path.resolve(dest, f))
+  }
+  for (const f of fs.readdirSync(path.resolve(src, 'lib'))) {
+    if (!f.endsWith('.js')) continue
+    fs.copyFileSync(path.resolve(src, 'lib', f), path.resolve(dest, 'lib', f))
+  }
+
+  // … then the OHOS overrides (unixTerminal.js carries the Duplex-stream patch
+  // that replaces tty.ReadStream, utils.js the ELECTERM_PTY_ADDON lookup).
+  const overrides = fs.readdirSync(path.resolve(PTY_OVERRIDE_DIR, 'lib'))
+  for (const f of overrides) {
+    fs.copyFileSync(
+      path.resolve(PTY_OVERRIDE_DIR, 'lib', f),
+      path.resolve(dest, 'lib', f)
+    )
+  }
+
+  const version = JSON.parse(
+    fs.readFileSync(path.resolve(dest, 'package.json'), 'utf8')
+  ).version
+  const n = fs.readdirSync(path.resolve(dest, 'lib')).length
+  console.log(`[web] staged node-pty ${version} (${n} lib files, OHOS overrides applied)`)
+}
+
+function assertPtyAddon () {
+  if (disableLocalTerminal) {
+    console.log('[web] local terminal force-disabled at build time')
+    return
+  }
+  if (!fs.existsSync(PTY_ADDON)) {
+    throw new Error(
+      `OHOS node-pty addon not found at ${PTY_ADDON} — run scripts/prepare-node-pty.sh (prepare-web.sh does this for you)`
+    )
+  }
+  const kb = (fs.statSync(PTY_ADDON).size / 1024).toFixed(0)
+  console.log(`[web] OHOS node-pty addon: ${PTY_ADDON} (${kb} KB)`)
+}
+
+// --------------------------------------------------------------------------
+// 5. Entry script + package.json
 // --------------------------------------------------------------------------
 
 function writeNodeEntry () {
@@ -194,8 +269,9 @@ process.env.PORT = '5577'
 // JWT secret baked in at build time. The web UI auto-logs-in because
 // ENABLE_AUTH is not set.
 process.env.SERVER_SECRET = ${JSON.stringify(SERVER_SECRET)}
-// No pty on HarmonyOS -> disable the local terminal feature.
-process.env.DISABLE_LOCAL_TERMINAL = '1'
+${disableLocalTerminal
+  ? "// Local terminal force-disabled at build time (ELECTERM_DISABLE_LOCAL_TERMINAL was set).\nprocess.env.DISABLE_LOCAL_TERMINAL = '1'"
+  : "// The local terminal is offered only when the runtime probe finds a usable\n// PTY in this sandbox (build-src/replace/app/server/local-terminal.js).\n// Disable at build time with ELECTERM_DISABLE_LOCAL_TERMINAL=1, or at launch\n// by passing DISABLE_LOCAL_TERMINAL=1 through entryParams (node_ctl.c treats\n// unknown keys as env vars)."}
 // Where the pug views live (cwd is this directory, set above).
 process.env.VIEW_FOLDER = resolve(__d, 'views')
 
@@ -234,6 +310,8 @@ fs.mkdirSync(OUT_DIR, { recursive: true })
 await runVite()
 copyFrontendAssets()
 await bundleBackend()
+assertPtyAddon()
+stageNodePty()
 writeNodeEntry()
 
 const outFiles = fs.readdirSync(OUT_DIR)

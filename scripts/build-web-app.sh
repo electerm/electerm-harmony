@@ -203,6 +203,19 @@ else
   echo "    Warning: sdk-pkg.json not found, using default 5.0.1(13)"
 fi
 
+# compatibleSdkVersion is the INSTALL FLOOR, not the compile SDK, and the two
+# are genuinely independent. Pinning it to the locally installed SDK (26.0.0 on
+# a current DevEco) makes the HAP refuse to install on the older emulator images
+# we still test against, so allow an explicit override — 5.1.0(18) works
+# everywhere we ship. compileSdkVersion is deliberately NOT written: hvigor 26
+# rejects an explicit value ("compileSdkVersion is incompatible with the current
+# DevEco Studio version"), and Huawei's own guidance is to omit it and let
+# DevEco's built-in SDK be used.
+if [ -n "${COMPATIBLE_SDK_VERSION:-}" ]; then
+  echo "    compatibleSdkVersion override: ${COMPATIBLE_SDK_VERSION}"
+  COMPILE_SDK_VERSION="${COMPATIBLE_SDK_VERSION}"
+fi
+
 cat > "${PROJECT_ROOT}/local.properties" <<LOCPROP
 sdk.dir=${OHOS_SDK_HOME}/default/openharmony
 ohos.sdk.dir=${OHOS_SDK_HOME}
@@ -217,7 +230,6 @@ cat > "${BUILD_PROFILE}" <<EOF
       {
         "name": "default",
         "compatibleSdkVersion": "${COMPILE_SDK_VERSION}",
-        "compileSdkVersion": "${COMPILE_SDK_VERSION}",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "nativeLib": {
@@ -336,21 +348,80 @@ else
 fi
 
 # --- Locate the unsigned APP ------------------------------------------------
+#
+# Must be hvigor's `*-unsigned.app`, NEVER "some .app": APP_OUTPUT_DIR also holds
+# the PREVIOUS run's signed artifact, whose name IS the canonical name whenever
+# the version has not changed. Picking it means the signer is handed the previous
+# build (or, worse, its own output) and `-inFile`/`-outFile` become the same path
+# — after which the cleanup below deletes the build's own product. Symptom:
+# "✓ Signed APP: … ()" with an empty size, then "unzip: cannot find or open …".
 
 APP_OUTPUT_DIR="${PROJECT_ROOT}/build/outputs/default"
-UNSIGNED_APP=$(find "${APP_OUTPUT_DIR}" -name "*.app" -type f 2>/dev/null | head -1)
 
-if [ -z "${UNSIGNED_APP}" ]; then
-  echo "    ✗ No .app file found in ${APP_OUTPUT_DIR}"
-  echo "    Searching entire build tree ..."
-  UNSIGNED_APP=$(find "${PROJECT_ROOT}/build" -name "*.app" -type f 2>/dev/null | head -1)
-  if [ -z "${UNSIGNED_APP}" ]; then
-    echo "    ✗ No .app file found anywhere in build/"
-    exit 1
+# Canonical web-build artifact name: electerm-harmony-<arch>-<ver>.app
+# The web build only targets the on-device architecture (arm64-v8a), and
+# <ver> is the package.json version.
+APP_ARCH="arm64"
+CANONICAL_APP="${APP_OUTPUT_DIR}/electerm-harmony-${APP_ARCH}-${APP_VERSION}.app"
+
+find_unsigned_app () {
+  # 1. the explicitly unsigned artifact hvigor writes
+  local hit
+  hit=$(find "$1" -maxdepth 1 -name "*-unsigned.app" -type f 2>/dev/null | head -1)
+  if [ -n "${hit}" ]; then
+    printf '%s' "${hit}"
+    return
   fi
+  # 2. anything that is not the canonical (signed) name
+  hit=$(find "$1" -name "*.app" -type f ! -name "$(basename "${CANONICAL_APP}")" 2>/dev/null | head -1)
+  printf '%s' "${hit}"
+}
+
+UNSIGNED_APP=$(find_unsigned_app "${APP_OUTPUT_DIR}")
+if [ -z "${UNSIGNED_APP}" ]; then
+  # A leftover canonical-named .app from an older version is exactly the trap
+  # this avoids — so refuse, with instructions, instead of guessing.
+  echo "    ✗ No unsigned .app found in ${APP_OUTPUT_DIR}"
+  echo "      Stale artifacts present (delete them and rebuild):"
+  ls -1 "${APP_OUTPUT_DIR}"/*.app 2>/dev/null | sed 's/^/        /'
+  echo "      hint: rm -rf entry/build build/outputs .hvigor"
+  exit 1
+fi
+
+if [ "${UNSIGNED_APP}" = "${CANONICAL_APP}" ]; then
+  echo "    ✗ refusing to sign ${UNSIGNED_APP} onto itself"
+  exit 1
 fi
 
 echo "    ✓ Unsigned APP: ${UNSIGNED_APP} ($(du -h "${UNSIGNED_APP}" | cut -f1))"
+
+# --- Permission level gate ---------------------------------------------------
+#
+# The signing profile is `apl: normal` / `hos_normal_app` / `allowed-acls: []`.
+# A HAP that DECLARES anything above normal is refused at install time:
+#
+#     安装失败。应用等级为normal，只能使用normal等级的权限。
+#
+# This must run BEFORE signing so a broken HAP never becomes an artifact. It is
+# also the only place it can be caught locally: the OpenHarmony emulator image
+# installs such a HAP happily, so the failure otherwise shows up first on real
+# hardware (cloud-debug device / AppGallery review).
+
+if [ "${ELECTERM_SKIP_PERMISSION_CHECK:-0}" = "1" ]; then
+  echo "    ! permission level check skipped (ELECTERM_SKIP_PERMISSION_CHECK=1)"
+else
+  # Plain string, not an array: bash 3.2 (macOS /bin/bash) chokes on an empty
+  # "${arr[@]}" under `set -u`.
+  PERMISSION_CHECK_ARGS=""
+  if [ "${ELECTERM_ALLOW_ABOVE_NORMAL_PERMISSIONS:-0}" = "1" ]; then
+    PERMISSION_CHECK_ARGS="--allow-above-normal"
+  fi
+  if ! python3 "${PROJECT_ROOT}/scripts/check-permission-level.py" \
+      "${UNSIGNED_APP}" ${PERMISSION_CHECK_ARGS}; then
+    echo "    ✗ refusing to sign an APP the device will not install"
+    exit 1
+  fi
+fi
 
 # --- Sign the APP with hap-sign-tool.jar ------------------------------------
 
@@ -365,11 +436,7 @@ if [ ! -f "${SIGN_TOOL_JAR}" ]; then
   exit 1
 fi
 
-# Canonical web-build artifact name: electerm-harmony-<arch>-<ver>.app
-# The web build only targets the on-device architecture (arm64-v8a), and
-# <ver> is the package.json version, so the shipped file is e.g.
-APP_ARCH="arm64"
-CANONICAL_APP="${APP_OUTPUT_DIR}/electerm-harmony-${APP_ARCH}-${APP_VERSION}.app"
+rm -f "${CANONICAL_APP}"
 
 java -jar "${SIGN_TOOL_JAR}" sign-app \
   -mode localSign \
@@ -391,7 +458,9 @@ fi
 # Keep only the canonical-named APP so artifact pickup (find … -name '*.app')
 # can never grab a stray/unsigned one.
 APP_FILE="${CANONICAL_APP}"
-rm -f "${UNSIGNED_APP}" || true
+if [ "${UNSIGNED_APP}" != "${APP_FILE}" ]; then
+  rm -f "${UNSIGNED_APP}" || true
+fi
 
 echo "    ✓ Signed APP: ${APP_FILE} ($(du -h "${APP_FILE}" | cut -f1))"
 

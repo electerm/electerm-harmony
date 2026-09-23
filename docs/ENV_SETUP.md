@@ -135,45 +135,74 @@ hdc shell bm get --udid
 hdc shell param get const.product.udid
 ```
 
-### 2.6 ACL Permissions (受限权限申请)
+### 2.6 Permission levels — this app is normal-apl, so normal permissions only
 
-> **Required**: electerm-harmony uses restricted ACL permissions. You MUST apply for them and re-download the Profile.
+> **Do not add a `system_basic` / `system_core` permission to `module.json5`.** It does not
+> need an ACL application; it needs a different signing profile, which this app does not have.
 
-ACL (Access Control List) is a separate concept from Profile. In HarmonyOS, app permissions have three authorization levels:
+An install is rejected *before the app ever runs* when the HAP declares a permission whose
+`availableLevel` is higher than the app's own `apl` in the signing profile:
 
-| Level | ACL needed? | Example permissions |
-|-------|------------|---------------------|
-| `normal` | No | `ohos.permission.INTERNET`, `ohos.permission.RUNNING_LOCK` |
-| `system_basic` | Yes | `ohos.permission.READ_MEDIA`, `ohos.permission.WRITE_MEDIA` |
-| `system_core` | No (system apps only) | System-level APIs |
+```
+安装失败。应用等级为normal，只能使用normal等级的权限。
+```
 
-**electerm-harmony requires the following restricted ACL permissions**:
+Our profile (`signing/electermRelease.p7b`) is:
 
-| Permission | Purpose |
-|-----------|---------|
-| `ohos.permission.READ_PASTEBOARD` | Read clipboard for copy/paste operations |
-| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | File transfer to/from Download directory |
-| `ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY` | File transfer to/from Documents directory |
-| `ohos.permission.READ_WRITE_DESKTOP_DIRECTORY` | File transfer to/from Desktop directory |
+```json
+"bundle-info": { "apl": "normal", "app-feature": "hos_normal_app" },
+"app-distribution-type": "app_gallery",
+"acls": { "allowed-acls": [] }
+```
 
-These permissions are declared in `entry/src/main/module.json5` → `requestPermissions`, but they also **must be granted in the Profile (.p7b) file**. If the Profile does not include these ACL permissions, the build will succeed but installation will fail with a permission mismatch error.
+so the entire allowlist is `normal`. ACLs do **not** rescue this: `allowed-acls` lives in the
+profile, and the profile is issued for a normal app. Only two ways out exist — drop the
+permission, or have the profile reissued as a system app (`apl: system_basic` +
+`hos_system_app`), which is a business decision, not a build flag.
 
-#### How to apply for ACL permissions and update the Profile:
+**Trap: the emulator installs it anyway.** The OpenHarmony emulator image does not enforce the
+check, so a bad HAP builds, installs and passes a smoke test locally, then fails on real
+hardware (cloud-debug device, AppGallery review). Always run the checker before shipping.
 
-1. Go to **AppGallery Connect** → your app → **HarmonyOS** tab → **Permissions** (应用权限)
-   - Direct link: <https://developer.huawei.com/consumer/cn/agconnect/caa-app/appPermission>
-2. Click **Add Permission** (添加权限)
-3. Search for and add each of the 4 permissions listed above
-4. Submit for review and wait for approval (usually instant for these permissions)
-5. After approval, go to **Profile Management** (Profile 管理)
-   - Direct link: <https://developer.huawei.com/consumer/cn/agconnect/caa-app/appProfile>
-6. **Re-create or re-download** your Profile (.p7b) — the new Profile will now include the ACL permissions
-7. Replace `signing/electermRelease.p7b` with the newly downloaded file
-8. Re-encode and update the `OHOS_PROFILE_B64` GitHub Secret:
-   ```bash
-   base64 -w 0 signing/electermRelease.p7b  # Linux
-   base64 -i signing/electermRelease.p7b | tr -d '\n'  # macOS
-   ```
+What we declare today, and what each one costs:
+
+| Permission | Level | Notes |
+|-----------|-------|-------|
+| `ohos.permission.INTERNET` | normal | ssh/sftp/telnet/RDP/VNC/spice/ftp + the localhost web UI |
+| `ohos.permission.GET_NETWORK_INFO` | normal | |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | normal | user_grant — SFTP local paths |
+| `ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY` | normal | user_grant — SFTP local paths |
+| `ohos.permission.ACCESS_CERT_MANAGER` | normal | |
+| `ohos.permission.PRINT` | normal | |
+| `ohos.permission.GYROSCOPE` | normal | |
+| `ohos.permission.ACCELEROMETER` | normal | |
+
+Removed, and must not come back:
+
+| Permission | Level | Why it was dropped |
+|-----------|-------|--------------------|
+| `ohos.permission.READ_WRITE_DESKTOP_DIRECTORY` | **system_basic** | Desktop-directory access is a system-app feature; it also makes no sense on a phone |
+| `ohos.permission.READ_PASTEBOARD` | **system_basic** | Clipboard reads are restricted to system apps on HarmonyOS NEXT. Paste still works: the WebView delivers the system paste action as a DOM `paste` event, which needs no app permission. Only JS-initiated `navigator.clipboard.readText()` (the in-app paste button) is affected. |
+
+#### Enforcing it
+
+`scripts/check-permission-level.py` reads the levels from the SDK's own permission list
+(`${OHOS_SDK_HOME}/default/openharmony/toolchains/lib/PermissionDefinitions.json` — the same file
+DevEco validates against) and fails the build. `build-web-app.sh` runs it on the unsigned APP
+**before signing**, so a HAP the device will refuse never becomes an artifact:
+
+```bash
+# check any .app / .hap / module.json5 without building
+python3 scripts/check-permission-level.py build/outputs/default/electerm-harmony-arm64-*.app
+
+# escape hatches (both are for system-apl builds, not for this one)
+ELECTERM_ALLOW_ABOVE_NORMAL_PERMISSIONS=1 ./scripts/build-web-app.sh --release   # warn only
+ELECTERM_SKIP_PERMISSION_CHECK=1 ./scripts/build-web-app.sh --release            # skip
+```
+
+Keep `ALL_USER_PERMISSIONS` in `entry/src/main/ets/entryability/EntryAbility.ets` in sync with
+`requestPermissions` in `entry/src/main/module.json5` — requesting a permission that is not
+declared is a silent no-op.
 
 ### 2.7 Keystore JDK Compatibility (if keystore was created with JDK 22+)
 

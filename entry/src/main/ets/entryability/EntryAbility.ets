@@ -6,8 +6,8 @@
  * UI in an ArkWeb Web component pointed at http://127.0.0.1:5577.
  *
  * Responsibilities:
- *  - request user-grant permissions at startup (Documents/Desktop/Download
- *    directory access for SFTP local paths, pasteboard for copy/paste);
+ *  - request user-grant permissions at startup (Download/Documents directory
+ *    access for SFTP local paths);
  *  - on destroy, terminate the Node.js child process so port 5577 is freed.
  */
 
@@ -24,15 +24,21 @@ import { launchInProcessEarly } from '../BackendLauncher';
 const TAG: string = 'ElectermEntryAbility';
 const DOMAIN: number = 0xE1EC;
 
-// All user-grant permissions declared in module.json5.
-// Permissions without "reason"/"usedScene" (INTERNET, GET_NETWORK_INFO,
-// ACCESS_CERT_MANAGER, PRINT, GYROSCOPE, ACCELEROMETER) are normal or
-// system-grant permissions that don't need runtime request.
+// Every user-grant permission declared in module.json5 — keep the two lists in
+// sync. All of these are apl `normal`.
+//
+// READ_PASTEBOARD and READ_WRITE_DESKTOP_DIRECTORY used to be here and were
+// removed: both are apl `system_basic`, and the app's signing profile is
+// `apl: normal` / `hos_normal_app`, so merely DECLARING them makes the
+// installer reject the HAP:
+//   安装失败。应用等级为normal，只能使用normal等级的权限。
+// A normal app cannot be granted them (the ACL list lives in the profile), and
+// neither is needed: only normal-level, system-grant permissions (INTERNET,
+// GET_NETWORK_INFO, ACCESS_CERT_MANAGER, PRINT, GYROSCOPE, ACCELEROMETER) are
+// declared alongside these and none of them need a runtime request.
 const ALL_USER_PERMISSIONS: Permissions[] = [
   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
-  'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY',
-  'ohos.permission.READ_WRITE_DESKTOP_DIRECTORY',
-  'ohos.permission.READ_PASTEBOARD'
+  'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY'
 ];
 
 export default class EntryAbility extends UIAbility {
