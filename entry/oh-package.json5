@@ -1,6 +1,6 @@
 {
   "name": "entry",
-  "version": "5.5.10",
+  "version": "5.5.35",
   "description": "Electerm HarmonyOS entry module — ArkWeb shell + on-device Node.js backend",
   "main": "",
   "license": "MIT",
