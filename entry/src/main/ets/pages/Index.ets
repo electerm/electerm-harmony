@@ -357,6 +357,9 @@ struct Index {
   lastProbeError: string = '';
   /** Last line of node-boot.log, refreshed at 0.5 Hz (file I/O on the UI thread). */
   lastBootLine: string = '';
+  /** True once the boot page (rawfile/loading.html) has been evicted from the
+   * Web back-forward list — see purgeBootPageHistory(). */
+  historyPurged: boolean = false;
 
   aboutToAppear(): void {
     // Called directly, NOT via setTimeout: the only thing that used to make
@@ -629,8 +632,70 @@ struct Index {
       !url.startsWith('http://localhost');
   }
 
+  /** True when `url` points at the local "Starting engine…" boot page.
+   *
+   * The Web component boots on `src: $rawfile('loading.html')` and is later
+   * navigated to SERVER_URL, which leaves loading.html sitting in the Web
+   * back-forward list as a back entry. That page is static — it never
+   * redirects back to the backend — so returning to it strands the UI on
+   * "Starting engine…" until the process is killed. The scheme prefix of a
+   * rawfile URL varies across SDK builds (resource://rawfile/… vs
+   * file://…/rawfile/…), so match the filename rather than a scheme. */
+  isLoadingPageUrl(url: string): boolean {
+    return url.length > 0 && url.toLowerCase().includes('loading.html');
+  }
+
+  /** Evict the boot page from the back-forward list once the real UI is up.
+   *
+   * Called from onPageEnd: when the SERVER_URL document finishes loading we
+   * clear the Web history, dropping the rawfile/loading.html entry so no back
+   * navigation — hardware button, system edge-swipe or an in-page
+   * history.back() — can ever reach it again. Guarded by `historyPurged` so
+   * this runs exactly once and leaves the SPA's own pushState history (added
+   * after this first load) untouched. */
+  purgeBootPageHistory(url: string): void {
+    if (this.historyPurged || !this.serverReady || !url.startsWith(SERVER_URL)) {
+      return;
+    }
+    try {
+      this.controller.clearHistory();
+      this.historyPurged = true;
+      hilog.info(DOMAIN, TAG, 'cleared Web history — removed boot page loading.html');
+    } catch (e) {
+      // clearHistory() throws 17100001 if the controller is not attached yet;
+      // the onBackPress guard below covers that brief window.
+      hilog.warn(DOMAIN, TAG, 'clearHistory failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  /** True if the entry one step back in the Web history is the boot page.
+   *
+   * Belt-and-braces for the brief window before purgeBootPageHistory() runs
+   * (and in case clearHistory() is unavailable): onBackPress consults this so
+   * a back gesture aimed at loading.html is swallowed instead of executed. */
+  wouldBackToLoadingPage(): boolean {
+    try {
+      const list = this.controller.getBackForwardEntries();
+      const prevIndex: number = list.currentIndex - 1;
+      if (prevIndex < 0) {
+        return false;
+      }
+      return this.isLoadingPageUrl(list.getItemAtIndex(prevIndex).historyUrl);
+    } catch {
+      return false;
+    }
+  }
+
   onBackPress(): boolean {
     try {
+      // Never let a back gesture land on the boot page (see
+      // purgeBootPageHistory / isLoadingPageUrl). Swallow the event while the
+      // history entry behind us is still loading.html — this is the fix for
+      // "swipe left/right → stuck on Starting engine…, must kill the app".
+      if (this.serverReady && this.wouldBackToLoadingPage()) {
+        hilog.info(DOMAIN, TAG, 'swallowed back press — next entry is the boot page');
+        return true;
+      }
       if (this.controller.accessBackward()) {
         this.controller.backward();
         return true;
@@ -669,12 +734,27 @@ struct Index {
             return false;
           }
           const url: string = event.data.getRequestUrl();
+          // Never navigate back to the rawfile boot page once the real UI is
+          // up: a stale history entry, reload or in-page back would otherwise
+          // leave the UI stuck on the static "Starting engine…" page. Cancel
+          // such a navigation and re-issue the backend URL instead.
+          if (this.serverReady && this.isLoadingPageUrl(url)) {
+            hilog.info(DOMAIN, TAG, 'blocked nav to boot page, reloading UI: %{public}s', url);
+            this.controller.loadUrl(SERVER_URL);
+            return true;
+          }
           if (this.isExternalWebUrl(url)) {
             hilog.info(DOMAIN, TAG, 'diverting main-frame nav to system browser: %{public}s', url);
             this.nativeBridge.openExternal(url);
             return true;
           }
           return false;
+        })
+        // Once the backend UI has finished loading, drop loading.html from the
+        // back-forward list (see purgeBootPageHistory) so back/swipe gestures
+        // can no longer strand the app on the boot page.
+        .onPageEnd((event) => {
+          this.purgeBootPageHistory(event.url);
         })
 
       if (!this.serverReady) {
