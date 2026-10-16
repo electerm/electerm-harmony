@@ -16,6 +16,7 @@ import Want from '@ohos.app.ability.Want';
 import AbilityConstant from '@ohos.app.ability.AbilityConstant';
 import { Configuration } from '@ohos.app.ability.Configuration';
 import { abilityAccessCtrl, common, Permissions, PermissionRequestResult, UIAbility } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { Environment } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BackendManager } from '../BackendManager';
@@ -23,6 +24,24 @@ import { launchInProcessEarly } from '../BackendLauncher';
 
 const TAG: string = 'ElectermEntryAbility';
 const DOMAIN: number = 0xE1EC;
+
+/**
+ * Window chrome colours — must stay in sync with the app's dark default theme
+ * (the boot overlay in pages/Index.ets uses the same #15171a).
+ *
+ * Why this is needed at all: HarmonyOS lays the app content out inside the
+ * *safe area* only, so the status-bar strip (top) and the navigation-bar strip
+ * (bottom) are not part of the app's layout box. Those two strips are painted
+ * by the WINDOW background, whose default is '#FFF0F0F0' in light system mode
+ * (see @ohos.window.d.ts, setWindowBackgroundColor) — and it follows the
+ * *system* colour mode, not the app theme. On a light-mode phone that renders
+ * as two blank white bars around the dark electerm UI. The system-bar content
+ * (clock, battery, gesture bar) defaults to '#E5FFFFFF', i.e. near-white, so it
+ * is invisible against that light strip — which is why the bars look empty.
+ */
+const WINDOW_BG_COLOR: string = '#FF15171A';
+/** System-bar foreground: light, so clock/battery/gesture bar read on dark. */
+const SYSTEM_BAR_CONTENT_COLOR: string = '#FFFFFFFF';
 
 // All user-grant permissions declared in module.json5.
 // Permissions without "reason"/"usedScene" (INTERNET, GET_NETWORK_INFO,
@@ -81,6 +100,11 @@ export default class EntryAbility extends UIAbility {
       }
       // ArkWeb engine init + ArkUI tree are done; Index.aboutToAppear() has run
       // (or is running) by now — its own milestone follows immediately after.
+      //
+      // Window chrome is applied HERE, not before loadContent: in the stage
+      // model setWindowBackgroundColor() does not take effect until
+      // loadContent() has taken effect.
+      this.applyDarkWindowChrome(windowStage);
     });
 
     // Request permissions in the background. Index requests them again via
@@ -102,6 +126,54 @@ export default class EntryAbility extends UIAbility {
     // Terminate the node child process so port 5577 is freed. If the child
     // is already dead (crashed / exec failed) killNode just returns -1.
     BackendManager.killBackend();
+  }
+
+  /**
+   * Paint the two system avoid areas to match the app's dark UI.
+   *
+   * HarmonyOS lays the app content out inside the safe area only, so the
+   * status-bar strip (top) and the navigation-bar strip (bottom) are painted by
+   * the window background — default '#FFF0F0F0' in light system mode, following
+   * the *system* colour mode rather than the app theme. On a light-mode phone
+   * that is two blank white bars around the dark terminal. The system-bar
+   * foreground defaults to near-white ('#E5FFFFFF'), so the clock/battery are
+   * invisible against that strip and the bars read as completely empty.
+   *
+   * Must run AFTER loadContent has taken effect (stage model requirement for
+   * setWindowBackgroundColor).
+   */
+  private applyDarkWindowChrome(windowStage: window.WindowStage): void {
+    try {
+      this.paintWindowChrome(windowStage.getMainWindowSync());
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'window chrome: getMainWindowSync failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private paintWindowChrome(mainWindow: window.Window): void {
+    // 1. Window background — this is the layer that shows through the
+    //    status-bar and navigation-bar strips, so it is the one that actually
+    //    removes the white bars.
+    try {
+      mainWindow.setWindowBackgroundColor(WINDOW_BG_COLOR);
+      hilog.info(DOMAIN, TAG, 'window background set to %{public}s', WINDOW_BG_COLOR);
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'setWindowBackgroundColor failed: %{public}s', JSON.stringify(e));
+    }
+
+    // 2. System bars: dark background to match, light foreground so the clock,
+    //    battery and gesture bar stay readable. Without the content colours the
+    //    bars would be dark-on-dark and would still look empty.
+    mainWindow.setWindowSystemBarProperties({
+      statusBarColor: WINDOW_BG_COLOR,
+      navigationBarColor: WINDOW_BG_COLOR,
+      statusBarContentColor: SYSTEM_BAR_CONTENT_COLOR,
+      navigationBarContentColor: SYSTEM_BAR_CONTENT_COLOR
+    }).then(() => {
+      hilog.info(DOMAIN, TAG, 'system bar properties applied');
+    }).catch((e: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', JSON.stringify(e));
+    });
   }
 
   /**
