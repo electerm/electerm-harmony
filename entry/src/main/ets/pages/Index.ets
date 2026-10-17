@@ -21,6 +21,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { childProcessManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -31,6 +32,7 @@ import http from '@ohos.net.http';
 import { getBackendStatus } from 'libnode_ctl.so';
 import { BackendManager } from '../BackendManager';
 import { launchInProcessEarly, buildEntryParams } from '../BackendLauncher';
+import { isWindowColor, paintWindowChrome } from '../WindowChrome';
 
 const TAG: string = 'electerm.Index';
 const DOMAIN: number = 0xE1EC;
@@ -102,6 +104,11 @@ class NativeBridge {
   private reporter: ((script: string) => void) | null = null;
   /** Cached Download/<bundleName>/ dir URI from the picker. */
   private downloadDirUri: string = '';
+  /** Last theme chrome colours applied — repeat reports are then free. */
+  private chromeKey: string = '';
+  /** The page window, resolved once (getLastWindow is async). */
+  private mainWindow: window.Window | null = null;
+  private windowPromise: Promise<window.Window> | null = null;
 
   constructor(ctx: common.UIAbilityContext) {
     this.ctx = ctx;
@@ -126,6 +133,53 @@ class NativeBridge {
   /** Version marker: lets the web app feature-detect this bridge. */
   getVersion(): string {
     return '1';
+  }
+
+  /**
+   * Repaint the system-bar strips with the UI theme's own colours.
+   *
+   * The strips are painted by the *window*, not by the Web component, so the
+   * page is the only layer that knows what they should look like: electerm
+   * themes are applied as `:root { --main-dark; --text; }`. The web side reads those
+   * back out of the computed style and calls this whenever the theme changes
+   * (build-src/replace/client/web-components/window-chrome.js) — so switching
+   * theme in settings repaints the bars immediately instead of leaving the
+   * system light/dark default (two blank white bars on a light-mode phone).
+   *
+   * Both arguments are '#AARRGGBB'. See WindowChrome.ets.
+   */
+  setWindowChrome(background: string, foreground: string): void {
+    if (!isWindowColor(background) || !isWindowColor(foreground)) {
+      hilog.warn(DOMAIN, TAG, 'setWindowChrome ignored invalid colours: %{public}s / %{public}s',
+        background, foreground);
+      return;
+    }
+    const key: string = `${background}|${foreground}`;
+    if (key === this.chromeKey) {
+      return;
+    }
+    this.chromeKey = key;
+    this.resolveMainWindow().then((win: window.Window) => {
+      paintWindowChrome(win, background, foreground);
+    }).catch((e: BusinessError) => {
+      // Do not cache a failed attempt — the next report should retry.
+      this.chromeKey = '';
+      hilog.warn(DOMAIN, TAG, 'setWindowChrome: window unavailable: %{public}s', JSON.stringify(e));
+    });
+  }
+
+  /** The page's window, resolved once and reused. */
+  private resolveMainWindow(): Promise<window.Window> {
+    if (this.mainWindow) {
+      return Promise.resolve(this.mainWindow);
+    }
+    if (!this.windowPromise) {
+      this.windowPromise = window.getLastWindow(this.ctx).then((win: window.Window) => {
+        this.mainWindow = win;
+        return win;
+      });
+    }
+    return this.windowPromise;
   }
 
   /**
@@ -717,11 +771,12 @@ struct Index {
         // ask the OS to open http(s)/mailto/tel links in the default app,
         // plus the native file saver (getVersion/saveUrl/saveBase64) so
         // sandbox files can be downloaded to the public Download directory
-        // (blob-anchor downloads are a no-op inside ArkWeb).
+        // (blob-anchor downloads are a no-op inside ArkWeb), and
+        // setWindowChrome so the status/gesture bars follow the UI theme.
         .javaScriptProxy({
           object: this.nativeBridge,
           name: 'harmonyNative',
-          methodList: ['openExternal', 'getVersion', 'saveUrl', 'saveBase64'],
+          methodList: ['openExternal', 'getVersion', 'saveUrl', 'saveBase64', 'setWindowChrome'],
           controller: this.controller
         })
         // Backstop: no MAIN-frame navigation may leave the local backend
