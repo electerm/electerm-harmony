@@ -1,6 +1,6 @@
 {
   "name": "electerm-harmony",
-  "version": "5.6.11",
+  "version": "5.6.12",
   "description": "Free and open-sourced ssh/sftp/telnet/RDP/VNC/Spice/ftp client for HarmonyOS (ArkWeb + on-device Node.js)",
   "main": "src/app/app.js",
   "type": "module",
