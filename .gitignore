@@ -63,6 +63,8 @@ src/client/electerm-react/
 # --- Web (ArkWeb) build outputs ---
 # electerm-web app bundled into the entry module resfile by build/web/build.mjs
 /entry/src/main/resources/resfile/
+# per-entry vite output, assembled into dist/assets by the same build
+/build-src/web/.gen/
 # node runtime download cache
 /.cache/
 # hvigor native (CMake/Ninja) build dir & ohpm installs

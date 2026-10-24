@@ -122,7 +122,7 @@ Prepared artifacts inside the HAP:
 - `libs/arm64-v8a/libnode.so` — the Node.js runtime
 - `libs/arm64-v8a/libnode_ctl.so` — NAPI glue (in-process)
 - `libs/arm64-v8a/libnode_launcher.so` — native child fallback
-- `resources/resfile/electerm/index.js`, `app.bundle.mjs`, `views/index.pug`, `dist/assets/...` — the web app
+- `resources/resfile/electerm/index.js`, `app.bundle.mjs`, `dist/assets/...` — the web app (the homepage is the precompiled `dist/assets/index.html`)
 
 ## 4. Runtime Flow
 

@@ -4,7 +4,7 @@
 #
 # Runs build-src/web/build.mjs which:
 #   1. vite-builds the frontend  -> resfile/electerm/dist/assets
-#   2. copies static assets + views/index.pug
+#   2. copies static assets + renders dist/assets/index.html from index.pug
 #   3. esbuild-bundles the backend -> resfile/electerm/app.bundle.mjs
 #   4. writes resfile/electerm/index.js (runtime env setup) + package.json
 #
@@ -71,7 +71,7 @@ if [ ! -d "${RESFILE_APP_DIR}" ]; then
   exit 1
 fi
 
-for f in "index.js" "app.bundle.mjs" "package.json" "views/index.pug"; do
+for f in "index.js" "app.bundle.mjs" "package.json" "dist/assets/index.html"; do
   if [ ! -f "${RESFILE_APP_DIR}/${f}" ]; then
     echo "    ✗ Missing: ${RESFILE_APP_DIR}/${f}"
     exit 1

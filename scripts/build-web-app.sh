@@ -96,7 +96,7 @@ if [ ! -f "${LIBS_DIR}/libnode.so" ]; then
 fi
 echo "    ✓ Found: libnode.so ($(du -h "${LIBS_DIR}/libnode.so" | cut -f1))"
 
-for f in index.js app.bundle.mjs views/index.pug; do
+for f in index.js app.bundle.mjs dist/assets/index.html; do
   if [ ! -f "${RESFILE_APP_DIR}/${f}" ]; then
     echo "    ✗ Missing: ${RESFILE_APP_DIR}/${f}"
     echo "    Run ./scripts/prepare-web.sh first."
@@ -427,7 +427,7 @@ check_file "${HAP_DIR}/libs/arm64-v8a/libnode_launcher.so" "libs/arm64-v8a/libno
 check_file "${HAP_DIR}/libs/arm64-v8a/libnode_ctl.so" "libs/arm64-v8a/libnode_ctl.so"
 check_file "${HAP_DIR}/resources/resfile/electerm/index.js" "resfile/electerm/index.js"
 check_file "${HAP_DIR}/resources/resfile/electerm/app.bundle.mjs" "resfile/electerm/app.bundle.mjs"
-check_file "${HAP_DIR}/resources/resfile/electerm/views/index.pug" "resfile/electerm/views/index.pug"
+check_file "${HAP_DIR}/resources/resfile/electerm/dist/assets/index.html" "resfile/electerm/dist/assets/index.html"
 
 JS_COUNT=$(find "${HAP_DIR}/resources/resfile/electerm/dist/assets/js" -name "*.js" 2>/dev/null | wc -l | tr -d ' ')
 echo "  ✓ resfile/electerm/dist/assets/js: ${JS_COUNT} files"

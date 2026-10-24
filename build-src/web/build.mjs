@@ -6,13 +6,13 @@
  *
  *   entry/src/main/resources/resfile/electerm/
  *     ├── index.js         entry started by the on-device node binary; sets
- *                          env (HOST/PORT/SERVER_SECRET/data dirs) then
- *                          imports app.bundle.mjs
+ *     │                    env (HOST/PORT/SERVER_SECRET/data dirs) then
+ *     │                    imports app.bundle.mjs
  *     ├── app.bundle.mjs   esbuild-bundled electerm backend (pure node,
- *                          no electron APIs)
+ *     │                    no electron APIs)
  *     ├── package.json     read by runtime-constants.js via process.cwd()
- *     ├── views/index.pug  server-rendered shell for the UI
- *     └── dist/assets/     vite-built frontend + static assets
+ *     └── dist/assets/     vite-built frontend, static assets, and the
+ *                          precompiled homepage (index.html)
  *
  * The resfile directory is packaged into the HAP as-is and is directly
  * readable by the Node.js child process at
@@ -31,14 +31,16 @@
  *     install dir is read-only), so nothing about it is baked here.
  */
 import { build as viteBuild } from 'vite'
+import { createConfig, entryNames } from './vite.web.mjs'
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { generateIndexHtml } from '../bin/gen-index-html.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const ROOT = path.resolve(__dirname, '..', '..') // build/web -> repo root
+const ROOT = path.resolve(__dirname, '..', '..') // build-src/web -> repo root
 
 process.chdir(ROOT)
 
@@ -58,6 +60,30 @@ if (process.env.CI && SERVER_SECRET === LOCAL_DEV_SECRET) {
   )
   process.exit(1)
 }
+// The package.json the node project carries on the device. The server reads it
+// as `packInfo`, so the build-time homepage must embed the same object — not
+// this repo's package.json, which runtime-constants would otherwise pick up.
+const NODE_PKG = {
+  name: 'electerm-web',
+  version: VERSION,
+  private: true,
+  type: 'module'
+}
+
+// Who the baked-in API token belongs to.
+//
+// The homepage is now rendered at BUILD time, so the token in it is signed
+// here, on this machine — while `verifyWs` (server/dispatch-center.js) compares
+// that id against the *device's* process.env.SERVER_USER. Those two must agree
+// or every WebSocket call is rejected ("not valid request") and the UI hangs on
+// its first runSync. They used to agree by accident: the page was rendered on
+// the device, so both sides read the same (absent) variable.
+//
+// Read it here, explicitly, before anything imports src/app/common/log.js —
+// that module runs dotenv, which would otherwise pull this machine's .env into
+// a value the device can never have. It is baked into index.js below, so the
+// runtime and the token are always the same string.
+const SERVER_USER = process.env.SERVER_USER || 'default_user'
 
 function copyDir (from, to) {
   if (!fs.existsSync(from)) {
@@ -73,16 +99,71 @@ function copyDir (from, to) {
   }
 }
 
+function rmrfMaybe (dir) {
+  fs.rmSync(dir, { recursive: true, force: true })
+}
+
 // --------------------------------------------------------------------------
 // 1. Frontend (vite)
 // --------------------------------------------------------------------------
+// The frontend is built once per entry with every dynamic import inlined
+// (see vite.web.mjs): on the device each asset is an HTTP round trip through
+// the single-threaded node server, so ~250 chunks cost seconds of launch time.
+// 3 files cost ~0.
+const VITE_TMP = path.resolve(__dirname, '.gen', 'vite')
+
 async function runVite () {
   console.log('[web] building frontend (vite)…')
-  await viteBuild({
-    configFile: path.resolve(__dirname, 'vite.web.mjs'),
-    root: ROOT,
-    logLevel: 'warn'
-  })
+  rmrfMaybe(VITE_TMP)
+  for (const name of entryNames) {
+    const outDir = path.resolve(VITE_TMP, name, 'assets')
+    await viteBuild({
+      ...createConfig(name, outDir),
+      logLevel: 'warn'
+    })
+  }
+
+  // Assemble dist/assets from the per-entry outputs.
+  const assets = path.resolve(OUT_DIR, 'dist', 'assets')
+  // A stale chunk/ directory from an older build would still be packed into
+  // the HAP even though nothing references it any more.
+  for (const stale of ['js', 'chunk', 'css']) {
+    rmrfMaybe(path.resolve(assets, stale))
+  }
+  fs.mkdirSync(assets, { recursive: true })
+  const cssParts = []
+  for (const name of entryNames) {
+    const out = path.resolve(VITE_TMP, name, 'assets')
+    if (!fs.existsSync(out)) {
+      continue
+    }
+    for (const entry of fs.readdirSync(out)) {
+      const from = path.join(out, entry)
+      if (entry === 'css') {
+        // cssCodeSplit:false gives one file per entry; the html only links
+        // css/style-<version>.css, so the entries have to be concatenated.
+        for (const file of fs.readdirSync(from).sort()) {
+          cssParts.push(fs.readFileSync(path.join(from, file), 'utf8'))
+        }
+      } else if (fs.statSync(from).isDirectory()) {
+        copyDir(from, path.resolve(assets, entry))
+      } else {
+        fs.copyFileSync(from, path.resolve(assets, entry))
+      }
+    }
+  }
+  if (cssParts.length) {
+    fs.mkdirSync(path.resolve(assets, 'css'), { recursive: true })
+    fs.writeFileSync(
+      path.resolve(assets, 'css', `style-${VERSION}.css`),
+      cssParts.join('\n')
+    )
+  }
+  const jsDir = path.resolve(assets, 'js')
+  const jsCount = fs.existsSync(jsDir)
+    ? fs.readdirSync(jsDir).filter(f => f.endsWith('.js')).length
+    : 0
+  console.log(`[web] frontend: ${jsCount} js file(s), ${cssParts.length} css file(s) merged`)
 }
 
 // --------------------------------------------------------------------------
@@ -106,11 +187,9 @@ function copyFrontendAssets () {
     path.resolve(assets, 'images')
   )
 
-  fs.mkdirSync(path.resolve(OUT_DIR, 'views'), { recursive: true })
-  fs.copyFileSync(
-    path.resolve(ROOT, 'src/app/views/index.pug'),
-    path.resolve(OUT_DIR, 'views/index.pug')
-  )
+  // No `views/` in the node project: the homepage is rendered to
+  // dist/assets/index.html at build time (build-src/bin/gen-index-html.js) and
+  // the runtime never reads a template from disk.
 }
 
 // --------------------------------------------------------------------------
@@ -146,10 +225,18 @@ async function bundleBackend () {
       'node-pty',
       'serialport',
       'node-bash',
-      'font-list'
+      'font-list',
+      // Dev-only template engine (see server/server.js): the guarded
+      // `if (isDev) await import('pug')` must not pull the compiler into the
+      // device bundle — it is 1.5 MB of @babel/parser + @babel/types + acorn.
+      'pug'
     ],
     banner: {
-      js: "import { createRequire } from 'module'; import { fileURLToPath as __etu } from 'url'; const require = createRequire(import.meta.url); const __filename = __etu(import.meta.url); const __dirname = __etu(new URL('.', import.meta.url));"
+      // Every name the banner needs is aliased: src/app/widgets/user-widget.js
+      // imports createRequire by name, and a banner that also declares it makes
+      // the bundle fail to link ("Identifier 'createRequire' has already been
+      // declared"), so the on-device server never starts.
+      js: "import { createRequire as __cr } from 'module'; import { fileURLToPath as __etu } from 'url'; const require = __cr(import.meta.url); const __filename = __etu(import.meta.url); const __dirname = __etu(new URL('.', import.meta.url));"
     },
     plugins: [nativeNodePlugin],
     // keep node built-ins external; everything else is bundled
@@ -194,10 +281,12 @@ process.env.PORT = '5577'
 // JWT secret baked in at build time. The web UI auto-logs-in because
 // ENABLE_AUTH is not set.
 process.env.SERVER_SECRET = ${JSON.stringify(SERVER_SECRET)}
+// The id the baked-in token was signed for (see SERVER_USER in build.mjs).
+// verifyWs() compares it against this variable on every WebSocket handshake.
+process.env.SERVER_USER = ${JSON.stringify(SERVER_USER)}
 // No pty on HarmonyOS -> disable the local terminal feature.
 process.env.DISABLE_LOCAL_TERMINAL = '1'
-// Where the pug views live (cwd is this directory, set above).
-process.env.VIEW_FOLDER = resolve(__d, 'views')
+// No VIEW_FOLDER: the one template is precompiled into dist/assets/index.html.
 
 // Writable user-data directory, created by the ArkTS side and passed in via
 // ELECTERM_DATA_DIR (the app sandbox filesDir). This is where the database,
@@ -219,7 +308,7 @@ await import('./app.bundle.mjs')
 
   fs.writeFileSync(
     path.resolve(OUT_DIR, 'package.json'),
-    JSON.stringify({ name: 'electerm-web', version: VERSION, private: true, type: 'module' }, null, 2)
+    JSON.stringify(NODE_PKG, null, 2)
   )
   console.log('[web] wrote index.js + package.json')
 }
@@ -233,6 +322,16 @@ fs.mkdirSync(OUT_DIR, { recursive: true })
 
 await runVite()
 copyFrontendAssets()
+// Static homepage. Must run after runVite(), which recreates dist/assets.
+const index = await generateIndexHtml({
+  outDir: path.resolve(OUT_DIR, 'dist', 'assets'),
+  secret: SERVER_SECRET,
+  user: SERVER_USER,
+  packInfo: NODE_PKG
+})
+console.log(
+  `[web] homepage: ${path.relative(ROOT, index.outPath)} (${index.bytes} bytes)`
+)
 await bundleBackend()
 writeNodeEntry()
 

@@ -37,8 +37,7 @@ electerm-harmony/
 │           └── resfile/electerm/   # Web app build output (generated, gitignored)
 │               ├── index.js        # node entry (require app.bundle.mjs)
 │               ├── app.bundle.mjs  # esbuild-bundled backend (ESM)
-│               ├── views/index.pug # Express view template
-│               └── dist/assets/    # Vite-built frontend
+│               └── dist/assets/    # Vite-built frontend + precompiled index.html
 ├── src/                            # Web app source (committed)
 ├── build/                          # Build scripts (committed)
 │   ├── bin/                        # Build helper scripts
@@ -145,7 +144,9 @@ The build produces:
 - `app.bundle.mjs` — esbuild-bundled backend (ESM)
 - `package.json` — `{ name, version, main: "index.js", type: "module" }`
 - `dist/assets/` — Vite-built frontend (JS, CSS, images)
-- `views/index.pug` — Express view template
+- `dist/assets/index.html` — the homepage, rendered from `index.pug` at build
+  time (`build-src/bin/gen-index-html.js`). The server serves it as a static
+  file; nothing renders a template on the device.
 
 ### Step 5 — Build and sign the HarmonyOS app
 
