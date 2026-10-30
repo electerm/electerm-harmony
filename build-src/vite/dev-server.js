@@ -141,6 +141,12 @@ async function createServer () {
       hmr: {
         overlay: true,
         port: env.DEV_HMR_PORT || 23589
+      },
+      watch: {
+        ignored: [
+          resolve(cwd, 'data'),
+          resolve(cwd, 'data1')
+        ]
       }
     },
     appType: 'custom'
