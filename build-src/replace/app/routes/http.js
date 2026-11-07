@@ -12,6 +12,7 @@ import {
   errHandler
 } from '../lib/jwt.js'
 import { fileTransferRoutes } from './file-transfer.js'
+import { iconRoutes } from './icon.js'
 
 export function httpRoutes (app) {
   // No "/" route in production: build-src/bin/gen-index-html.js writes
@@ -24,6 +25,9 @@ export function httpRoutes (app) {
   app.post('/api/login', login)
   app.get('/api/get-constants', jwtAuth, errHandler, getConstants)
   fileTransferRoutes(app)
+  // downloaded bookmark icons, `<data dir>/icons`; an <img> is the client, so
+  // no token — see the notes in the file
+  iconRoutes(app)
   if (isDev) {
     app.use(express.static(
       resolve(cwd, 'node_modules')
