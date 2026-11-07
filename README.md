@@ -50,7 +50,7 @@ The electerm app (frontend + backend bundle) is packaged in the HAP `resfile/ele
 
 ---
 
-[Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/cn/app/electerm/id6792971552)
+[Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/us/app/electerm/id6792971552)
 
 ## License
 

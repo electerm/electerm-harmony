@@ -53,7 +53,7 @@ electerm 应用（前端 + 后端打包产物）打包在 HAP 的 `resfile/elect
 
 ---
 
-商店地址: [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/cn/app/electerm/id6792971552)
+商店地址: [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=org.electerm.electerm) · [Apple App Store](https://apps.apple.com/us/app/electerm/id6792971552)
 
 ## 开源协议
 
