@@ -15,7 +15,8 @@
 // imports this API BY NAME, and a missing export is a link-time failure at
 // launch ("does not provide an export named ..."), not a soft error. That is
 // what happened when upstream added callWidgetFunc/importWidget/deleteWidget,
-// and again in 5.8.0 with importWidgetFromSource (git-host widget install).
+// and again in 5.8.0 with importWidgetFromSource (git-host widget install),
+// and in 5.10.0 with importWidgetFromRegistry (widgets.electerm.org install).
 //
 // The registry below was never given widget-ssh-server, which upstream lists.
 // Nothing in this build prevents it (node-pty is a dependency here) — add the
@@ -38,6 +39,7 @@ import {
   importUserWidgetModule,
   getUserWidgetDir
 } from './user-widget.js'
+import { importWidgetFromRegistry } from './widget-registry.js'
 import { isValidWidgetId } from './paths.js'
 import { sanitizeAIConfig } from './ai-config.js'
 
@@ -357,6 +359,7 @@ export {
   callWidgetFunc,
   importWidget,
   importWidgetFromUrl as importWidgetFromSource,
+  importWidgetFromRegistry,
   deleteWidget,
   resolveWidgetModule
 }
