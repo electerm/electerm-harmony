@@ -250,7 +250,8 @@ async function bundleBackend () {
 
 function writeNodeEntry () {
   const entry = `import { resolve } from 'node:path'
-import { mkdirSync, appendFileSync } from 'node:fs'
+import { accessSync, constants, mkdirSync, appendFileSync } from 'node:fs'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __d = fileURLToPath(new URL('.', import.meta.url))
@@ -299,6 +300,31 @@ process.env.HOME = userDataDir
 
 // SSH keys live under <userDataDir>/.ssh
 mkdirSync(resolve(userDataDir, '.ssh'), { recursive: true })
+
+// Same class of bug as on Android: the app sandbox has no usable /tmp, so
+// os.tmpdir() resolves to "/tmp" and anything staging a download there dies
+// with ENOENT/EACCES (installing a widget from a URL does
+// mkdtemp(join(os.tmpdir(), 'electerm-widget-'))). Keep the temp root inside
+// the writable data dir. The engine can ignore TMPDIR for os.tmpdir() (seen on
+// Android: env set, os.tmpdir() still "/tmp"), so the function itself has to
+// be patched too — but only when the current temp dir really is unusable, so
+// local desktop runs keep their normal /tmp.
+const tmpUsable = (() => {
+  try {
+    accessSync(os.tmpdir(), constants.W_OK)
+    return true
+  } catch (e) {
+    return false
+  }
+})()
+if (!tmpUsable) {
+  const tmpDir = resolve(userDataDir, 'tmp')
+  mkdirSync(tmpDir, { recursive: true })
+  process.env.TMPDIR = tmpDir
+  process.env.TMP = tmpDir
+  process.env.TEMP = tmpDir
+  os.tmpdir = () => tmpDir
+}
 
 await import('./app.bundle.mjs')
 // The bundle's top-level init ends with express listen, so by the time the
