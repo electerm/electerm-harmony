@@ -75,6 +75,11 @@
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "launchType": "singleton",
+        // Follow the device sensor so the ArkWeb UI (and the terminal's
+        // ResizeObserver refit) can reflow when the phone is rotated. The
+        // "_restricted" variant honours the user's rotation-lock switch in
+        // Control Panel; plain auto_rotation would override it.
+        "orientation": "auto_rotation_restricted",
         "removeMissionAfterTerminate": true,
         "exported": true,
         "skills": [
