@@ -85,7 +85,7 @@ interface SaveResult {
  * build-src/replace/client/web-components/native-file-save.js):
  *
  *   getVersion() -> '1' (lets the web app feature-detect this bridge)
- *   saveUrl(url, token, fallbackName, callbackId) — fetch an /api/download
+ *   saveUrl(url, fallbackName, callbackId) — fetch an /api/download
  *     response and stream it into the public Download directory, so the file
  *     is visible in the system file manager (unlike the app sandbox)
  *   saveBase64(filename, base64Data, contentType, callbackId) — same target
@@ -183,18 +183,13 @@ class NativeBridge {
   }
 
   /**
-   * Fetch `url` (with the electerm token header) and store the response
+   * Fetch `url` and store the response
    * body in the public Download directory.
    */
-  saveUrl(url: string, token: string, fallbackName: string, callbackId: string): void {
+  saveUrl(url: string, fallbackName: string, callbackId: string): void {
     const client = http.createHttp();
-    const headers: Record<string, string> = {};
-    if (token && token.length > 0) {
-      headers['token'] = token;
-    }
     client.request(url, {
       method: http.RequestMethod.GET,
-      header: headers,
       connectTimeout: 15000,
       readTimeout: 120000,
       expectDataType: http.HttpDataType.ARRAY_BUFFER
@@ -383,13 +378,12 @@ class NativeBridge {
         return candidate;
       }
     }
-    return candidate;
+    throw new Error('No available download filename');
   }
 
   private static exists(path: string): boolean {
     try {
-      fs.accessSync(path);
-      return true;
+      return fs.accessSync(path);
     } catch {
       return false;
     }

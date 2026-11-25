@@ -15,7 +15,6 @@
 #   ./scripts/prepare-web.sh
 #
 # Environment variables:
-#   SERVER_SECRET / OHOS_SERVER_SECRET — JWT secret baked into the build
 #                                        (required in CI, optional locally)
 set -euo pipefail
 

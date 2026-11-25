@@ -205,7 +205,7 @@ The workflow is defined in [`.github/workflows/build-web.yml`](../.github/workfl
 | `OHOS_KEY_PASSWORD` | Key password (plaintext) |
 | `OHOS_KEY_ALIAS` | Key alias (default: `electerm_key`) |
 | `OHOS_BUNDLE_NAME` | App bundle name (must match AGC registration) |
-| `OHOS_SERVER_SECRET` | (Optional) Server secret for web app backend |
+| `OHOS_SERVER_SECRET` | Safe-storage encryption key |
 
 > The Node.js runtime is pulled from the **public** `electerm/ohos-node-shared`
 > release (no secret needed). Its version is the `NODE_VERSION` workflow env

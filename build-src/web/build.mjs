@@ -6,7 +6,7 @@
  *
  *   entry/src/main/resources/resfile/electerm/
  *     ├── index.js         entry started by the on-device node binary; sets
- *     │                    env (HOST/PORT/SERVER_SECRET/data dirs) then
+ *     │                    env (HOST/PORT/data dirs) then
  *     │                    imports app.bundle.mjs
  *     ├── app.bundle.mjs   esbuild-bundled electerm backend (pure node,
  *     │                    no electron APIs)
@@ -25,8 +25,6 @@
  *     (node:sqlite available without flags).
  *   - No path-to-regexp regex patch: that worked around nodejs-mobile's
  *     stripped ICU; ohos-node is a full build.
- *   - SERVER_SECRET is baked in at build time (from SERVER_SECRET /
- *     OHOS_SERVER_SECRET env; CI must provide it).
  *   - User data dir is passed at runtime via ELECTERM_DATA_DIR (the resfile
  *     install dir is read-only), so nothing about it is baked here.
  */
@@ -49,17 +47,6 @@ const VERSION = JSON.parse(
   fs.readFileSync(path.resolve(ROOT, 'package.json'), 'utf8')
 ).version
 
-// JWT secret for the on-device server.
-// In CI this MUST come from the SERVER_SECRET / OHOS_SERVER_SECRET Action
-// secret. Local development falls back to a fixed value.
-const LOCAL_DEV_SECRET = 'electerm-harmony-local-dev-secret'
-const SERVER_SECRET = process.env.SERVER_SECRET || process.env.OHOS_SERVER_SECRET || LOCAL_DEV_SECRET
-if (process.env.CI && SERVER_SECRET === LOCAL_DEV_SECRET) {
-  console.error(
-    '[web] FATAL: SERVER_SECRET is not set. Add it to the repository GitHub Actions secrets (gh secret set SERVER_SECRET).'
-  )
-  process.exit(1)
-}
 // The package.json the node project carries on the device. The server reads it
 // as `packInfo`, so the build-time homepage must embed the same object — not
 // this repo's package.json, which runtime-constants would otherwise pick up.
@@ -69,21 +56,6 @@ const NODE_PKG = {
   private: true,
   type: 'module'
 }
-
-// Who the baked-in API token belongs to.
-//
-// The homepage is now rendered at BUILD time, so the token in it is signed
-// here, on this machine — while `verifyWs` (server/dispatch-center.js) compares
-// that id against the *device's* process.env.SERVER_USER. Those two must agree
-// or every WebSocket call is rejected ("not valid request") and the UI hangs on
-// its first runSync. They used to agree by accident: the page was rendered on
-// the device, so both sides read the same (absent) variable.
-//
-// Read it here, explicitly, before anything imports src/app/common/log.js —
-// that module runs dotenv, which would otherwise pull this machine's .env into
-// a value the device can never have. It is baked into index.js below, so the
-// runtime and the token are always the same string.
-const SERVER_USER = process.env.SERVER_USER || 'default_user'
 
 function copyDir (from, to) {
   if (!fs.existsSync(from)) {
@@ -279,12 +251,6 @@ process.chdir(__d)
 process.env.NODE_ENV = 'production'
 process.env.HOST = '127.0.0.1'
 process.env.PORT = '5577'
-// JWT secret baked in at build time. The web UI auto-logs-in because
-// ENABLE_AUTH is not set.
-process.env.SERVER_SECRET = ${JSON.stringify(SERVER_SECRET)}
-// The id the baked-in token was signed for (see SERVER_USER in build.mjs).
-// verifyWs() compares it against this variable on every WebSocket handshake.
-process.env.SERVER_USER = ${JSON.stringify(SERVER_USER)}
 // No pty on HarmonyOS -> disable the local terminal feature.
 process.env.DISABLE_LOCAL_TERMINAL = '1'
 // No VIEW_FOLDER: the one template is precompiled into dist/assets/index.html.
@@ -351,8 +317,6 @@ copyFrontendAssets()
 // Static homepage. Must run after runVite(), which recreates dist/assets.
 const index = await generateIndexHtml({
   outDir: path.resolve(OUT_DIR, 'dist', 'assets'),
-  secret: SERVER_SECRET,
-  user: SERVER_USER,
   packInfo: NODE_PKG
 })
 console.log(

@@ -151,14 +151,6 @@ function absoluteUrl (u) {
   }
 }
 
-function currentToken () {
-  try {
-    return (window.store && window.store.config && window.store.config.tokenElecterm) || ''
-  } catch (e) {
-    return ''
-  }
-}
-
 // The stock `<a download>` flow is a silent no-op inside ArkWeb.
 // Detect it via the UA so we can show an error instead of
 // pretending the download worked.
@@ -233,7 +225,7 @@ function anchorDownloadFallback (filename, blob) {
 
 /**
  * Replacement for the broken-in-ArkWeb blob-anchor download.
- * Fetches /api/download (token header included) and saves the result to
+ * Fetches /api/download and saves the result to
  * the public Download directory natively when running in the Harmony app.
  * On a plain desktop browser it falls back to the classic blob-anchor
  * download. Inside ArkWeb WITHOUT the native saver it reports an error
@@ -249,7 +241,6 @@ export async function downloadPathFromServer (serverPath) {
     try {
       const res = await callHarmonyNative('saveUrl', [
         absoluteUrl(url),
-        currentToken(),
         fallbackName
       ])
       const name = (res && res.name) || fallbackName

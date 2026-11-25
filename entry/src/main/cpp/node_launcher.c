@@ -9,8 +9,8 @@
  *
  * Main() then:
  *   1. parses the entryParams string ("key=value" lines — plain text, no
- *      JSON parser needed); recognized keys: dataDir, script, node, port,
- *      secret (unknown keys are exported as env vars for the node process);
+ *      JSON parser needed); recognized keys: dataDir, script, node, port
+ *      (unknown keys are exported as env vars for the node process);
  *   2. locates the node binary (installed as libnode.so in the app's native
  *      lib dir): parent-provided "node=" path, then dladdr() on this very
  *      function, then every mapped-.so directory from /proc/self/maps, then
@@ -63,7 +63,6 @@ typedef struct {
   char script[MAX_LINE * 2]; /* path to resfile/electerm/index.js */
   char node[MAX_LINE * 2];   /* optional parent-provided libnode.so path */
   char port[16];
-  char secret[MAX_LINE];     /* SERVER_SECRET */
 } LauncherConfig;
 
 static int g_logFd = -1;
@@ -175,7 +174,6 @@ static void parseEntryParams(const char *params, LauncherConfig *cfg,
   cfg->dataDir[0] = '\0';
   cfg->script[0] = '\0';
   cfg->node[0] = '\0';
-  cfg->secret[0] = '\0';
 
   char line[MAX_LINE];
   const char *p = params;
@@ -201,8 +199,6 @@ static void parseEntryParams(const char *params, LauncherConfig *cfg,
       snprintf(cfg->node, sizeof(cfg->node), "%s", value);
     } else if (strcmp(key, "port") == 0) {
       snprintf(cfg->port, sizeof(cfg->port), "%s", value);
-    } else if (strcmp(key, "secret") == 0) {
-      snprintf(cfg->secret, sizeof(cfg->secret), "%s", value);
     } else if (*extraEnvCount < MAX_ENV_VARS) {
       snprintf(extraEnv[(*extraEnvCount)++], MAX_LINE, "%s=%s", key, value);
     }
@@ -857,9 +853,6 @@ __attribute__((visibility("default"))) void Main(NativeChildProcess_Args args) {
   setenv("HOST", "127.0.0.1", 1);
   setenv("PORT", cfg.port, 1);
   setenv("ELECTERM_DATA_DIR", cfg.dataDir, 1);
-  if (cfg.secret[0]) {
-    setenv("SERVER_SECRET", cfg.secret, 1);
-  }
   for (int i = 0; i < extraEnvCount; i++) {
     /* setenv() COPIES. putenv() stores a pointer into `extraEnv`, a stack
      * array of the enclosing frame — fine across an immediate execve (the

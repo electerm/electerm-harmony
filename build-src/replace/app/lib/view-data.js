@@ -6,8 +6,7 @@
  *   - lib/view.js                    dev only, renders index.pug per request
  *   - build-src/bin/gen-index-html.js  prod, renders index.html once at build time
  *
- * Everything that only the running server knows (absolute paths, the auth
- * token, the request query) is a parameter rather than an import. The build
+ * Everything that only the running server knows (absolute paths and the request query) is a parameter rather than an import. The build
  * machine cannot know the device's `HOME` or `sessionLogPath`, so the generated
  * production page leaves those keys out entirely and the app picks them up from
  * /api/get-constants once it boots. Anything added here that is *not* a
@@ -86,7 +85,7 @@ export function buildViewData (opts = {}) {
   }
   // Runtime-only values. Omitted from the build-time page on purpose: see the
   // header comment. `undefined` here means "not known yet", not "empty".
-  for (const key of ['home', 'sessionLogPath', 'widgetLogPath', 'iconDir', 'tokenElecterm']) {
+  for (const key of ['home', 'sessionLogPath', 'widgetLogPath', 'iconDir']) {
     if (opts[key] !== undefined) {
       data[key] = opts[key]
     }

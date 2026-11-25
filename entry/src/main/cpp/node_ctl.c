@@ -59,7 +59,6 @@ typedef struct {
   char script[MAX_LINE * 2]; /* path to resfile/electerm/index.js */
   char node[MAX_LINE * 2];   /* optional parent-provided libnode.so path */
   char port[16];
-  char secret[MAX_LINE]; /* SERVER_SECRET */
 } CtlConfig;
 
 static int g_logFd = -1;
@@ -560,7 +559,6 @@ static void parseEntryParams(const char *params, CtlConfig *cfg,
   cfg->dataDir[0] = '\0';
   cfg->script[0] = '\0';
   cfg->node[0] = '\0';
-  cfg->secret[0] = '\0';
 
   char line[MAX_LINE];
   const char *p = params;
@@ -586,8 +584,6 @@ static void parseEntryParams(const char *params, CtlConfig *cfg,
       snprintf(cfg->node, sizeof(cfg->node), "%s", value);
     } else if (strcmp(key, "port") == 0) {
       snprintf(cfg->port, sizeof(cfg->port), "%s", value);
-    } else if (strcmp(key, "secret") == 0) {
-      snprintf(cfg->secret, sizeof(cfg->secret), "%s", value);
     } else if (*extraEnvCount < MAX_ENV_VARS) {
       snprintf(extraEnv[(*extraEnvCount)++], MAX_LINE, "%s=%s", key, value);
     }
@@ -766,9 +762,6 @@ static const char *startEmbeddedNode(const char *params) {
   setenv("HOST", "127.0.0.1", 1);
   setenv("PORT", cfg.port, 1);
   setenv("ELECTERM_DATA_DIR", cfg.dataDir, 1);
-  if (cfg.secret[0]) {
-    setenv("SERVER_SECRET", cfg.secret, 1);
-  }
   for (int i = 0; i < extraEnvCount; i++) {
     /* setenv() COPIES the value. putenv() would store a pointer into
      * `extraEnv`, a stack array of THIS frame — and since node now runs on

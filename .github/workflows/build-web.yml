@@ -186,8 +186,6 @@ jobs:
       # ── Step 3: Build web app (frontend + backend bundle → resfile) ──────
       - name: Prepare web app
         run: ./scripts/prepare-web.sh
-        env:
-          SERVER_SECRET: ${{ secrets.OHOS_SERVER_SECRET }}
 
       # ── Step 4: Decode signing materials ────────────────────────────────
       - name: Decode signing materials
